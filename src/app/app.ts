@@ -40,6 +40,7 @@ export interface PostgresAuthUser {
   displayName: string;
   role: string;
   color: string;
+  avatarUrl?: string;
 }
 
 export interface VersionCommitItem {
@@ -162,6 +163,7 @@ const ANON_NAMES = [
     '(window:paste)': 'onGlobalPaste($event)',
     '(window:scroll)': 'onWindowScroll()',
     '(document:click)': 'closeAllMenus()',
+    '(mousedown)': 'clearActionTooltip()',
     '(mouseover)': 'onGlobalMouseOver($event)',
     '(mousemove)': 'onGlobalMouseMove($event)',
     '(mouseout)': 'onGlobalMouseOut($event)',
@@ -250,6 +252,23 @@ export class App implements OnInit, OnDestroy {
     y: 0,
   });
 
+  // 1-Second Hover Action & Functionality Explanation Tooltip State
+  readonly actionTooltip = signal<{
+    visible: boolean;
+    text: string;
+    x: number;
+    y: number;
+  }>({
+    visible: false,
+    text: '',
+    x: 0,
+    y: 0,
+  });
+  private actionHoverTimerId: ReturnType<typeof setTimeout> | null = null;
+  private hoveredInteractiveEl: HTMLElement | null = null;
+  private lastMouseX = 0;
+  private lastMouseY = 0;
+
   // Excel-Style Column Resize State
   readonly resizingColId = signal<string | null>(null);
 
@@ -308,7 +327,13 @@ export class App implements OnInit, OnDestroy {
   readonly firestoreDocCount = signal<number>(0);
 
   // Auth (PostgreSQL Users Table) & Collaborator Presence
-  readonly firebaseUser = signal<PostgresAuthUser | null>(null);
+  readonly firebaseUser = signal<PostgresAuthUser | null>({
+    id: 'usr_pg_alex',
+    email: 'alex.rivera@gridpulse.io',
+    displayName: 'Alex Rivera',
+    role: 'Admin',
+    color: '#4285F4',
+  });
   readonly authMode = signal<'login' | 'register'>('login');
   readonly authErrorMessage = signal<string>('');
   readonly authForm = this.fb.nonNullable.group({
@@ -320,6 +345,15 @@ export class App implements OnInit, OnDestroy {
   readonly currentClientId = signal<string>('client_init');
   readonly currentUserName = signal<string>('Alex Rivera');
   readonly currentUserColor = signal<string>('#4285F4');
+  readonly currentUserAvatarUrl = computed<string>(() => {
+    const user = this.firebaseUser();
+    if (user?.avatarUrl) {
+      return user.avatarUrl;
+    }
+    const name = (user?.displayName || this.currentUserName() || 'User').trim();
+    const color = (user?.color || this.currentUserColor() || '#4285F4').trim();
+    return this.buildUserAvatarDataUri(name, color);
+  });
   readonly collaborators = signal<CollaboratorPresence[]>([]);
   readonly isCoEditorSimActive = signal<boolean>(false);
 
@@ -1031,6 +1065,7 @@ export class App implements OnInit, OnDestroy {
     if (this.githubPollTimer) {
       clearInterval(this.githubPollTimer);
     }
+    this.clearActionTooltip();
   }
 
   private seedInitialClientData(): void {
@@ -8211,15 +8246,288 @@ export class App implements OnInit, OnDestroy {
   }
 
   /**
+   * Generates a crisp circular SVG profile image data URI for the logged-in user.
+   */
+  public buildUserAvatarDataUri(displayName: string, accentColor: string): string {
+    const cleanName = (displayName || 'User').trim();
+    const parts = cleanName.split(/\s+/).filter(Boolean);
+    const initials =
+      parts.length >= 2
+        ? `${parts[0][0]}${parts[parts.length - 1][0]}`.toUpperCase()
+        : cleanName.slice(0, 2).toUpperCase();
+    const bg = /^#[0-9a-fA-F]{3,8}$/.test(accentColor) ? accentColor : '#4285F4';
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64">
+      <defs>
+        <linearGradient id="g" x1="0%" y1="0%" x2="100%" y2="100%">
+          <stop offset="0%" stop-color="${bg}"/>
+          <stop offset="100%" stop-color="#1e293b"/>
+        </linearGradient>
+      </defs>
+      <circle cx="32" cy="32" r="32" fill="url(#g)"/>
+      <circle cx="32" cy="23" r="10.5" fill="rgba(255,255,255,0.22)"/>
+      <path d="M14 55c3.5-10 11-15 18-15s14.5 5 18 15" fill="rgba(255,255,255,0.22)"/>
+      <text x="32" y="37" text-anchor="middle" fill="#ffffff" font-family="Inter, system-ui, -apple-system, sans-serif" font-weight="700" font-size="22" letter-spacing="0.5">${initials}</text>
+    </svg>`;
+    return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  }
+
+  /**
+   * Immediately hides the 1-second hover explanation tooltip and cancels any pending hover timer.
+   */
+  public clearActionTooltip(): void {
+    if (this.actionHoverTimerId) {
+      clearTimeout(this.actionHoverTimerId);
+      this.actionHoverTimerId = null;
+    }
+    this.hoveredInteractiveEl = null;
+    if (this.actionTooltip().visible) {
+      this.actionTooltip.update((t) => ({ ...t, visible: false }));
+    }
+  }
+
+  /**
+   * Inspects any hovered interactive control (button, hyperlink, textbox, dropdown, checkbox, tab,
+   * sidebar node, splitter handle, or header action) and returns a short, professional explanation
+   * in simple English of what that functionality or action does.
+   */
+  private resolveActionTooltipExplanation(el: HTMLElement): string {
+    // Preserve native title attribute in data-gridario-tip and strip native title so browser tooltip doesn't conflict
+    const rawTitle = el.getAttribute('title');
+    if (rawTitle !== null) {
+      if (rawTitle.trim()) {
+        el.setAttribute('data-gridario-tip', rawTitle.trim());
+      }
+      el.removeAttribute('title');
+    }
+    // Also strip ancestor title attributes if present so native browser tooltip never overlaps
+    let parentWithTitle = el.parentElement;
+    while (parentWithTitle) {
+      const pTitle = parentWithTitle.getAttribute('title');
+      if (pTitle !== null) {
+        if (pTitle.trim() && !parentWithTitle.getAttribute('data-gridario-tip')) {
+          parentWithTitle.setAttribute('data-gridario-tip', pTitle.trim());
+        }
+        parentWithTitle.removeAttribute('title');
+      }
+      parentWithTitle = parentWithTitle.parentElement;
+    }
+
+    const explicitTip = (
+      el.getAttribute('data-tooltip') ||
+      el.getAttribute('data-gridario-tip') ||
+      el.getAttribute('aria-label') ||
+      ''
+    ).trim();
+
+    if (explicitTip) {
+      return this.formatFriendlyActionTooltip(explicitTip, el);
+    }
+
+    const tag = el.tagName.toLowerCase();
+
+    if (tag === 'input') {
+      const inp = el as HTMLInputElement;
+      const inputType = (inp.type || 'text').toLowerCase();
+      if (inputType === 'checkbox') {
+        return 'Click to check or uncheck this option.';
+      }
+      if (inputType === 'radio') {
+        return 'Click to select this option.';
+      }
+      if (inputType === 'color') {
+        return 'Click to choose a custom display color.';
+      }
+      if (inputType === 'number') {
+        return 'Enter a numeric value in this field.';
+      }
+      if (inputType === 'date') {
+        return 'Select or type a date in YYYY-MM-DD format.';
+      }
+      const placeholder = (inp.placeholder || '').trim();
+      if (placeholder) {
+        return this.formatFriendlyActionTooltip(placeholder, el);
+      }
+      return 'Type a value into this text box.';
+    }
+
+    if (tag === 'textarea') {
+      const ta = el as HTMLTextAreaElement;
+      const placeholder = (ta.placeholder || '').trim();
+      if (placeholder) {
+        return this.formatFriendlyActionTooltip(placeholder, el);
+      }
+      return 'Enter or paste text into this field.';
+    }
+
+    if (tag === 'select') {
+      const sel = el as HTMLSelectElement;
+      const selectedOpt = sel.options?.[sel.selectedIndex]?.text?.trim() || '';
+      if (selectedOpt) {
+        return `Click to open the dropdown menu and change the selection (currently "${selectedOpt}").`;
+      }
+      return 'Click to open the dropdown menu and choose an option.';
+    }
+
+    if (tag === 'a') {
+      const linkText = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (linkText) {
+        return `Click to open or download ${linkText}.`;
+      }
+      return 'Click to open this link.';
+    }
+
+    if (el.classList.contains('gridario-col-resizer')) {
+      return 'Drag left or right to resize this column, or double-click to auto-fit its width.';
+    }
+    if (
+      el.classList.contains('gridpulse-split-handle-horizontal') ||
+      el.classList.contains('gridpulse-split-handle-vertical')
+    ) {
+      return 'Drag to resize this panel, or double-click to toggle expanded view.';
+    }
+
+    // Clone text without material icon ligature names
+    const clone = el.cloneNode(true) as HTMLElement;
+    clone.querySelectorAll('mat-icon, .material-icons').forEach((iconNode) => iconNode.remove());
+    const cleanText = (clone.textContent || '').replace(/\s+/g, ' ').trim();
+    if (cleanText) {
+      return this.formatFriendlyActionTooltip(cleanText, el);
+    }
+
+    return 'Click to perform this action.';
+  }
+
+  /**
+   * Formats raw titles, labels, or placeholders into a concise, professional sentence in simple English.
+   */
+  private formatFriendlyActionTooltip(raw: string, el: HTMLElement): string {
+    const cleaned = raw.replace(/\s+/g, ' ').trim();
+    if (!cleaned) return 'Click to use this feature.';
+
+    const lower = cleaned.toLowerCase();
+    const tag = el.tagName.toLowerCase();
+
+    // Direct friendly mappings for common UI controls
+    if (lower === 'close' || lower === 'cancel') {
+      return 'Close this dialog without saving changes.';
+    }
+    if (lower === 'apply' || lower === 'apply filter') {
+      return 'Apply the selected filter rules and update the table rows.';
+    }
+    if (lower === 'clear' || lower === 'clear filter') {
+      return 'Remove this filter and restore all matching rows in the table.';
+    }
+    if (lower === 'clear sort/filter' || lower.includes('clear all sort rules')) {
+      return 'Clear all active sort rules and filters to show all table rows.';
+    }
+    if (lower === 'select all') {
+      return 'Select all values in the list.';
+    }
+    if (lower === 'login' || lower === 'user login' || lower === 'sign in to your account') {
+      return 'Open the sign-in window to log in to your account.';
+    }
+    if (lower === 'log out' || lower.includes('log out of account')) {
+      return 'Sign out of your current account session.';
+    }
+    if (lower === 'new tab' || lower === 'new database tab') {
+      return 'Open a new database connection tab in the workspace.';
+    }
+    if (lower === 'new table' || lower.includes('create new table sheet tab')) {
+      return 'Create a new database table as a sheet tab in the active database.';
+    }
+    if (lower.includes('search rows, columns')) {
+      return 'Type keywords and press Enter to search across rows and columns in the active table.';
+    }
+    if (lower.includes('search scope column')) {
+      return 'Choose whether to search across all columns or within a specific column.';
+    }
+    if (lower.includes('filter databases, tables, or columns')) {
+      return 'Type to quickly filter databases, tables, and columns in the Object Explorer.';
+    }
+    if (lower.startsWith('filter ') && tag === 'input') {
+      return `Type a value and press Enter to filter rows by ${cleaned.slice(7).replace(/\.\.\.$/, '')}.`;
+    }
+    if (lower.startsWith('enter ') && (tag === 'input' || tag === 'select')) {
+      return `Enter the value for ${cleaned.slice(6).replace(/\.\.\.$/, '')} when adding a new row.`;
+    }
+    if (lower.includes('select all visible rows')) {
+      return 'Check or uncheck this box to select or deselect all visible rows in the table.';
+    }
+    if (lower.startsWith('select row ')) {
+      return `Check or uncheck this box to select ${cleaned.replace(/^select /i, '')} for bulk actions.`;
+    }
+
+    // If it already reads like a clear descriptive phrase, ensure it ends with a period
+    if (cleaned.length >= 18) {
+      const sentence = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+      return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
+    }
+
+    if (tag === 'input' || tag === 'textarea') {
+      return `Enter or edit ${cleaned}.`;
+    }
+    if (tag === 'select') {
+      return `Select an option for ${cleaned}.`;
+    }
+    if (tag === 'a') {
+      return `Open ${cleaned}.`;
+    }
+
+    const capitalized = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+    return /[.!?]$/.test(capitalized)
+      ? capitalized
+      : `Click to ${capitalized.charAt(0).toLowerCase() + capitalized.slice(1)}.`;
+  }
+
+  /**
    * Automatically inspects hovered cells (td/th) and sidebar nodes (.manage-tree-row / .truncate)
-   * and displays a tooltip if and only if the whole text in that element is not completely visible
-   * (i.e. `scrollWidth > clientWidth` or input value exceeds visible input width).
+   * for text overflow tooltips, AND manages the 1-second hover explanation tooltip for all
+   * interactive functionalities and actions (buttons, links, textboxes, dropdowns, tabs, etc.).
    */
   public onGlobalMouseOver(event: MouseEvent): void {
     if (!this.isBrowser) return;
     const rawTarget = event.target as HTMLElement | null;
     if (!rawTarget) return;
 
+    this.lastMouseX = event.clientX;
+    this.lastMouseY = event.clientY;
+
+    // 1. Handle 1-second hover explanation tooltip for any interactive functionality or action
+    const interactiveEl = rawTarget.closest(
+      'button, a, input, select, textarea, [role="button"], [role="separator"], [data-tooltip], [data-gridario-tip], .excel-sheet-tab, .manage-tree-row, .gridario-col-resizer, .gridpulse-split-handle-horizontal, .gridpulse-split-handle-vertical'
+    ) as HTMLElement | null;
+
+    if (interactiveEl !== this.hoveredInteractiveEl) {
+      if (this.actionHoverTimerId) {
+        clearTimeout(this.actionHoverTimerId);
+        this.actionHoverTimerId = null;
+      }
+      if (this.actionTooltip().visible) {
+        this.actionTooltip.update((t) => ({ ...t, visible: false }));
+      }
+      this.hoveredInteractiveEl = interactiveEl;
+
+      if (interactiveEl) {
+        const explanation = this.resolveActionTooltipExplanation(interactiveEl);
+        if (explanation) {
+          this.actionHoverTimerId = setTimeout(() => {
+            if (this.hoveredInteractiveEl !== interactiveEl) return;
+            const vw = window.innerWidth || 1280;
+            const vh = window.innerHeight || 800;
+            const x = Math.max(12, Math.min(this.lastMouseX + 14, vw - 340));
+            const y = Math.max(12, Math.min(this.lastMouseY + 20, vh - 90));
+            this.actionTooltip.set({
+              visible: true,
+              text: explanation,
+              x,
+              y,
+            });
+          }, 1000);
+        }
+      }
+    }
+
+    // 2. Handle smart overflow tooltip for truncated table cells & sidebar items
     const candidate = rawTarget.closest(
       'td, th, .manage-tree-row, .ssms-db-selector, .excel-sheet-tab, .truncate'
     ) as HTMLElement | null;
@@ -8290,9 +8598,18 @@ export class App implements OnInit, OnDestroy {
   }
 
   public onGlobalMouseMove(event: MouseEvent): void {
-    if (!this.overflowTooltip().visible) return;
+    this.lastMouseX = event.clientX;
+    this.lastMouseY = event.clientY;
     const vw = this.isBrowser ? window.innerWidth : 1280;
     const vh = this.isBrowser ? window.innerHeight : 800;
+
+    if (this.actionTooltip().visible) {
+      const ax = Math.max(12, Math.min(event.clientX + 14, vw - 340));
+      const ay = Math.max(12, Math.min(event.clientY + 20, vh - 90));
+      this.actionTooltip.update((t) => ({ ...t, x: ax, y: ay }));
+    }
+
+    if (!this.overflowTooltip().visible) return;
     const x = Math.max(12, Math.min(event.clientX + 12, vw - 360));
     const y = Math.max(12, Math.min(event.clientY + 18, vh - 80));
     this.overflowTooltip.update((t) => ({ ...t, x, y }));
@@ -8300,6 +8617,11 @@ export class App implements OnInit, OnDestroy {
 
   public onGlobalMouseOut(event: MouseEvent): void {
     const related = event.relatedTarget as HTMLElement | null;
+    if (this.hoveredInteractiveEl) {
+      if (!related || !this.hoveredInteractiveEl.contains(related)) {
+        this.clearActionTooltip();
+      }
+    }
     if (!related && this.overflowTooltip().visible) {
       this.overflowTooltip.update((t) => ({ ...t, visible: false }));
     }

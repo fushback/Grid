@@ -1,7 +1,5 @@
 {
   "version": 2,
-  "public": true,
-  "name": "gridpulse-cloud",
   "buildCommand": "npm run build",
   "outputDirectory": "dist/app/browser",
   "functions": {

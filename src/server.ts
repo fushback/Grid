@@ -2692,8 +2692,18 @@ function collectProjectFiles(
       results.push(...collectProjectFiles(baseDir, relPath));
     } else if (stat.isFile() && stat.size < 512 * 1024) {
       try {
-        const content = readFileSync(fullPath, 'utf-8');
+        let content = readFileSync(fullPath, 'utf-8');
         if (!content.includes('\u0000')) {
+          if (relPath === 'vercel.json') {
+            try {
+              const parsedVercel = JSON.parse(content) as Record<string, unknown>;
+              delete parsedVercel['public'];
+              delete parsedVercel['name'];
+              content = `${JSON.stringify(parsedVercel, null, 2)}\n`;
+            } catch {
+              // Keep raw content if JSON parse fails
+            }
+          }
           results.push({ path: relPath, content });
         }
       } catch {
