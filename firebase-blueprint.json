@@ -1,0 +1,219 @@
+{
+  "entities": {
+    "Workspace": {
+      "title": "Workspace",
+      "description": "Metadata and configuration for a collaborative spreadsheet workspace.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Display title of the spreadsheet workspace.",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the user who owns the workspace.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "rowCount": {
+          "type": "number",
+          "description": "Total number of rows stored in the workspace."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the workspace was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the workspace was last updated."
+        }
+      },
+      "required": ["name", "ownerId", "rowCount", "createdAt", "updatedAt"]
+    },
+    "GridColumn": {
+      "title": "GridColumn",
+      "description": "Schema definition for a single dynamic column in a workspace.",
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "ID of the parent workspace.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the creator who owns this column.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display header label for the column.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "colType": {
+          "type": "string",
+          "description": "Enforced column data type.",
+          "enum": ["text", "number", "date", "dropdown", "checkbox", "formula"],
+          "minLength": 4,
+          "maxLength": 16
+        },
+        "orderIndex": {
+          "type": "number",
+          "description": "Numeric sort position of the column."
+        },
+        "width": {
+          "type": "number",
+          "description": "Pixel width of the column."
+        },
+        "required": {
+          "type": "boolean",
+          "description": "Whether a non-empty cell value is required."
+        },
+        "formula": {
+          "type": "string",
+          "description": "Formula expression for calculated columns.",
+          "maxLength": 300
+        },
+        "optionsCsv": {
+          "type": "string",
+          "description": "Comma-separated dropdown options when colType is dropdown.",
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp."
+        }
+      },
+      "required": ["workspaceId", "ownerId", "name", "colType", "orderIndex", "width", "required", "formula", "optionsCsv", "createdAt", "updatedAt"]
+    },
+    "GridRow": {
+      "title": "GridRow",
+      "description": "A single data record row inside a collaborative spreadsheet workspace.",
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "ID of the parent workspace.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the user who owns this row record.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "orderIndex": {
+          "type": "number",
+          "description": "Positional index for ordering rows."
+        },
+        "cells": {
+          "type": "object",
+          "description": "Map of columnId keys to cell primitive values."
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "Display name of the collaborator who last modified the row.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when row was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when row was last updated."
+        }
+      },
+      "required": ["workspaceId", "ownerId", "orderIndex", "cells", "updatedBy", "createdAt", "updatedAt"]
+    },
+    "CollaboratorPresence": {
+      "title": "CollaboratorPresence",
+      "description": "Real-time cursor and active cell focus state for an authenticated collaborator.",
+      "type": "object",
+      "properties": {
+        "workspaceId": {
+          "type": "string",
+          "description": "ID of the parent workspace.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the collaborator.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Collaborator display name.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "color": {
+          "type": "string",
+          "description": "Hex color code for collaborator cursor outline.",
+          "minLength": 4,
+          "maxLength": 16
+        },
+        "activeRowId": {
+          "type": "string",
+          "description": "Currently selected row ID or empty string.",
+          "maxLength": 128
+        },
+        "activeColId": {
+          "type": "string",
+          "description": "Currently selected column ID or empty string.",
+          "maxLength": 128
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp of the presence heartbeat."
+        }
+      },
+      "required": ["workspaceId", "ownerId", "displayName", "color", "activeRowId", "activeColId", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/workspaces/{workspaceId}": {
+      "schema": "Workspace",
+      "description": "Stores spreadsheet workspace documents owned by authenticated users."
+    },
+    "/workspaces/{workspaceId}/columns/{columnId}": {
+      "schema": "GridColumn",
+      "description": "Stores dynamic column definitions belonging to a workspace."
+    },
+    "/workspaces/{workspaceId}/rows/{rowId}": {
+      "schema": "GridRow",
+      "description": "Stores spreadsheet data rows belonging to a workspace."
+    },
+    "/workspaces/{workspaceId}/presence/{presenceId}": {
+      "schema": "CollaboratorPresence",
+      "description": "Stores live collaborator cursor and cell selection state."
+    }
+  }
+}

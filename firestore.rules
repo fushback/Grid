@@ -1,0 +1,206 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // =========================================================================
+    // PILLAR 1: GLOBAL SAFETY NET (Default-Deny Catch-All)
+    // =========================================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // =========================================================================
+    // PHASE 3: HARDENED GLOBAL PRIMITIVES
+    // =========================================================================
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isWorkspaceOwner(workspaceId) {
+      return exists(/databases/$(database)/documents/workspaces/$(workspaceId)) &&
+        get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid;
+    }
+
+    // =========================================================================
+    // PILLAR 2: VALIDATION BLUEPRINTS (Anti-Update-Gap)
+    // =========================================================================
+    function isValidWorkspace(data) {
+      return data.keys().hasAll(['name', 'ownerId', 'rowCount', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['name', 'ownerId', 'rowCount', 'createdAt', 'updatedAt']) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.ownerId is string && isValidId(data.ownerId) && data.ownerId == request.auth.uid &&
+        data.rowCount is number && data.rowCount >= 0 && data.rowCount <= 100000 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp && data.updatedAt == request.time;
+    }
+
+    function isValidColumn(data, workspaceId) {
+      return data.keys().hasAll(['workspaceId', 'ownerId', 'name', 'colType', 'orderIndex', 'width', 'required', 'formula', 'optionsCsv', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['workspaceId', 'ownerId', 'name', 'colType', 'orderIndex', 'width', 'required', 'formula', 'optionsCsv', 'createdAt', 'updatedAt']) &&
+        data.workspaceId is string && isValidId(data.workspaceId) && data.workspaceId == workspaceId &&
+        data.ownerId is string && isValidId(data.ownerId) && data.ownerId == request.auth.uid &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 80 &&
+        data.colType is string && data.colType.size() >= 4 && data.colType.size() <= 16 &&
+        (data.colType == 'text' || data.colType == 'number' || data.colType == 'date' || data.colType == 'dropdown' || data.colType == 'checkbox' || data.colType == 'formula') &&
+        data.orderIndex is number && data.orderIndex >= 0 && data.orderIndex <= 10000 &&
+        data.width is number && data.width >= 60 && data.width <= 1200 &&
+        data.required is bool &&
+        data.formula is string && data.formula.size() <= 300 &&
+        data.optionsCsv is string && data.optionsCsv.size() <= 500 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp && data.updatedAt == request.time;
+    }
+
+    function isValidRow(data, workspaceId) {
+      return data.keys().hasAll(['workspaceId', 'ownerId', 'orderIndex', 'cells', 'updatedBy', 'createdAt', 'updatedAt']) &&
+        data.keys().hasOnly(['workspaceId', 'ownerId', 'orderIndex', 'cells', 'updatedBy', 'createdAt', 'updatedAt']) &&
+        data.workspaceId is string && isValidId(data.workspaceId) && data.workspaceId == workspaceId &&
+        data.ownerId is string && isValidId(data.ownerId) && data.ownerId == request.auth.uid &&
+        data.orderIndex is number && data.orderIndex >= -1000000 && data.orderIndex <= 10000000 &&
+        data.cells is map && data.cells.keys().size() <= 60 &&
+        data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 80 &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp && data.updatedAt == request.time;
+    }
+
+    function isValidPresence(data, workspaceId) {
+      return data.keys().hasAll(['workspaceId', 'ownerId', 'displayName', 'color', 'activeRowId', 'activeColId', 'updatedAt']) &&
+        data.keys().hasOnly(['workspaceId', 'ownerId', 'displayName', 'color', 'activeRowId', 'activeColId', 'updatedAt']) &&
+        data.workspaceId is string && isValidId(data.workspaceId) && data.workspaceId == workspaceId &&
+        data.ownerId is string && isValidId(data.ownerId) && data.ownerId == request.auth.uid &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+        data.color is string && data.color.size() >= 4 && data.color.size() <= 16 &&
+        data.activeRowId is string && data.activeRowId.size() <= 128 &&
+        data.activeColId is string && data.activeColId.size() <= 128 &&
+        data.updatedAt is timestamp && data.updatedAt == request.time;
+    }
+
+    // =========================================================================
+    // WORKSPACES COLLECTION
+    // =========================================================================
+    match /workspaces/{workspaceId} {
+      allow get: if isSignedIn() && isValidId(workspaceId) && (resource == null || existing().ownerId == request.auth.uid);
+      allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+        isValidId(workspaceId) &&
+        isValidWorkspace(incoming()) &&
+        incoming().createdAt == request.time;
+
+      allow update: if isSignedIn() &&
+        isValidId(workspaceId) &&
+        isValidWorkspace(incoming()) &&
+        existing().ownerId == request.auth.uid &&
+        incoming().ownerId == existing().ownerId &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'rowCount', 'updatedAt'])
+        );
+
+      allow delete: if isSignedIn() && isValidId(workspaceId) && existing().ownerId == request.auth.uid;
+
+      // =======================================================================
+      // SUBCOLLECTION: COLUMNS
+      // =======================================================================
+      match /columns/{columnId} {
+        allow get: if isSignedIn() && isValidId(workspaceId) && isValidId(columnId) && (resource == null || (existing().ownerId == request.auth.uid && isWorkspaceOwner(workspaceId)));
+        allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+
+        allow create: if isSignedIn() &&
+          isValidId(workspaceId) &&
+          isValidId(columnId) &&
+          isValidColumn(incoming(), workspaceId) &&
+          incoming().createdAt == request.time &&
+          isWorkspaceOwner(workspaceId);
+
+        allow update: if isSignedIn() &&
+          isValidId(workspaceId) &&
+          isValidId(columnId) &&
+          isValidColumn(incoming(), workspaceId) &&
+          existing().ownerId == request.auth.uid &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().workspaceId == existing().workspaceId &&
+          incoming().createdAt == existing().createdAt &&
+          isWorkspaceOwner(workspaceId) &&
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['name', 'colType', 'orderIndex', 'width', 'required', 'formula', 'optionsCsv', 'updatedAt'])
+          );
+
+        allow delete: if isSignedIn() && isValidId(workspaceId) && isValidId(columnId) && (resource == null || existing().ownerId == request.auth.uid) && isWorkspaceOwner(workspaceId);
+      }
+
+      // =======================================================================
+      // SUBCOLLECTION: ROWS
+      // =======================================================================
+      match /rows/{rowId} {
+        allow get: if isSignedIn() && isValidId(workspaceId) && isValidId(rowId) && (resource == null || (existing().ownerId == request.auth.uid && isWorkspaceOwner(workspaceId)));
+        allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+
+        allow create: if isSignedIn() &&
+          isValidId(workspaceId) &&
+          isValidId(rowId) &&
+          isValidRow(incoming(), workspaceId) &&
+          incoming().createdAt == request.time &&
+          isWorkspaceOwner(workspaceId);
+
+        allow update: if isSignedIn() &&
+          isValidId(workspaceId) &&
+          isValidId(rowId) &&
+          isValidRow(incoming(), workspaceId) &&
+          existing().ownerId == request.auth.uid &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().workspaceId == existing().workspaceId &&
+          incoming().createdAt == existing().createdAt &&
+          isWorkspaceOwner(workspaceId) &&
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['orderIndex', 'cells', 'updatedBy', 'updatedAt'])
+          );
+
+        allow delete: if isSignedIn() && isValidId(workspaceId) && isValidId(rowId) && (resource == null || existing().ownerId == request.auth.uid) && isWorkspaceOwner(workspaceId);
+      }
+
+      // =======================================================================
+      // SUBCOLLECTION: PRESENCE
+      // =======================================================================
+      match /presence/{presenceId} {
+        allow get: if isSignedIn() && isValidId(workspaceId) && isValidId(presenceId) && presenceId == request.auth.uid && (resource == null || (existing().ownerId == request.auth.uid && isWorkspaceOwner(workspaceId)));
+        allow list: if isSignedIn() && existing().ownerId == request.auth.uid;
+
+        allow create: if isSignedIn() &&
+          isValidId(workspaceId) &&
+          isValidId(presenceId) &&
+          presenceId == request.auth.uid &&
+          isValidPresence(incoming(), workspaceId) &&
+          isWorkspaceOwner(workspaceId);
+
+        allow update: if isSignedIn() &&
+          isValidId(workspaceId) &&
+          isValidId(presenceId) &&
+          presenceId == request.auth.uid &&
+          isValidPresence(incoming(), workspaceId) &&
+          existing().ownerId == request.auth.uid &&
+          incoming().ownerId == existing().ownerId &&
+          incoming().workspaceId == existing().workspaceId &&
+          isWorkspaceOwner(workspaceId) &&
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'color', 'activeRowId', 'activeColId', 'updatedAt'])
+          );
+
+        allow delete: if isSignedIn() && isValidId(workspaceId) && isValidId(presenceId) && presenceId == request.auth.uid && (resource == null || existing().ownerId == request.auth.uid) && isWorkspaceOwner(workspaceId);
+      }
+    }
+  }
+}

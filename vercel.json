@@ -1,0 +1,26 @@
+{
+  "version": 2,
+  "public": true,
+  "name": "gridpulse-cloud",
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist/app/browser",
+  "functions": {
+    "api/index.mjs": {
+      "includeFiles": "dist/app/**"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/index.mjs"
+    },
+    {
+      "source": "/auth/(.*)",
+      "destination": "/api/index.mjs"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
+    }
+  ]
+}

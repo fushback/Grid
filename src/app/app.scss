@@ -1,0 +1,217 @@
+// ============================================================================
+// Gridario SCSS Component Stylesheet + Bootstrap Responsive Overrides
+// ============================================================================
+
+$brand-primary: #f59e0b;
+$brand-warning: #ea580c;
+$brand-danger: #dc2626;
+$border-subtle: #e2e8f0;
+$border-strong: #cbd5e1;
+$surface-header: #f1f5f9;
+$surface-sticky: #f4f4f5;
+$light-black-shade: #e4e4e7;
+$row-error-bg: #fee2e2;
+$row-error-hover: #fecaca;
+$cell-error-bg: #fca5a5;
+
+:host {
+  display: block;
+  width: 100%;
+  min-height: 100vh;
+}
+
+// Compact 10-row table container so open space remains below for Version Control & new features
+.gridpulse-table-container {
+  width: 100%;
+  max-height: 380px;
+  min-height: 320px;
+  overflow: auto;
+  position: relative;
+  background: #ffffff;
+  border: 1px solid $border-subtle;
+  border-radius: 0.5rem;
+  -webkit-overflow-scrolling: touch;
+
+  @media (max-width: 767.98px) {
+    max-height: 360px;
+    border-radius: 0.375rem;
+  }
+}
+
+.gridpulse-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+  margin-bottom: 0 !important;
+
+  thead th {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    background-color: $surface-header;
+    border-bottom: 1px solid $border-strong;
+    border-right: 1px solid $border-subtle;
+    font-weight: 600;
+    font-size: 0.78rem;
+    color: #1e293b;
+    padding: 0;
+    vertical-align: middle;
+    user-select: none;
+
+    &.sticky-col-check,
+    &.sticky-col-index {
+      z-index: 30 !important;
+      background-color: $surface-header;
+    }
+  }
+
+  tbody {
+    td {
+      border-bottom: 1px solid $border-subtle;
+      border-right: 1px solid $border-subtle;
+      padding: 0;
+      height: 38px;
+      vertical-align: middle;
+      font-size: 0.825rem;
+      background-color: #ffffff;
+      transition: background-color 120ms ease;
+
+      &.cell-invalid {
+        background-color: $cell-error-bg;
+        box-shadow: inset 0 0 0 2px $brand-danger;
+        color: #7f1d1d;
+        font-weight: 600;
+        z-index: 12;
+        position: relative;
+      }
+    }
+
+    tr {
+      &:hover td {
+        background-color: $surface-sticky;
+      }
+
+      &.row-selected td {
+        background-color: $light-black-shade;
+      }
+
+      &.row-invalid {
+        td {
+          background-color: $row-error-bg;
+
+          &.sticky-col-check,
+          &.sticky-col-index {
+            background-color: $row-error-hover;
+            color: #991b1b;
+            font-weight: 700;
+          }
+
+          &.cell-invalid {
+            background-color: $cell-error-bg;
+            box-shadow: inset 0 0 0 2px $brand-danger;
+            color: #7f1d1d;
+            font-weight: 600;
+          }
+        }
+
+        &:hover td {
+          background-color: $row-error-hover;
+        }
+      }
+    }
+  }
+}
+
+:host-context([data-theme='classic-dark']),
+:host-context([data-theme='neumorphic-dark']),
+[data-theme='classic-dark'],
+[data-theme='neumorphic-dark'] {
+  .gridpulse-table-container {
+    background: #000000 !important;
+    background-color: #000000 !important;
+    border-color: #27272a !important;
+  }
+
+  .gridpulse-table {
+    background: #000000 !important;
+    background-color: #000000 !important;
+
+    thead,
+    thead tr,
+    thead th,
+    thead th.sticky-col-check,
+    thead th.sticky-col-index,
+    thead th > div,
+    thead th > div > div,
+    tbody,
+    tbody tr,
+    tbody td,
+    tbody td.sticky-col-check,
+    tbody td.sticky-col-index,
+    tbody td > div,
+    tbody tr:hover,
+    tbody tr:hover td,
+    tbody tr:hover td.sticky-col-check,
+    tbody tr:hover td.sticky-col-index,
+    tbody tr.row-selected,
+    tbody tr.row-selected td,
+    tbody tr.row-selected td.sticky-col-check,
+    tbody tr.row-selected td.sticky-col-index,
+    tbody tr.row-invalid,
+    tbody tr.row-invalid td,
+    tbody tr.row-invalid td.sticky-col-check,
+    tbody tr.row-invalid td.sticky-col-index {
+      background: #000000 !important;
+      background-color: #000000 !important;
+    }
+  }
+
+  .excel-sheet-footer,
+  .excel-sheet-tab,
+  .excel-sheet-tab:hover,
+  .excel-sheet-tab-active {
+    background: #000000 !important;
+    background-color: #000000 !important;
+  }
+}
+
+// Responsive popup and modal scroll containers
+.gridpulse-popup-card,
+.gridpulse-floating-popup,
+.gridpulse-context-popup {
+  overflow-y: auto !important;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+
+  @media (max-width: 575.98px) {
+    max-width: calc(100vw - 16px) !important;
+  }
+}
+
+// Excel-style bottom sheet tabs footer bar
+.excel-sheet-footer {
+  box-shadow: 0 -2px 6px rgba(15, 23, 42, 0.05);
+}
+
+.excel-sheet-tabs-strip {
+  scrollbar-width: thin;
+  scrollbar-color: #94a3b8 transparent;
+  scroll-behavior: smooth;
+}
+
+.excel-sheet-tab {
+  border-bottom: 2px solid transparent;
+  position: relative;
+  &:hover {
+    background-color: #f8fafc;
+  }
+}
+
+.excel-sheet-tab-active {
+  border-bottom: 3px solid #059669 !important;
+  box-shadow: 0 -1px 3px rgba(15, 23, 42, 0.06);
+}
+
+

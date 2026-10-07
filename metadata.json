@@ -1,0 +1,6 @@
+{
+  "name": "GridPulse",
+  "description": "Collaborative cloud spreadsheet and responsive data grid with Excel-style multi-column sorting and filtering, row and column clipboard operations, dynamic typed schema with formulas, virtualized lazy loading, and real-time multi-user editing.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

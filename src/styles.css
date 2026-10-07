@@ -1,0 +1,1926 @@
+@import "tailwindcss";
+
+:root {
+  --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace;
+  --palette-black: #000000;
+  --palette-white: #FFFFFF;
+  --palette-blue: #4285F4;
+  --palette-red: #EA4335;
+  --palette-yellow: #FBBC05;
+  --palette-green: #34A853;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #FFFFFF;
+  color: #000000;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+}
+
+/* Crisp Black & White Text Enforcement (Excluding Icons) */
+:not(mat-icon).text-slate-900,
+:not(mat-icon).text-slate-800,
+:not(mat-icon).text-slate-700 {
+  color: #000000 !important;
+}
+
+:not(mat-icon).text-white {
+  color: #FFFFFF !important;
+}
+
+/* Links and hyperlinks (#4285F4) */
+a:not(.btn) {
+  color: #4285F4;
+}
+
+a:not(.btn):hover {
+  color: #4285F4;
+  text-decoration: underline;
+}
+
+/* ==========================================================================
+   STRICT 4-COLOR ICON PALETTE (#4285F4, #EA4335, #FBBC05, #34A853)
+   NO ICON IS EVER BLACK OR WHITE
+   ========================================================================== */
+mat-icon,
+mat-icon.mat-icon,
+mat-icon.material-icons {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 18px;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  line-height: 1 !important;
+  overflow: visible !important;
+  vertical-align: middle;
+  flex-shrink: 0;
+  color: #4285F4;
+}
+
+mat-icon.text-slate-300,
+mat-icon.text-slate-400,
+mat-icon.text-slate-500,
+mat-icon.text-slate-600,
+mat-icon.text-slate-700,
+mat-icon.text-slate-800,
+mat-icon.text-slate-900,
+mat-icon.text-white,
+mat-icon.text-black {
+  color: #4285F4 !important;
+}
+
+mat-icon.text-blue-600,
+mat-icon.text-blue-700,
+mat-icon.text-blue-800 {
+  color: #4285F4 !important;
+}
+
+mat-icon.text-emerald-400,
+mat-icon.text-emerald-600,
+mat-icon.text-emerald-700,
+mat-icon.text-emerald-800 {
+  color: #34A853 !important;
+}
+
+mat-icon.text-amber-600,
+mat-icon.text-amber-700,
+mat-icon.text-amber-800 {
+  color: #FBBC05 !important;
+}
+
+mat-icon.text-red-600,
+mat-icon.text-red-700,
+mat-icon.text-red-800 {
+  color: #EA4335 !important;
+}
+
+mat-icon.text-purple-600,
+mat-icon.text-purple-700 {
+  color: #4285F4 !important;
+}
+
+/* Icons inside solid buttons use #FBBC05 (Yellow) so they are never white or black */
+.btn-primary mat-icon,
+.btn-dark mat-icon,
+.btn-success mat-icon,
+.btn-danger mat-icon {
+  color: #FBBC05 !important;
+}
+
+/* Icons inside outline buttons use semantic #4285F4 / #EA4335 / #34A853 and #FBBC05 on hover */
+.btn-outline-primary mat-icon,
+.btn-outline-secondary mat-icon,
+.btn-outline-dark mat-icon {
+  color: #4285F4 !important;
+}
+
+.btn-outline-primary:hover mat-icon,
+.btn-outline-secondary:hover mat-icon,
+.btn-outline-dark:hover mat-icon {
+  color: #FBBC05 !important;
+}
+
+.btn-outline-danger mat-icon {
+  color: #EA4335 !important;
+}
+
+.btn-outline-danger:hover mat-icon {
+  color: #FBBC05 !important;
+}
+
+/* Primary Buttons (#4285F4 with White #FFFFFF text) */
+.btn-primary {
+  background: #4285F4 !important;
+  background-color: #4285F4 !important;
+  border-color: #4285F4 !important;
+  color: #FFFFFF !important;
+}
+
+.btn-primary:hover,
+.btn-primary:focus,
+.btn-primary:active {
+  background: #4285F4 !important;
+  background-color: #4285F4 !important;
+  border-color: #000000 !important;
+  color: #FFFFFF !important;
+  filter: brightness(0.93);
+}
+
+.btn-outline-primary {
+  color: #4285F4 !important;
+  border-color: #4285F4 !important;
+  background-color: #FFFFFF !important;
+}
+
+.btn-outline-primary:hover,
+.btn-outline-primary:focus,
+.btn-outline-primary:active {
+  background-color: #4285F4 !important;
+  border-color: #4285F4 !important;
+  color: #FFFFFF !important;
+}
+
+/* Danger Buttons (#EA4335 with White #FFFFFF text) */
+.btn-danger {
+  background-color: #EA4335 !important;
+  border-color: #EA4335 !important;
+  color: #FFFFFF !important;
+}
+
+.btn-danger:hover,
+.btn-danger:focus,
+.btn-danger:active {
+  background-color: #EA4335 !important;
+  border-color: #000000 !important;
+  color: #FFFFFF !important;
+  filter: brightness(0.93);
+}
+
+.btn-outline-danger {
+  color: #EA4335 !important;
+  border-color: #EA4335 !important;
+  background-color: #FFFFFF !important;
+}
+
+.btn-outline-danger:hover,
+.btn-outline-danger:focus,
+.btn-outline-danger:active {
+  background-color: #EA4335 !important;
+  border-color: #EA4335 !important;
+  color: #FFFFFF !important;
+}
+
+/* Success Buttons (#34A853 with White #FFFFFF text) */
+.btn-success {
+  background-color: #34A853 !important;
+  border-color: #34A853 !important;
+  color: #FFFFFF !important;
+}
+
+.btn-success:hover,
+.btn-success:focus,
+.btn-success:active {
+  background-color: #34A853 !important;
+  border-color: #000000 !important;
+  color: #FFFFFF !important;
+  filter: brightness(0.93);
+}
+
+/* Warning / Yellow Accent Buttons (#FBBC05 with Black #000000 text) */
+.btn-warning {
+  background-color: #FBBC05 !important;
+  border-color: #FBBC05 !important;
+  color: #000000 !important;
+}
+
+/* Dark / Black Buttons (#000000 with White #FFFFFF text) */
+.btn-dark {
+  background-color: #000000 !important;
+  border-color: #000000 !important;
+  color: #FFFFFF !important;
+}
+
+.btn-outline-dark,
+.btn-outline-secondary {
+  color: #000000 !important;
+  border-color: #000000 !important;
+  background-color: #FFFFFF !important;
+}
+
+.btn-outline-dark:hover,
+.btn-outline-secondary:hover {
+  background-color: #000000 !important;
+  border-color: #000000 !important;
+  color: #FFFFFF !important;
+}
+
+.form-check-input:checked {
+  background-color: #4285F4 !important;
+  border-color: #4285F4 !important;
+}
+
+.form-check-input:indeterminate {
+  background-color: #FBBC05 !important;
+  border-color: #FBBC05 !important;
+}
+
+.form-control:focus,
+.form-select:focus {
+  border-color: #4285F4 !important;
+  box-shadow: 0 0 0 0.2rem rgba(66, 133, 244, 0.25) !important;
+}
+
+/* Semantic Palette Mappings (#000000, #FFFFFF, #4285F4, #EA4335, #FBBC05, #34A853) */
+:not(a):not(mat-icon).text-blue-600,
+:not(a):not(mat-icon).text-blue-700,
+:not(a):not(mat-icon).text-blue-800 {
+  color: #4285F4 !important;
+}
+
+.bg-blue-600 {
+  background-color: #4285F4 !important;
+  color: #FFFFFF !important;
+}
+
+.bg-blue-50 {
+  background-color: rgba(66, 133, 244, 0.1) !important;
+  color: #000000 !important;
+}
+
+.bg-blue-100 {
+  background-color: rgba(66, 133, 244, 0.18) !important;
+  color: #000000 !important;
+}
+
+.border-blue-200,
+.border-blue-300,
+.border-blue-500,
+.border-blue-600 {
+  border-color: #4285F4 !important;
+}
+
+:not(mat-icon).text-emerald-600,
+:not(mat-icon).text-emerald-700,
+:not(mat-icon).text-emerald-800 {
+  color: #34A853 !important;
+}
+
+.bg-emerald-600 {
+  background-color: #34A853 !important;
+  color: #FFFFFF !important;
+}
+
+.bg-emerald-50 {
+  background-color: rgba(52, 168, 83, 0.1) !important;
+  color: #000000 !important;
+}
+
+.bg-emerald-100 {
+  background-color: rgba(52, 168, 83, 0.2) !important;
+  color: #000000 !important;
+}
+
+.border-emerald-200,
+.border-emerald-300 {
+  border-color: #34A853 !important;
+}
+
+:not(mat-icon).text-amber-600,
+:not(mat-icon).text-amber-700,
+:not(mat-icon).text-amber-800,
+:not(mat-icon).text-amber-900 {
+  color: #000000 !important;
+}
+
+.bg-amber-50 {
+  background-color: rgba(251, 188, 5, 0.14) !important;
+  color: #000000 !important;
+}
+
+.bg-amber-100 {
+  background-color: #FBBC05 !important;
+  color: #000000 !important;
+}
+
+.border-amber-200,
+.border-amber-300 {
+  border-color: #FBBC05 !important;
+}
+
+:not(mat-icon).text-red-600,
+:not(mat-icon).text-red-700,
+:not(mat-icon).text-red-800,
+:not(mat-icon).text-red-900 {
+  color: #EA4335 !important;
+}
+
+.bg-red-600,
+.bg-red-700 {
+  background-color: #EA4335 !important;
+  color: #FFFFFF !important;
+}
+
+.bg-red-50 {
+  background-color: rgba(234, 67, 53, 0.1) !important;
+  color: #000000 !important;
+}
+
+.bg-red-100 {
+  background-color: rgba(234, 67, 53, 0.18) !important;
+  color: #000000 !important;
+}
+
+.border-red-200,
+.border-red-300 {
+  border-color: #EA4335 !important;
+}
+
+/* Modern Professional Loader Animations (Black, White, #4285F4, #EA4335, #FBBC05, #34A853) */
+@keyframes loader-orbit-spin {
+  0% {
+    transform: rotate(0deg);
+  }
+  100% {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes loader-shimmer-slide {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+.gridario-loader-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  cursor: wait;
+  user-select: none;
+}
+
+.gridario-loader-card {
+  position: relative;
+  min-width: 240px;
+  max-width: 290px;
+  background: #FFFFFF;
+  color: #000000;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 0.875rem;
+  box-shadow:
+    0 12px 32px -8px rgba(0, 0, 0, 0.16),
+    0 2px 6px rgba(0, 0, 0, 0.06);
+  overflow: hidden;
+}
+
+.gridario-loader-orbit {
+  animation: loader-orbit-spin 1.35s linear infinite;
+  transform-origin: center;
+}
+
+.gridario-loader-bar-fill {
+  background: linear-gradient(
+    90deg,
+    #4285F4 0%,
+    #EA4335 33%,
+    #FBBC05 66%,
+    #34A853 100%
+  );
+  background-size: 200% 100%;
+  animation: loader-shimmer-slide 1.8s linear infinite;
+}
+
+.font-mono-tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Marching ants border for Cut / Copy rows and columns (#4285F4 Copy / #EA4335 Cut) */
+.clipboard-copy-row {
+  outline: 2px dashed #4285F4 !important;
+  outline-offset: -2px;
+  background-color: rgba(66, 133, 244, 0.1) !important;
+}
+
+.clipboard-cut-row {
+  outline: 2px dashed #EA4335 !important;
+  outline-offset: -2px;
+  background-color: rgba(234, 67, 53, 0.1) !important;
+  opacity: 0.85;
+}
+
+.clipboard-copy-col {
+  background-color: rgba(66, 133, 244, 0.1) !important;
+  border-left: 2px dashed #4285F4 !important;
+  border-right: 2px dashed #4285F4 !important;
+}
+
+.clipboard-cut-col {
+  background-color: rgba(234, 67, 53, 0.1) !important;
+  border-left: 2px dashed #EA4335 !important;
+  border-right: 2px dashed #EA4335 !important;
+  opacity: 0.85;
+}
+
+/* Resizable scrollable table container (supports split-screen drag & expand/contract) */
+.gridpulse-table-container {
+  max-height: 380px;
+  min-height: 200px;
+  overflow: auto;
+  position: relative;
+  background: #FFFFFF;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.5rem 0.5rem 0 0;
+  transition: height 80ms ease, max-height 80ms ease;
+}
+
+.gridpulse-table-container.is-resizing-pane,
+.manage-sidebar-expanded.is-resizing-pane,
+.manage-tree-scroll.is-resizing-pane {
+  transition: none !important;
+  user-select: none !important;
+}
+
+/* Horizontal Split-Screen Handle (Under Table View & Under Sidebar Tree) */
+.gridpulse-split-handle-horizontal {
+  height: 12px;
+  min-height: 12px;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-top: 0;
+  border-radius: 0 0 0.5rem 0.5rem;
+  cursor: ns-resize;
+  user-select: none;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.gridpulse-split-handle-horizontal:hover,
+.gridpulse-split-handle-horizontal.split-active {
+  background-color: rgba(66, 133, 244, 0.14);
+  border-color: #4285F4;
+}
+
+.gridpulse-split-grip-pill-h {
+  width: 44px;
+  height: 4px;
+  border-radius: 9999px;
+  background-color: #94a3b8;
+  transition: background-color 120ms ease, width 120ms ease;
+}
+
+.gridpulse-split-handle-horizontal:hover .gridpulse-split-grip-pill-h,
+.gridpulse-split-handle-horizontal.split-active .gridpulse-split-grip-pill-h {
+  width: 64px;
+  background-color: #4285F4;
+}
+
+/* Vertical Split-Screen Handle (Between Object Explorer Sidebar & Table View) */
+.gridpulse-split-handle-vertical {
+  width: 8px;
+  min-width: 8px;
+  max-width: 8px;
+  background: #f8fafc;
+  border-right: 1px solid #cbd5e1;
+  cursor: ew-resize;
+  user-select: none;
+  touch-action: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 25;
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.gridpulse-split-handle-vertical:hover,
+.gridpulse-split-handle-vertical.split-active {
+  background-color: rgba(66, 133, 244, 0.16);
+  border-right-color: #4285F4;
+}
+
+.gridpulse-split-grip-pill-v {
+  width: 4px;
+  height: 42px;
+  border-radius: 9999px;
+  background-color: #94a3b8;
+  transition: background-color 120ms ease, height 120ms ease;
+}
+
+.gridpulse-split-handle-vertical:hover .gridpulse-split-grip-pill-v,
+.gridpulse-split-handle-vertical.split-active .gridpulse-split-grip-pill-v {
+  height: 64px;
+  background-color: #4285F4;
+}
+
+
+.gridpulse-table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: max-content;
+  min-width: 100%;
+  margin-bottom: 0 !important;
+}
+
+.gridpulse-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background-color: #f8fafc;
+  border-bottom: 2px solid #000000;
+  border-right: 1px solid #cbd5e1;
+  font-weight: 700;
+  font-size: 0.78rem;
+  color: #000000;
+  padding: 0;
+  vertical-align: middle;
+  user-select: none;
+}
+
+.gridpulse-table tbody tr {
+  transition:
+    background-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.gridpulse-table tbody td {
+  border-bottom: 1px solid #e2e8f0;
+  border-right: 1px solid #e2e8f0;
+  padding: 0;
+  height: 38px;
+  vertical-align: middle;
+  font-size: 0.825rem;
+  background-color: #FFFFFF;
+  color: #000000;
+  transition:
+    background-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.gridpulse-table tbody td > div {
+  transition:
+    background-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.gridpulse-table tbody tr:hover td {
+  background-color: rgba(66, 133, 244, 0.05);
+  border-bottom-color: #94a3b8;
+}
+
+.gridpulse-table tbody tr:hover td:hover:not(.sticky-col-check):not(.sticky-col-index):not(.cell-focused) {
+  background-color: rgba(251, 188, 5, 0.14);
+  box-shadow: inset 0 0 0 1px #FBBC05;
+}
+
+/* Selected row uses #4285F4 tint with crisp #000000 text */
+.gridpulse-table tbody tr.row-selected td {
+  background-color: rgba(66, 133, 244, 0.14) !important;
+  color: #000000 !important;
+}
+
+.gridpulse-table tbody tr.row-selected:hover td {
+  background-color: rgba(66, 133, 244, 0.2) !important;
+  color: #000000 !important;
+}
+
+/* Sticky left checkbox and row index columns */
+.sticky-col-check {
+  position: sticky !important;
+  left: 0;
+  z-index: 15;
+  width: 42px;
+  min-width: 42px;
+  max-width: 42px;
+  background-color: #FFFFFF !important;
+  color: #000000 !important;
+  transition:
+    background-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.sticky-col-index {
+  position: sticky !important;
+  left: 42px;
+  z-index: 15;
+  width: 56px;
+  min-width: 56px;
+  max-width: 56px;
+  background-color: #FFFFFF !important;
+  color: #000000 !important;
+  border-right: 2px solid #000000 !important;
+  transition:
+    background-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.gridpulse-table tbody tr:hover td.sticky-col-check {
+  background-color: rgba(66, 133, 244, 0.08) !important;
+  box-shadow: inset 3px 0 0 #4285F4;
+}
+
+.gridpulse-table tbody tr:hover td.sticky-col-index {
+  background-color: rgba(66, 133, 244, 0.08) !important;
+  color: #000000 !important;
+  font-weight: 700;
+}
+
+.gridpulse-table tbody td .form-check-input {
+  transition:
+    transform 160ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 160ms ease,
+    background-color 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.gridpulse-table tbody tr:hover td .form-check-input {
+  border-color: #4285F4;
+  transform: scale(1.06);
+}
+
+.gridpulse-table thead th.sticky-col-check,
+.gridpulse-table thead th.sticky-col-index {
+  z-index: 30 !important;
+  background-color: #f8fafc !important;
+  color: #000000 !important;
+}
+
+/* Active cell focus ring (#4285F4) */
+.cell-focused {
+  box-shadow: inset 0 0 0 2px #4285F4 !important;
+  background-color: #FFFFFF !important;
+  color: #000000 !important;
+  z-index: 10;
+  position: relative;
+}
+
+/* Whole row marked light red (#EA4335 tint) when any cell in that row has a validation error */
+.gridpulse-table tbody tr.row-invalid td {
+  background-color: rgba(234, 67, 53, 0.12) !important;
+  color: #000000 !important;
+}
+
+.gridpulse-table tbody tr.row-invalid:hover td {
+  background-color: rgba(234, 67, 53, 0.18) !important;
+}
+
+.gridpulse-table tbody tr.row-invalid td.sticky-col-check,
+.gridpulse-table tbody tr.row-invalid td.sticky-col-index {
+  background-color: #EA4335 !important;
+  color: #FFFFFF !important;
+  font-weight: 700;
+}
+
+/* Specific cell(s) highlighted in strong #EA4335 red where the actual validation error is */
+.gridpulse-table tbody tr td.cell-invalid,
+.gridpulse-table tbody tr.row-invalid td.cell-invalid {
+  background-color: rgba(234, 67, 53, 0.22) !important;
+  box-shadow: inset 0 0 0 2px #EA4335 !important;
+  color: #000000 !important;
+  font-weight: 700;
+  z-index: 12;
+  position: relative;
+}
+
+/* Universal Vertical Scroll for all Popups, Dropdowns, Context Menus, and Modals on any screen size */
+.gridpulse-modal-backdrop {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.gridpulse-popup-card {
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto !important;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.gridpulse-floating-popup {
+  max-height: calc(100vh - 68px);
+  max-height: calc(100dvh - 68px);
+  max-width: calc(100vw - 20px);
+  overflow-y: auto !important;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.gridpulse-context-popup {
+  max-height: min(430px, calc(100vh - 24px));
+  max-height: min(430px, calc(100dvh - 24px));
+  max-width: calc(100vw - 20px);
+  overflow-y: auto !important;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.gridpulse-popup-card::-webkit-scrollbar,
+.gridpulse-floating-popup::-webkit-scrollbar,
+.gridpulse-context-popup::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.gridpulse-popup-card::-webkit-scrollbar-thumb,
+.gridpulse-floating-popup::-webkit-scrollbar-thumb,
+.gridpulse-context-popup::-webkit-scrollbar-thumb {
+  background-color: #94a3b8;
+  border-radius: 9999px;
+}
+
+/* ==========================================================================
+   MS SQL SERVER MANAGEMENT STUDIO (SSMS) OBJECT EXPLORER SIDEBAR
+   (Black #000000, White #FFFFFF, #4285F4, #EA4335, #FBBC05, #34A853)
+   ========================================================================== */
+.manage-sidebar-expanded {
+  width: 316px;
+  min-width: 316px;
+  max-width: 316px;
+  background-color: #FFFFFF;
+  color: #000000;
+  border-right: 1px solid #000000;
+  box-shadow: 1px 0 4px rgba(0, 0, 0, 0.06);
+  transition: width 180ms ease;
+}
+
+.manage-sidebar-collapsed {
+  width: 42px;
+  min-width: 42px;
+  max-width: 42px;
+  background: #FFFFFF;
+  color: #000000;
+  border-right: 1px solid #000000;
+  transition: width 180ms ease;
+}
+
+.manage-vertical-label {
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+  letter-spacing: 0.08em;
+  color: #000000 !important;
+}
+
+/* SSMS Docked Tool Window Title Bar (Black #000000 with White #FFFFFF text) */
+.ssms-titlebar {
+  background: #000000;
+  color: #FFFFFF;
+  min-height: 36px;
+  padding: 8px 12px;
+  border-bottom: 2px solid #4285F4;
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
+}
+
+.ssms-titlebar mat-icon,
+.ssms-titlebar mat-icon.mat-icon,
+.ssms-titlebar mat-icon.material-icons {
+  font-size: 18px !important;
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px !important;
+  min-height: 20px !important;
+  line-height: 20px !important;
+  overflow: visible !important;
+}
+
+/* SSMS Command Toolbar Strip */
+.ssms-toolbar {
+  background: #FFFFFF;
+  border-bottom: 1px solid #cbd5e1;
+  padding: 8px 10px;
+}
+
+.ssms-toolbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #4285F4;
+  cursor: pointer;
+  transition: all 100ms ease;
+}
+
+.ssms-toolbar-btn mat-icon,
+.ssms-toolbar-btn mat-icon.mat-icon,
+.ssms-toolbar-btn mat-icon.material-icons {
+  font-size: 18px !important;
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px !important;
+  min-height: 20px !important;
+  line-height: 20px !important;
+  overflow: visible !important;
+}
+
+.ssms-toolbar-btn:hover {
+  background-color: rgba(66, 133, 244, 0.14);
+  border-color: #4285F4;
+  color: #4285F4;
+}
+
+.ssms-db-selector {
+  background-color: #FFFFFF;
+  border: 1px solid #000000;
+  border-radius: 4px;
+  min-height: 32px;
+  padding: 4px 8px;
+}
+
+.ssms-db-selector mat-icon,
+.ssms-db-selector mat-icon.mat-icon,
+.ssms-db-selector mat-icon.material-icons {
+  font-size: 18px !important;
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px !important;
+  min-height: 20px !important;
+  line-height: 20px !important;
+  overflow: visible !important;
+}
+
+.ssms-db-selector:focus-within {
+  border-color: #4285F4;
+  box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.22);
+}
+
+/* SSMS Tree Viewport */
+.manage-tree-scroll {
+  max-height: 520px;
+  min-height: 200px;
+  overflow-y: auto;
+  overflow-x: auto;
+  background-color: #FFFFFF;
+  color: #000000;
+  padding: 8px 8px 12px 8px;
+  font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, var(--font-sans);
+  font-size: 12.5px;
+  transition: height 80ms ease, max-height 80ms ease;
+}
+
+.manage-tree-scroll mat-icon,
+.manage-tree-scroll mat-icon.mat-icon,
+.manage-tree-scroll mat-icon.material-icons {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  font-size: 18px !important;
+  width: 20px !important;
+  height: 20px !important;
+  min-width: 20px !important;
+  min-height: 20px !important;
+  line-height: 20px !important;
+  overflow: visible !important;
+  flex-shrink: 0 !important;
+}
+
+.manage-tree-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.manage-tree-scroll::-webkit-scrollbar-thumb {
+  background-color: #94a3b8;
+  border-radius: 3px;
+}
+
+/* SSMS Square [+] / [-] Expander Box */
+.ssms-expander {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  min-width: 16px;
+  min-height: 16px;
+  border: 1px solid #000000;
+  background-color: #FFFFFF;
+  color: #000000;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  border-radius: 3px;
+  padding: 0;
+  margin-right: 2px;
+  cursor: pointer;
+  user-select: none;
+  flex-shrink: 0;
+}
+
+.ssms-expander:hover {
+  border-color: #4285F4;
+  background-color: #4285F4;
+  color: #FFFFFF;
+}
+
+/* SSMS Dotted Hierarchy Guide Lines */
+.manage-tree-branch {
+  position: relative;
+  margin-left: 10px;
+  padding-left: 15px;
+  border-left: 1px dotted #000000;
+}
+
+.ssms-tree-node-wrapper {
+  position: relative;
+}
+
+.ssms-tree-node-wrapper::before {
+  content: '';
+  position: absolute;
+  left: -15px;
+  top: 17px;
+  width: 13px;
+  border-top: 1px dotted #000000;
+}
+
+/* SSMS Tree Row / Tab Selection & Hover Highlights */
+.manage-tree-row {
+  min-height: 34px;
+  padding: 5px 8px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: #000000;
+  overflow: visible;
+  transition: background-color 80ms ease, border-color 80ms ease;
+}
+
+.manage-tree-row:hover {
+  background-color: rgba(66, 133, 244, 0.1);
+  border-color: #4285F4;
+  color: #000000;
+}
+
+.manage-tree-row.ssms-node-selected {
+  background-color: rgba(66, 133, 244, 0.14) !important;
+  border-color: #4285F4 !important;
+  color: #000000 !important;
+}
+
+.manage-tree-row.ssms-table-selected {
+  background-color: rgba(251, 188, 5, 0.25) !important;
+  border-color: #FBBC05 !important;
+  font-weight: 700;
+  color: #000000 !important;
+}
+
+.manage-tree-row .manage-node-actions {
+  opacity: 0.95;
+  transition: opacity 100ms ease;
+}
+
+.manage-tree-row:hover .manage-node-actions,
+.manage-tree-row:focus-within .manage-node-actions,
+.manage-tree-row.ssms-node-selected .manage-node-actions,
+.manage-tree-row.ssms-table-selected .manage-node-actions {
+  opacity: 1;
+}
+
+.ssms-action-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: #4285F4;
+  cursor: pointer;
+  overflow: visible;
+}
+
+.ssms-action-icon-btn mat-icon,
+.ssms-action-icon-btn mat-icon.mat-icon,
+.ssms-action-icon-btn mat-icon.material-icons {
+  font-size: 16px !important;
+  width: 18px !important;
+  height: 18px !important;
+  min-width: 18px !important;
+  min-height: 18px !important;
+  line-height: 18px !important;
+  overflow: visible !important;
+  color: #4285F4 !important;
+}
+
+.ssms-action-icon-btn:hover {
+  background-color: rgba(66, 133, 244, 0.16);
+  border-color: #4285F4;
+}
+
+.ssms-action-icon-btn.ssms-action-add,
+.ssms-action-icon-btn.ssms-action-add mat-icon,
+.ssms-action-icon-btn.ssms-action-add mat-icon.mat-icon,
+.ssms-action-icon-btn.ssms-action-add mat-icon.material-icons {
+  color: #34A853 !important;
+}
+
+.ssms-action-icon-btn.ssms-action-add:hover {
+  background-color: rgba(52, 168, 83, 0.18);
+  border-color: #34A853;
+}
+
+.ssms-action-icon-btn.ssms-action-edit,
+.ssms-action-icon-btn.ssms-action-edit mat-icon,
+.ssms-action-icon-btn.ssms-action-edit mat-icon.mat-icon,
+.ssms-action-icon-btn.ssms-action-edit mat-icon.material-icons {
+  color: #FBBC05 !important;
+}
+
+.ssms-action-icon-btn.ssms-action-edit:hover {
+  background-color: rgba(251, 188, 5, 0.22);
+  border-color: #FBBC05;
+}
+
+.ssms-action-icon-btn.ssms-action-danger,
+.ssms-action-icon-btn.ssms-action-danger mat-icon,
+.ssms-action-icon-btn.ssms-action-danger mat-icon.mat-icon,
+.ssms-action-icon-btn.ssms-action-danger mat-icon.material-icons {
+  color: #EA4335 !important;
+}
+
+.ssms-action-icon-btn.ssms-action-danger:hover {
+  background-color: rgba(234, 67, 53, 0.18);
+  border-color: #EA4335;
+}
+
+/* ========================================================================= */
+/* EXCEL-STYLE COLUMN WIDTH RESIZE HANDLE (DRAG OR DOUBLE-CLICK AUTO-FIT)    */
+/* ========================================================================= */
+.excel-col-resize-handle {
+  position: absolute;
+  top: 0;
+  right: -3px;
+  bottom: 0;
+  width: 7px;
+  cursor: col-resize;
+  z-index: 25;
+  user-select: none;
+  touch-action: none;
+  background: transparent;
+  transition: background-color 120ms ease;
+}
+
+.excel-col-resize-handle:hover,
+.excel-col-resize-handle.col-resizing {
+  background-color: #4285F4;
+}
+
+.excel-col-resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 22%;
+  bottom: 22%;
+  left: 3px;
+  width: 1px;
+  background-color: rgba(66, 133, 244, 0.45);
+}
+
+/* ========================================================================= */
+/* SMART OVERFLOW HOVER TOOLTIP (SHOWN ONLY WHEN TEXT IS TRUNCATED/CLIPPED)  */
+/* ========================================================================= */
+.gridario-overflow-tooltip {
+  position: fixed;
+  z-index: 99999;
+  pointer-events: none;
+  max-width: 420px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background-color: #0f172a;
+  color: #f8fafc;
+  border: 1px solid #4285F4;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.28);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.4;
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+/* ========================================================================= */
+/* 4-THEME ENGINE (SAME BRAND PALETTE: #4285F4, #EA4335, #FBBC05, #34A853)   */
+/* 1. classic-light (Current Default Light Mode)                             */
+/* 2. classic-dark (Current Theme Dark Mode)                                 */
+/* 3. neumorphic-light (Neumorphic UI Light Mode)                            */
+/* 4. neumorphic-dark (Neumorphic UI Dark Mode)                              */
+/* ========================================================================= */
+
+/* ------------------------------------------------------------------------- */
+/* THEME 2: CLASSIC DARK MODE (data-theme="classic-dark")                    */
+/* - Black remains black (#000000)                                           */
+/* - Fixed bars, headers (including fixed columns), rows, cells & disabled   */
+/*   or non-editable items share the same theme bg (#000000)                 */
+/* - Non-editable/disabled items use light grey (#9ca3af) text               */
+/* - Classic Dark buttons have #000000 bg and theme border + text colors     */
+/*   (#4285F4 Blue, #EA4335 Red, #34A853 Green, #FBBC05 Yellow)              */
+/* - Icon-only buttons in header & sidebar have only icon and no border      */
+/* ------------------------------------------------------------------------- */
+[data-theme='classic-dark'],
+[data-theme='classic-dark'] .app-theme-shell,
+[data-theme='classic-dark'] header,
+[data-theme='classic-dark'] main,
+[data-theme='classic-dark'] footer,
+[data-theme='classic-dark'] section,
+[data-theme='classic-dark'] aside,
+[data-theme='classic-dark'] nav,
+[data-theme='classic-dark'] .ssms-titlebar,
+[data-theme='classic-dark'] .ssms-toolbar,
+[data-theme='classic-dark'] .ssms-db-selector,
+[data-theme='classic-dark'] .manage-sidebar-expanded,
+[data-theme='classic-dark'] .manage-sidebar-collapsed,
+[data-theme='classic-dark'] .manage-tree-scroll,
+[data-theme='classic-dark'] .gridpulse-table-container,
+[data-theme='classic-dark'] .gridpulse-popup-card,
+[data-theme='classic-dark'] .gridpulse-floating-popup,
+[data-theme='classic-dark'] .gridpulse-context-popup,
+[data-theme='classic-dark'] .excel-sheet-footer,
+[data-theme='classic-dark'] .excel-sheet-tabs-strip,
+[data-theme='classic-dark'] .gridpulse-split-handle-horizontal,
+[data-theme='classic-dark'] .gridpulse-split-handle-vertical,
+[data-theme='classic-dark'] .card,
+[data-theme='classic-dark'] .card-header,
+[data-theme='classic-dark'] .card-body,
+[data-theme='classic-dark'] .card-footer,
+[data-theme='classic-dark'] .modal-content,
+[data-theme='classic-dark'] .modal-header,
+[data-theme='classic-dark'] .modal-body,
+[data-theme='classic-dark'] .modal-footer,
+[data-theme='classic-dark'] .dropdown-menu,
+[data-theme='classic-dark'] .dropdown-item,
+[data-theme='classic-dark'] .list-group,
+[data-theme='classic-dark'] .list-group-item,
+[data-theme='classic-dark'] .bg-light,
+[data-theme='classic-dark'] .bg-secondary,
+[data-theme='classic-dark'] .bg-white,
+[data-theme='classic-dark'] .bg-black,
+[data-theme='classic-dark'] [class*='bg-white'],
+[data-theme='classic-dark'] [class*='bg-slate-'],
+[data-theme='classic-dark'] [class*='bg-gray-'],
+[data-theme='classic-dark'] [class*='bg-zinc-'],
+[data-theme='classic-dark'] [class*='bg-neutral-'],
+[data-theme='classic-dark'] [class*='bg-stone-'],
+[data-theme='classic-dark'] [class*='bg-amber-50'],
+[data-theme='classic-dark'] [class*='bg-amber-100'],
+[data-theme='classic-dark'] [class*='bg-emerald-50'],
+[data-theme='classic-dark'] [class*='bg-emerald-100'],
+[data-theme='classic-dark'] [class*='bg-blue-50'],
+[data-theme='classic-dark'] [class*='bg-blue-100'],
+[data-theme='classic-dark'] [class*='bg-purple-50'],
+[data-theme='classic-dark'] [class*='bg-purple-100'],
+[data-theme='classic-dark'] [class*='bg-red-50'],
+[data-theme='classic-dark'] [class*='bg-red-100'] {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  color: #FFFFFF !important;
+  border-color: #27272a !important;
+}
+
+[data-theme='classic-dark'] .text-slate-900,
+[data-theme='classic-dark'] .text-slate-800,
+[data-theme='classic-dark'] .text-slate-700,
+[data-theme='classic-dark'] .text-black,
+[data-theme='classic-dark'] .text-white {
+  color: #FFFFFF !important;
+}
+
+[data-theme='classic-dark'] .text-slate-600,
+[data-theme='classic-dark'] .text-slate-500,
+[data-theme='classic-dark'] .text-slate-400 {
+  color: #9ca3af !important;
+}
+
+[data-theme='classic-dark'] .manage-tree-row,
+[data-theme='classic-dark'] .manage-tree-row span,
+[data-theme='classic-dark'] .manage-tree-row:hover,
+[data-theme='classic-dark'] .manage-tree-row.ssms-node-selected,
+[data-theme='classic-dark'] .manage-tree-row.ssms-table-selected {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  color: #FFFFFF !important;
+}
+
+[data-theme='classic-dark'] .manage-tree-branch,
+[data-theme='classic-dark'] .ssms-tree-node-wrapper::before {
+  border-color: #52525b !important;
+}
+
+[data-theme='classic-dark'] .ssms-expander {
+  background: transparent !important;
+  background-color: transparent !important;
+  color: #FFFFFF !important;
+  border: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+[data-theme='classic-dark'] .table,
+[data-theme='classic-dark'] .gridpulse-table {
+  --bs-table-bg: #000000 !important;
+  --bs-table-accent-bg: transparent !important;
+  --bs-table-striped-bg: transparent !important;
+  --bs-table-active-bg: transparent !important;
+  --bs-table-hover-bg: transparent !important;
+  --bs-table-bg-type: transparent !important;
+  --bs-table-bg-state: transparent !important;
+  --bs-table-color: #FFFFFF !important;
+  --bs-table-hover-color: #FFFFFF !important;
+  --bs-table-striped-color: #FFFFFF !important;
+  --bs-table-active-color: #FFFFFF !important;
+  background: #000000 !important;
+  background-color: #000000 !important;
+  color: #FFFFFF !important;
+}
+
+[data-theme='classic-dark'] .table > :not(caption) > * > *,
+[data-theme='classic-dark'] .gridpulse-table thead,
+[data-theme='classic-dark'] .gridpulse-table thead tr,
+[data-theme='classic-dark'] .gridpulse-table tbody,
+[data-theme='classic-dark'] .gridpulse-table tfoot,
+[data-theme='classic-dark'] .gridpulse-table tr,
+[data-theme='classic-dark'] .gridpulse-table th,
+[data-theme='classic-dark'] .gridpulse-table td,
+[data-theme='classic-dark'] .gridpulse-table thead th,
+[data-theme='classic-dark'] .gridpulse-table thead th[class*='bg-'],
+[data-theme='classic-dark'] .gridpulse-table thead th[style*='sticky'],
+[data-theme='classic-dark'] .gridpulse-table thead th > div,
+[data-theme='classic-dark'] .gridpulse-table thead th > div > div,
+[data-theme='classic-dark'] .gridpulse-table thead th span,
+[data-theme='classic-dark'] .gridpulse-table thead th.sticky-col-check,
+[data-theme='classic-dark'] .gridpulse-table thead th.sticky-col-check > div,
+[data-theme='classic-dark'] .gridpulse-table thead th.sticky-col-index,
+[data-theme='classic-dark'] .gridpulse-table thead th.sticky-col-index > div,
+[data-theme='classic-dark'] .gridpulse-table tbody tr,
+[data-theme='classic-dark'] .gridpulse-table tbody td,
+[data-theme='classic-dark'] .gridpulse-table tbody td[class*='bg-'],
+[data-theme='classic-dark'] .gridpulse-table tbody td[style*='sticky'],
+[data-theme='classic-dark'] .gridpulse-table tbody td > div,
+[data-theme='classic-dark'] .gridpulse-table tbody tr:hover,
+[data-theme='classic-dark'] .gridpulse-table tbody tr:hover td,
+[data-theme='classic-dark'] .gridpulse-table tbody tr:hover td > div,
+[data-theme='classic-dark'] .gridpulse-table tbody tr:hover td.sticky-col-check,
+[data-theme='classic-dark'] .gridpulse-table tbody tr:hover td.sticky-col-index,
+[data-theme='classic-dark'] .gridpulse-table tbody tr.row-selected,
+[data-theme='classic-dark'] .gridpulse-table tbody tr.row-selected td,
+[data-theme='classic-dark'] .gridpulse-table tbody tr.row-selected td > div,
+[data-theme='classic-dark'] .gridpulse-table tbody tr.row-selected td.sticky-col-check,
+[data-theme='classic-dark'] .gridpulse-table tbody tr.row-selected td.sticky-col-index,
+[data-theme='classic-dark'] .gridario-first-row,
+[data-theme='classic-dark'] .gridario-first-row td,
+[data-theme='classic-dark'] .gridario-first-row td > div {
+  --bs-table-bg: #000000 !important;
+  --bs-table-bg-type: transparent !important;
+  --bs-table-bg-state: transparent !important;
+  --bs-table-accent-bg: transparent !important;
+  background: #000000 !important;
+  background-color: #000000 !important;
+  box-shadow: none !important;
+  color: #FFFFFF !important;
+  border-color: #27272a !important;
+}
+
+[data-theme='classic-dark'] .gridpulse-table tbody td.cell-focused {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  box-shadow: inset 0 0 0 2px #4285F4 !important;
+  color: #FFFFFF !important;
+}
+
+[data-theme='classic-dark'] .gridpulse-table tbody td.cell-invalid,
+[data-theme='classic-dark'] .gridpulse-table tbody tr.row-invalid td.cell-invalid {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  box-shadow: inset 0 0 0 2px #EA4335 !important;
+  color: #EA4335 !important;
+}
+
+/* Fixed Bars & Non-Editable / Disabled Elements in Classic Dark Mode:
+   Same background color (#000000) as the rest of the theme, light grey (#9ca3af) text */
+[data-theme='classic-dark'] .sticky-col-check,
+[data-theme='classic-dark'] .sticky-col-index,
+[data-theme='classic-dark'] .sticky-col-index span,
+[data-theme='classic-dark'] .gridpulse-table thead th.sticky-col-check,
+[data-theme='classic-dark'] .gridpulse-table thead th.sticky-col-index,
+[data-theme='classic-dark'] .gridpulse-table thead th.sticky-col-index span,
+[data-theme='classic-dark'] .gridpulse-table tbody td.sticky-col-check,
+[data-theme='classic-dark'] .gridpulse-table tbody td.sticky-col-index,
+[data-theme='classic-dark'] .gridpulse-table tbody td.sticky-col-index span,
+[data-theme='classic-dark'] .gridario-non-editable,
+[data-theme='classic-dark'] .gridario-non-editable span,
+[data-theme='classic-dark'] td.gridario-non-editable,
+[data-theme='classic-dark'] .gridpulse-table tbody td > div.gridario-non-editable,
+[data-theme='classic-dark'] .gridpulse-table tbody td > div.gridario-non-editable span,
+[data-theme='classic-dark'] button:disabled,
+[data-theme='classic-dark'] button[disabled],
+[data-theme='classic-dark'] button:disabled span,
+[data-theme='classic-dark'] button[disabled] span,
+[data-theme='classic-dark'] input:disabled,
+[data-theme='classic-dark'] select:disabled,
+[data-theme='classic-dark'] textarea:disabled,
+[data-theme='classic-dark'] .disabled,
+[data-theme='classic-dark'] [disabled] {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  color: #9ca3af !important;
+  border-color: #27272a !important;
+}
+
+[data-theme='classic-dark'] .form-control,
+[data-theme='classic-dark'] .form-select,
+[data-theme='classic-dark'] input:not([type='checkbox']):not([type='radio']),
+[data-theme='classic-dark'] select,
+[data-theme='classic-dark'] textarea {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  color: #FFFFFF !important;
+  border-color: #3f3f46 !important;
+}
+
+/* Classic Dark Mode Buttons:
+   All button background color is #000000 (same as the theme background),
+   and button border color + text color use the 4 theme colors:
+   Blue (#4285F4), Red (#EA4335), Green (#34A853), Yellow (#FBBC05) */
+[data-theme='classic-dark'] .btn:not(:disabled):not([disabled]):not(.gridario-icon-only-btn),
+[data-theme='classic-dark'] .btn-primary:not(:disabled):not([disabled]):not(.gridario-icon-only-btn),
+[data-theme='classic-dark'] .btn-outline-primary:not(:disabled):not([disabled]):not(.gridario-icon-only-btn),
+[data-theme='classic-dark'] .btn-outline-secondary:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  border: 1px solid #4285F4 !important;
+  border-color: #4285F4 !important;
+  color: #4285F4 !important;
+}
+
+[data-theme='classic-dark'] .btn:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) span,
+[data-theme='classic-dark'] .btn:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) mat-icon,
+[data-theme='classic-dark'] .btn-primary:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) span,
+[data-theme='classic-dark'] .btn-primary:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) mat-icon,
+[data-theme='classic-dark'] .btn-outline-primary:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) span,
+[data-theme='classic-dark'] .btn-outline-primary:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) mat-icon,
+[data-theme='classic-dark'] .btn-outline-secondary:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) span,
+[data-theme='classic-dark'] .btn-outline-secondary:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) mat-icon {
+  color: #4285F4 !important;
+}
+
+[data-theme='classic-dark'] .btn-danger:not(:disabled):not([disabled]):not(.gridario-icon-only-btn),
+[data-theme='classic-dark'] .btn-outline-danger:not(:disabled):not([disabled]):not(.gridario-icon-only-btn),
+[data-theme='classic-dark'] button.text-red-600.border:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  border: 1px solid #EA4335 !important;
+  border-color: #EA4335 !important;
+  color: #EA4335 !important;
+}
+
+[data-theme='classic-dark'] .btn-danger:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) span,
+[data-theme='classic-dark'] .btn-danger:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) mat-icon,
+[data-theme='classic-dark'] .btn-outline-danger:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) span,
+[data-theme='classic-dark'] .btn-outline-danger:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) mat-icon,
+[data-theme='classic-dark'] button.text-red-600.border:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) span,
+[data-theme='classic-dark'] button.text-red-600.border:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) mat-icon {
+  color: #EA4335 !important;
+}
+
+[data-theme='classic-dark'] .btn-success:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  border: 1px solid #34A853 !important;
+  border-color: #34A853 !important;
+  color: #34A853 !important;
+}
+
+[data-theme='classic-dark'] .btn-success:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) span,
+[data-theme='classic-dark'] .btn-success:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) mat-icon {
+  color: #34A853 !important;
+}
+
+[data-theme='classic-dark'] .btn-warning:not(:disabled):not([disabled]):not(.gridario-icon-only-btn),
+[data-theme='classic-dark'] .btn-dark:not(:disabled):not([disabled]):not(.gridario-icon-only-btn),
+[data-theme='classic-dark'] .btn-outline-dark:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  border: 1px solid #FBBC05 !important;
+  border-color: #FBBC05 !important;
+  color: #FBBC05 !important;
+}
+
+[data-theme='classic-dark'] .btn-warning:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) span,
+[data-theme='classic-dark'] .btn-warning:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) mat-icon,
+[data-theme='classic-dark'] .btn-dark:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) span,
+[data-theme='classic-dark'] .btn-dark:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) mat-icon,
+[data-theme='classic-dark'] .btn-outline-dark:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) span,
+[data-theme='classic-dark'] .btn-outline-dark:not(:disabled):not([disabled]):not(.gridario-icon-only-btn) mat-icon {
+  color: #FBBC05 !important;
+}
+
+/* Dark mode icon-only buttons (header filter/sort/gear, sidebar object explorer open/close, toolbar icons):
+   Only icon and NO border */
+[data-theme='classic-dark'] .gridario-icon-only-btn,
+[data-theme='classic-dark'] .gridario-icon-only-btn:hover,
+[data-theme='classic-dark'] .gridario-icon-only-btn:focus,
+[data-theme='classic-dark'] .ssms-toolbar-btn,
+[data-theme='classic-dark'] .ssms-toolbar-btn:hover,
+[data-theme='classic-dark'] .gridpulse-table thead th button,
+[data-theme='classic-dark'] .gridpulse-table thead th button:hover,
+[data-theme='classic-dark'] .ssms-titlebar button,
+[data-theme='classic-dark'] .manage-sidebar-collapsed button {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  border-width: 0 !important;
+  border-color: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+[data-theme='classic-dark'] .excel-sheet-tab {
+  background-color: #000000 !important;
+  color: #9ca3af !important;
+  border-color: #27272a !important;
+}
+
+[data-theme='classic-dark'] .excel-sheet-tab.excel-sheet-tab-active {
+  background-color: #000000 !important;
+  color: #FFFFFF !important;
+  border-top: 2px solid #34A853 !important;
+}
+
+/* ------------------------------------------------------------------------- */
+/* THEME 3: NEUMORPHIC UI LIGHT MODE (data-theme="neumorphic-light")         */
+/* Soft extruded tactile surfaces with #4285F4, #EA4335, #FBBC05, #34A853    */
+/* ------------------------------------------------------------------------- */
+[data-theme='neumorphic-light'],
+[data-theme='neumorphic-light'] .app-theme-shell {
+  background-color: #e6ebf2 !important;
+  color: #1e293b !important;
+}
+
+[data-theme='neumorphic-light'] header {
+  background-color: #e6ebf2 !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.7) !important;
+  box-shadow: 0 4px 12px #c8d0db !important;
+}
+
+[data-theme='neumorphic-light'] .manage-sidebar-expanded {
+  background-color: #e6ebf2 !important;
+  border: 1px solid rgba(255, 255, 255, 0.75) !important;
+  box-shadow: 6px 0 14px #c5cdd9, -4px 0 10px #ffffff !important;
+}
+
+[data-theme='neumorphic-light'] .ssms-titlebar {
+  background: linear-gradient(145deg, #243044, #1a2332) !important;
+  box-shadow: inset 1px 1px 2px rgba(255, 255, 255, 0.15), 0 3px 6px rgba(0, 0, 0, 0.15) !important;
+}
+
+[data-theme='neumorphic-light'] .ssms-toolbar,
+[data-theme='neumorphic-light'] .excel-sheet-footer {
+  background-color: #e6ebf2 !important;
+  border-color: #cfd6e0 !important;
+}
+
+[data-theme='neumorphic-light'] .ssms-db-selector {
+  background-color: #e6ebf2 !important;
+  border: 1px solid rgba(255, 255, 255, 0.6) !important;
+  border-radius: 8px !important;
+  box-shadow: inset 3px 3px 6px #c5cdd9, inset -3px -3px 6px #ffffff !important;
+}
+
+[data-theme='neumorphic-light'] .manage-tree-scroll {
+  background-color: #ebf0f7 !important;
+  box-shadow: inset 4px 4px 8px #cad1dc, inset -4px -4px 8px #ffffff !important;
+}
+
+[data-theme='neumorphic-light'] .manage-tree-row {
+  border-radius: 8px !important;
+  border: 1px solid transparent !important;
+}
+
+[data-theme='neumorphic-light'] .manage-tree-row:hover,
+[data-theme='neumorphic-light'] .manage-tree-row.ssms-node-selected {
+  background-color: #e6ebf2 !important;
+  border-color: rgba(66, 133, 244, 0.4) !important;
+  box-shadow: 4px 4px 8px #c5cdd9, -4px -4px 8px #ffffff !important;
+}
+
+[data-theme='neumorphic-light'] .manage-tree-row.ssms-table-selected {
+  background-color: #e6ebf2 !important;
+  border-color: #FBBC05 !important;
+  box-shadow: 4px 4px 8px #c5cdd9, -4px -4px 8px #ffffff, inset 0 0 0 1px #FBBC05 !important;
+}
+
+[data-theme='neumorphic-light'] .gridpulse-table-container {
+  background-color: #eef2f8 !important;
+  border: 1px solid rgba(255, 255, 255, 0.8) !important;
+  border-radius: 12px !important;
+  box-shadow: 7px 7px 15px #c4ccd8, -7px -7px 15px #ffffff !important;
+}
+
+[data-theme='neumorphic-light'] .gridpulse-table thead th {
+  background: #e6ebf2 !important;
+  border-color: #d0d7e2 !important;
+  box-shadow: inset 1px 1px 0 #ffffff;
+}
+
+[data-theme='neumorphic-light'] .gridpulse-table tbody td {
+  background-color: #eef2f8 !important;
+  border-color: #d5dce6 !important;
+}
+
+[data-theme='neumorphic-light'] .btn,
+[data-theme='neumorphic-light'] .ssms-toolbar-btn,
+[data-theme='neumorphic-light'] .excel-sheet-tab {
+  border-radius: 8px !important;
+  box-shadow: 3px 3px 6px #c5cdd9, -3px -3px 6px #ffffff !important;
+  border-color: rgba(255, 255, 255, 0.65) !important;
+}
+
+[data-theme='neumorphic-light'] .excel-sheet-tab.excel-sheet-tab-active {
+  background-color: #eef2f8 !important;
+  box-shadow: inset 2px 2px 5px #c5cdd9, inset -2px -2px 5px #ffffff !important;
+  border-top: 2px solid #34A853 !important;
+}
+
+[data-theme='neumorphic-light'] .form-control,
+[data-theme='neumorphic-light'] .form-select {
+  background-color: #e6ebf2 !important;
+  border: 1px solid rgba(255, 255, 255, 0.7) !important;
+  border-radius: 7px !important;
+  box-shadow: inset 2px 2px 5px #c5cdd9, inset -2px -2px 5px #ffffff !important;
+}
+
+[data-theme='neumorphic-light'] .gridpulse-popup-card,
+[data-theme='neumorphic-light'] .gridpulse-floating-popup,
+[data-theme='neumorphic-light'] .gridpulse-context-popup {
+  background-color: #e6ebf2 !important;
+  border: 1px solid rgba(255, 255, 255, 0.8) !important;
+  box-shadow: 10px 10px 22px #bcc4d0, -8px -8px 18px #ffffff !important;
+}
+
+/* ------------------------------------------------------------------------- */
+/* THEME 4: NEUMORPHIC UI DARK MODE (data-theme="neumorphic-dark")           */
+/* - Black remains black (#000000)                                           */
+/* - All fixed bars, headers (even fixed columns), rows, cells & disabled    */
+/*   items share the same theme bg (#000000) with light grey (#9ca3af) text  */
+/* - Icon-only buttons in header & sidebar have only icon and no border      */
+/* ------------------------------------------------------------------------- */
+[data-theme='neumorphic-dark'],
+[data-theme='neumorphic-dark'] .app-theme-shell,
+[data-theme='neumorphic-dark'] header,
+[data-theme='neumorphic-dark'] main,
+[data-theme='neumorphic-dark'] footer,
+[data-theme='neumorphic-dark'] section,
+[data-theme='neumorphic-dark'] aside,
+[data-theme='neumorphic-dark'] nav,
+[data-theme='neumorphic-dark'] .manage-sidebar-expanded,
+[data-theme='neumorphic-dark'] .manage-sidebar-collapsed,
+[data-theme='neumorphic-dark'] .ssms-toolbar,
+[data-theme='neumorphic-dark'] .excel-sheet-footer,
+[data-theme='neumorphic-dark'] .excel-sheet-tabs-strip,
+[data-theme='neumorphic-dark'] .gridpulse-split-handle-horizontal,
+[data-theme='neumorphic-dark'] .gridpulse-split-handle-vertical,
+[data-theme='neumorphic-dark'] .card,
+[data-theme='neumorphic-dark'] .card-header,
+[data-theme='neumorphic-dark'] .card-body,
+[data-theme='neumorphic-dark'] .card-footer,
+[data-theme='neumorphic-dark'] .modal-content,
+[data-theme='neumorphic-dark'] .modal-header,
+[data-theme='neumorphic-dark'] .modal-body,
+[data-theme='neumorphic-dark'] .modal-footer,
+[data-theme='neumorphic-dark'] .dropdown-menu,
+[data-theme='neumorphic-dark'] .dropdown-item,
+[data-theme='neumorphic-dark'] .list-group,
+[data-theme='neumorphic-dark'] .list-group-item,
+[data-theme='neumorphic-dark'] .bg-light,
+[data-theme='neumorphic-dark'] .bg-secondary,
+[data-theme='neumorphic-dark'] .bg-white,
+[data-theme='neumorphic-dark'] .bg-black,
+[data-theme='neumorphic-dark'] [class*='bg-white'],
+[data-theme='neumorphic-dark'] [class*='bg-slate-'],
+[data-theme='neumorphic-dark'] [class*='bg-gray-'],
+[data-theme='neumorphic-dark'] [class*='bg-zinc-'],
+[data-theme='neumorphic-dark'] [class*='bg-neutral-'],
+[data-theme='neumorphic-dark'] [class*='bg-stone-'],
+[data-theme='neumorphic-dark'] [class*='bg-amber-50'],
+[data-theme='neumorphic-dark'] [class*='bg-amber-100'],
+[data-theme='neumorphic-dark'] [class*='bg-emerald-50'],
+[data-theme='neumorphic-dark'] [class*='bg-emerald-100'],
+[data-theme='neumorphic-dark'] [class*='bg-blue-50'],
+[data-theme='neumorphic-dark'] [class*='bg-blue-100'],
+[data-theme='neumorphic-dark'] [class*='bg-purple-50'],
+[data-theme='neumorphic-dark'] [class*='bg-purple-100'],
+[data-theme='neumorphic-dark'] [class*='bg-red-50'],
+[data-theme='neumorphic-dark'] [class*='bg-red-100'] {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  color: #f1f5f9 !important;
+  border-color: #1f242d !important;
+}
+
+[data-theme='neumorphic-dark'] .ssms-titlebar,
+[data-theme='neumorphic-dark'] .bg-black {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  color: #FFFFFF !important;
+}
+
+[data-theme='neumorphic-dark'] header {
+  box-shadow: 0 5px 14px #000000 !important;
+}
+
+[data-theme='neumorphic-dark'] .text-slate-900,
+[data-theme='neumorphic-dark'] .text-slate-800,
+[data-theme='neumorphic-dark'] .text-slate-700,
+[data-theme='neumorphic-dark'] .text-black,
+[data-theme='neumorphic-dark'] .text-white {
+  color: #f1f5f9 !important;
+}
+
+[data-theme='neumorphic-dark'] .text-slate-600,
+[data-theme='neumorphic-dark'] .text-slate-500,
+[data-theme='neumorphic-dark'] .text-slate-400 {
+  color: #9ca3af !important;
+}
+
+[data-theme='neumorphic-dark'] .manage-tree-scroll {
+  background-color: #000000 !important;
+  color: #f1f5f9 !important;
+  box-shadow: inset 4px 4px 9px #000000, inset -3px -3px 7px #161a22 !important;
+}
+
+[data-theme='neumorphic-dark'] .manage-tree-row,
+[data-theme='neumorphic-dark'] .manage-tree-row span {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  color: #e2e8f0 !important;
+  border-radius: 8px !important;
+}
+
+[data-theme='neumorphic-dark'] .manage-tree-branch,
+[data-theme='neumorphic-dark'] .ssms-tree-node-wrapper::before {
+  border-color: #475569 !important;
+}
+
+[data-theme='neumorphic-dark'] .ssms-expander {
+  background: transparent !important;
+  background-color: transparent !important;
+  color: #f8fafc !important;
+  border: none !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+
+[data-theme='neumorphic-dark'] .ssms-db-selector {
+  background-color: #000000 !important;
+  color: #f8fafc !important;
+  border: 1px solid #1f242d !important;
+  border-radius: 8px !important;
+  box-shadow: inset 3px 3px 6px #000000, inset -3px -3px 6px #181c24 !important;
+}
+
+[data-theme='neumorphic-dark'] .manage-tree-row:hover,
+[data-theme='neumorphic-dark'] .manage-tree-row.ssms-node-selected {
+  background-color: #000000 !important;
+  border-color: #4285F4 !important;
+  box-shadow: 4px 4px 9px #000000, -3px -3px 7px #1a1f29 !important;
+}
+
+[data-theme='neumorphic-dark'] .manage-tree-row.ssms-table-selected {
+  background-color: #000000 !important;
+  border-color: #FBBC05 !important;
+  box-shadow: 4px 4px 9px #000000, -3px -3px 7px #1a1f29, inset 0 0 0 1px #FBBC05 !important;
+}
+
+[data-theme='neumorphic-dark'] .gridpulse-table-container {
+  background-color: #000000 !important;
+  border: 1px solid #1f242d !important;
+  border-radius: 12px !important;
+  box-shadow: 8px 8px 16px #000000, -5px -5px 12px #171b24 !important;
+}
+
+[data-theme='neumorphic-dark'] .table,
+[data-theme='neumorphic-dark'] .gridpulse-table {
+  --bs-table-bg: #000000 !important;
+  --bs-table-accent-bg: transparent !important;
+  --bs-table-striped-bg: transparent !important;
+  --bs-table-active-bg: transparent !important;
+  --bs-table-hover-bg: transparent !important;
+  --bs-table-bg-type: transparent !important;
+  --bs-table-bg-state: transparent !important;
+  --bs-table-color: #f1f5f9 !important;
+  --bs-table-hover-color: #f1f5f9 !important;
+  --bs-table-striped-color: #f1f5f9 !important;
+  --bs-table-active-color: #f1f5f9 !important;
+  background: #000000 !important;
+  background-color: #000000 !important;
+  color: #f1f5f9 !important;
+}
+
+[data-theme='neumorphic-dark'] .table > :not(caption) > * > *,
+[data-theme='neumorphic-dark'] .gridpulse-table thead,
+[data-theme='neumorphic-dark'] .gridpulse-table thead tr,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody,
+[data-theme='neumorphic-dark'] .gridpulse-table tfoot,
+[data-theme='neumorphic-dark'] .gridpulse-table tr,
+[data-theme='neumorphic-dark'] .gridpulse-table th,
+[data-theme='neumorphic-dark'] .gridpulse-table td,
+[data-theme='neumorphic-dark'] .gridpulse-table thead th,
+[data-theme='neumorphic-dark'] .gridpulse-table thead th[class*='bg-'],
+[data-theme='neumorphic-dark'] .gridpulse-table thead th[style*='sticky'],
+[data-theme='neumorphic-dark'] .gridpulse-table thead th > div,
+[data-theme='neumorphic-dark'] .gridpulse-table thead th > div > div,
+[data-theme='neumorphic-dark'] .gridpulse-table thead th span,
+[data-theme='neumorphic-dark'] .gridpulse-table thead th.sticky-col-check,
+[data-theme='neumorphic-dark'] .gridpulse-table thead th.sticky-col-check > div,
+[data-theme='neumorphic-dark'] .gridpulse-table thead th.sticky-col-index,
+[data-theme='neumorphic-dark'] .gridpulse-table thead th.sticky-col-index > div,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody tr,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody td,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody td[class*='bg-'],
+[data-theme='neumorphic-dark'] .gridpulse-table tbody td[style*='sticky'],
+[data-theme='neumorphic-dark'] .gridpulse-table tbody td > div,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody tr:hover,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody tr:hover td,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody tr:hover td > div,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody tr:hover td.sticky-col-check,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody tr:hover td.sticky-col-index,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody tr.row-selected,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody tr.row-selected td,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody tr.row-selected td > div,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody tr.row-selected td.sticky-col-check,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody tr.row-selected td.sticky-col-index,
+[data-theme='neumorphic-dark'] .gridario-first-row,
+[data-theme='neumorphic-dark'] .gridario-first-row td,
+[data-theme='neumorphic-dark'] .gridario-first-row td > div {
+  --bs-table-bg: #000000 !important;
+  --bs-table-bg-type: transparent !important;
+  --bs-table-bg-state: transparent !important;
+  --bs-table-accent-bg: transparent !important;
+  background: #000000 !important;
+  background-color: #000000 !important;
+  box-shadow: none !important;
+  color: #f1f5f9 !important;
+  border-color: #1f242d !important;
+}
+
+[data-theme='neumorphic-dark'] .gridpulse-table tbody td.cell-focused {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  box-shadow: inset 0 0 0 2px #4285F4 !important;
+  color: #f1f5f9 !important;
+}
+
+[data-theme='neumorphic-dark'] .gridpulse-table tbody td.cell-invalid,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody tr.row-invalid td.cell-invalid {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  box-shadow: inset 0 0 0 2px #EA4335 !important;
+  color: #EA4335 !important;
+}
+
+/* Fixed Bars & Non-Editable / Disabled Elements in Neumorphic Dark Mode:
+   Same background color (#000000) as the rest of the theme, light grey (#9ca3af) text */
+[data-theme='neumorphic-dark'] .sticky-col-check,
+[data-theme='neumorphic-dark'] .sticky-col-index,
+[data-theme='neumorphic-dark'] .sticky-col-index span,
+[data-theme='neumorphic-dark'] .gridpulse-table thead th.sticky-col-check,
+[data-theme='neumorphic-dark'] .gridpulse-table thead th.sticky-col-index,
+[data-theme='neumorphic-dark'] .gridpulse-table thead th.sticky-col-index span,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody td.sticky-col-check,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody td.sticky-col-index,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody td.sticky-col-index span,
+[data-theme='neumorphic-dark'] .gridario-non-editable,
+[data-theme='neumorphic-dark'] .gridario-non-editable span,
+[data-theme='neumorphic-dark'] td.gridario-non-editable,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody td > div.gridario-non-editable,
+[data-theme='neumorphic-dark'] .gridpulse-table tbody td > div.gridario-non-editable span,
+[data-theme='neumorphic-dark'] button:disabled,
+[data-theme='neumorphic-dark'] button[disabled],
+[data-theme='neumorphic-dark'] button:disabled span,
+[data-theme='neumorphic-dark'] button[disabled] span,
+[data-theme='neumorphic-dark'] input:disabled,
+[data-theme='neumorphic-dark'] select:disabled,
+[data-theme='neumorphic-dark'] textarea:disabled,
+[data-theme='neumorphic-dark'] .disabled,
+[data-theme='neumorphic-dark'] [disabled] {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  color: #9ca3af !important;
+  border-color: #1f242d !important;
+}
+
+[data-theme='neumorphic-dark'] .btn:not(:disabled):not([disabled]):not(.gridario-icon-only-btn),
+[data-theme='neumorphic-dark'] .excel-sheet-tab {
+  background-color: #000000 !important;
+  color: #f1f5f9 !important;
+  border-radius: 8px !important;
+  border: 1px solid #1f242d !important;
+  box-shadow: 4px 4px 8px #000000, -3px -3px 7px #1a1f29 !important;
+}
+
+/* Dark mode icon-only buttons (header filter/sort/gear, sidebar object explorer open/close, toolbar icons):
+   Only icon and NO border */
+[data-theme='neumorphic-dark'] .gridario-icon-only-btn,
+[data-theme='neumorphic-dark'] .gridario-icon-only-btn:hover,
+[data-theme='neumorphic-dark'] .gridario-icon-only-btn:focus,
+[data-theme='neumorphic-dark'] .ssms-toolbar-btn,
+[data-theme='neumorphic-dark'] .ssms-toolbar-btn:hover,
+[data-theme='neumorphic-dark'] .gridpulse-table thead th button,
+[data-theme='neumorphic-dark'] .gridpulse-table thead th button:hover,
+[data-theme='neumorphic-dark'] .ssms-titlebar button,
+[data-theme='neumorphic-dark'] .manage-sidebar-collapsed button {
+  background: transparent !important;
+  background-color: transparent !important;
+  border: none !important;
+  border-width: 0 !important;
+  border-color: transparent !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+[data-theme='neumorphic-dark'] .excel-sheet-tab.excel-sheet-tab-active {
+  background-color: #000000 !important;
+  color: #34A853 !important;
+  box-shadow: inset 3px 3px 6px #000000, inset -3px -3px 6px #1a1f29 !important;
+  border-top: 2px solid #34A853 !important;
+}
+
+[data-theme='neumorphic-dark'] .form-control,
+[data-theme='neumorphic-dark'] .form-select,
+[data-theme='neumorphic-dark'] input:not([type='checkbox']):not([type='radio']),
+[data-theme='neumorphic-dark'] select,
+[data-theme='neumorphic-dark'] textarea {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  color: #f8fafc !important;
+  border: 1px solid #1f242d !important;
+  border-radius: 7px !important;
+  box-shadow: inset 3px 3px 6px #000000, inset -3px -3px 6px #1a1f29 !important;
+}
+
+[data-theme='neumorphic-dark'] .gridpulse-popup-card,
+[data-theme='neumorphic-dark'] .gridpulse-floating-popup,
+[data-theme='neumorphic-dark'] .gridpulse-context-popup {
+  background-color: #000000 !important;
+  color: #f1f5f9 !important;
+  border: 1px solid #262c38 !important;
+  box-shadow: 10px 10px 24px #000000, -6px -6px 14px #181c24 !important;
+}
+
+
