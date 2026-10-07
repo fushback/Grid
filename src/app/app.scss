@@ -17,14 +17,18 @@ $cell-error-bg: #fca5a5;
 :host {
   display: block;
   width: 100%;
-  min-height: 100vh;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
 }
 
-// Compact 10-row table container so open space remains below for Version Control & new features
+// Full-viewport flex-scrollable table container
 .gridpulse-table-container {
   width: 100%;
-  max-height: 380px;
-  min-height: 320px;
+  flex: 1 1 0%;
+  min-height: 0;
+  height: 100%;
+  max-height: none;
   overflow: auto;
   position: relative;
   background: #ffffff;
@@ -33,7 +37,6 @@ $cell-error-bg: #fca5a5;
   -webkit-overflow-scrolling: touch;
 
   @media (max-width: 767.98px) {
-    max-height: 360px;
     border-radius: 0.375rem;
   }
 }

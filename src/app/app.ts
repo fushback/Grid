@@ -107,11 +107,7 @@ export interface DatabaseWorkspaceTab {
   activeTableName: string;
 }
 
-export type GridarioTheme =
-  | 'classic-light'
-  | 'classic-dark'
-  | 'neumorphic-light'
-  | 'neumorphic-dark';
+export type GridarioTheme = 'classic-light' | 'classic-dark';
 
 export interface ConfirmationDialogState {
   visible: boolean;
@@ -205,8 +201,9 @@ export class App implements OnInit, OnDestroy {
     [Validators.required, Validators.maxLength(80)]
   );
 
-  // 4-Theme UI Preference State (Classic Light, Classic Dark, Neumorphic Light, Neumorphic Dark)
+  // 2-Theme UI Preference State (Classic Light & Classic Dark)
   readonly activeTheme = signal<GridarioTheme>('classic-light');
+  readonly isDarkMode = computed<boolean>(() => this.activeTheme() === 'classic-dark');
   readonly themeOptions: {
     id: GridarioTheme;
     label: string;
@@ -215,7 +212,7 @@ export class App implements OnInit, OnDestroy {
   }[] = [
     {
       id: 'classic-light',
-      label: 'Classic Light (Current)',
+      label: 'Classic Light',
       shortLabel: 'Light',
       icon: 'light_mode',
     },
@@ -224,18 +221,6 @@ export class App implements OnInit, OnDestroy {
       label: 'Classic Dark',
       shortLabel: 'Dark',
       icon: 'dark_mode',
-    },
-    {
-      id: 'neumorphic-light',
-      label: 'Neumorphic UI Light',
-      shortLabel: 'Neu Light',
-      icon: 'wb_sunny',
-    },
-    {
-      id: 'neumorphic-dark',
-      label: 'Neumorphic UI Dark',
-      shortLabel: 'Neu Dark',
-      icon: 'nights_stay',
     },
   ];
 
@@ -292,10 +277,11 @@ export class App implements OnInit, OnDestroy {
 
   readonly manageTreeSearchQuery = signal<string>('');
   readonly manageTreeSearchControl = this.fb.nonNullable.control('');
-  readonly expandedDatabaseNodes = signal<Set<string>>(new Set<string>(['GridPulse_DB']));
-  readonly expandedTableNodes = signal<Set<string>>(
-    new Set<string>(['GridPulse_DB::Initiatives'])
-  );
+  readonly isServerNodeExpanded = signal<boolean>(false);
+  readonly isDatabasesFolderExpanded = signal<boolean>(false);
+  readonly expandedDatabaseNodes = signal<Set<string>>(new Set<string>());
+  readonly expandedTableNodes = signal<Set<string>>(new Set<string>());
+  private readonly sidebarTreeStorageKey = 'gridario_sidebar_tree_state';
 
   // Create New Database Modal State
   readonly isCreatingDatabase = signal<boolean>(false);
@@ -931,17 +917,14 @@ export class App implements OnInit, OnDestroy {
 
   ngOnInit(): void {
     if (this.isBrowser) {
-      const savedTheme = localStorage.getItem('gridario_ui_theme') as GridarioTheme | null;
-      if (
-        savedTheme === 'classic-light' ||
-        savedTheme === 'classic-dark' ||
-        savedTheme === 'neumorphic-light' ||
-        savedTheme === 'neumorphic-dark'
-      ) {
-        this.applyTheme(savedTheme);
+      const savedTheme = localStorage.getItem('gridario_ui_theme');
+      if (savedTheme === 'classic-dark' || savedTheme === 'neumorphic-dark') {
+        this.applyTheme('classic-dark');
       } else {
         this.applyTheme('classic-light');
       }
+
+      this.restoreSidebarTreeStateFromStorage();
 
       const storedId = sessionStorage.getItem('gridpulse_client_id');
       const clientId =
@@ -1472,6 +1455,79 @@ export class App implements OnInit, OnDestroy {
     }
   }
 
+  private restoreSidebarTreeStateFromStorage(): void {
+    if (!this.isBrowser) return;
+    try {
+      const raw = localStorage.getItem(this.sidebarTreeStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        serverExpanded?: boolean;
+        databasesFolderExpanded?: boolean;
+        expandedDatabases?: string[];
+        expandedTables?: string[];
+      };
+      if (typeof parsed.serverExpanded === 'boolean') {
+        this.isServerNodeExpanded.set(parsed.serverExpanded);
+      }
+      if (typeof parsed.databasesFolderExpanded === 'boolean') {
+        this.isDatabasesFolderExpanded.set(parsed.databasesFolderExpanded);
+      }
+      if (Array.isArray(parsed.expandedDatabases)) {
+        this.expandedDatabaseNodes.set(new Set(parsed.expandedDatabases));
+      }
+      if (Array.isArray(parsed.expandedTables)) {
+        this.expandedTableNodes.set(new Set(parsed.expandedTables));
+      }
+    } catch {
+      // Ignore malformed storage
+    }
+  }
+
+  private saveSidebarTreeStateToStorage(): void {
+    if (!this.isBrowser) return;
+    try {
+      const payload = {
+        serverExpanded: this.isServerNodeExpanded(),
+        databasesFolderExpanded: this.isDatabasesFolderExpanded(),
+        expandedDatabases: Array.from(this.expandedDatabaseNodes()),
+        expandedTables: Array.from(this.expandedTableNodes()),
+      };
+      localStorage.setItem(this.sidebarTreeStorageKey, JSON.stringify(payload));
+    } catch {
+      // Ignore storage quota errors
+    }
+  }
+
+  public isServerRootNodeExpanded(): boolean {
+    if (this.manageTreeSearchQuery().trim().length > 0) return true;
+    return this.isServerNodeExpanded();
+  }
+
+  public toggleServerNode(event?: Event): void {
+    event?.stopPropagation();
+    const nextVal = !this.isServerNodeExpanded();
+    this.isServerNodeExpanded.set(nextVal);
+    this.saveSidebarTreeStateToStorage();
+    if (nextVal) {
+      this.refreshObjectExplorerTreeFromDb();
+    }
+  }
+
+  public isDatabasesFolderNodeExpanded(): boolean {
+    if (this.manageTreeSearchQuery().trim().length > 0) return true;
+    return this.isDatabasesFolderExpanded();
+  }
+
+  public toggleDatabasesFolderNode(event?: Event): void {
+    event?.stopPropagation();
+    const nextVal = !this.isDatabasesFolderExpanded();
+    this.isDatabasesFolderExpanded.set(nextVal);
+    this.saveSidebarTreeStateToStorage();
+    if (nextVal) {
+      this.refreshObjectExplorerTreeFromDb();
+    }
+  }
+
   public isDatabaseNodeExpanded(dbName: string): boolean {
     if (this.manageTreeSearchQuery().trim().length > 0) return true;
     return this.expandedDatabaseNodes().has(dbName);
@@ -1490,6 +1546,7 @@ export class App implements OnInit, OnDestroy {
       }
       return next;
     });
+    this.saveSidebarTreeStateToStorage();
     if (willExpand) {
       this.refreshObjectExplorerTreeFromDb();
     }
@@ -1514,6 +1571,7 @@ export class App implements OnInit, OnDestroy {
       }
       return next;
     });
+    this.saveSidebarTreeStateToStorage();
     if (willExpand) {
       this.refreshObjectExplorerTreeFromDb();
     }
@@ -1530,14 +1588,20 @@ export class App implements OnInit, OnDestroy {
         tblSet.add(`${db.databaseName}::${t.tableName}`);
       }
     }
+    this.isServerNodeExpanded.set(true);
+    this.isDatabasesFolderExpanded.set(true);
     this.expandedDatabaseNodes.set(dbSet);
     this.expandedTableNodes.set(tblSet);
+    this.saveSidebarTreeStateToStorage();
   }
 
   public collapseAllManageTree(event?: Event): void {
     event?.stopPropagation();
+    this.isServerNodeExpanded.set(false);
+    this.isDatabasesFolderExpanded.set(false);
     this.expandedDatabaseNodes.set(new Set());
     this.expandedTableNodes.set(new Set());
+    this.saveSidebarTreeStateToStorage();
   }
 
   public getColumnsForManageTable(dbName: string, tbl: DbTableSummary): GridColumn[] {
@@ -1599,14 +1663,31 @@ export class App implements OnInit, OnDestroy {
 
   public selectTableFromTree(dbName: string, tableName: string, event?: Event): void {
     event?.stopPropagation();
-    if (dbName.toLowerCase() !== this.activeDatabaseName().toLowerCase()) {
-      this.toggleTableNode(dbName, tableName, event);
+    // Clicking or double-clicking a table in Object Explorer only toggles its column tree;
+    // opening the table onto the screen is done via right-click -> "Select".
+    this.toggleTableNode(dbName, tableName, event);
+  }
+
+  /**
+   * Right-click context menu action ("Select") on a table in Object Explorer:
+   * Loads and displays the selected table onto the screen.
+   */
+  public selectTableFromContextMenu(dbName: string, tableName: string, event?: Event): void {
+    event?.stopPropagation();
+    this.closeAllMenus();
+    const cleanDb = (dbName || '').trim();
+    const cleanTbl = (tableName || '').trim();
+    if (!cleanDb || !cleanTbl) return;
+
+    if (cleanDb.toLowerCase() !== this.activeDatabaseName().toLowerCase()) {
+      this.switchDatabase(cleanDb, cleanTbl, event, true);
       return;
     }
-    this.expandedDatabaseNodes.update((prev) => new Set(prev).add(dbName));
-    this.expandedTableNodes.update((prev) => new Set(prev).add(`${dbName}::${tableName}`));
-    if (tableName.toLowerCase() !== this.activeTableName().toLowerCase()) {
-      this.switchTable(tableName);
+
+    if (cleanTbl.toLowerCase() !== this.activeTableName().toLowerCase()) {
+      this.switchTable(cleanTbl, event);
+    } else {
+      this.fetchWorkspaceFromServer(false, cleanTbl, cleanDb);
     }
   }
 
@@ -1617,14 +1698,10 @@ export class App implements OnInit, OnDestroy {
     event?: Event
   ): void {
     event?.stopPropagation();
-    if (dbName.toLowerCase() !== this.activeDatabaseName().toLowerCase()) {
-      return;
-    }
-    if (tableName.toLowerCase() !== this.activeTableName().toLowerCase()) {
-      this.switchTable(tableName);
-      setTimeout(() => {
-        this.selectedColumnId.set(col.id);
-      }, 150);
+    if (
+      dbName.toLowerCase() !== this.activeDatabaseName().toLowerCase() ||
+      tableName.toLowerCase() !== this.activeTableName().toLowerCase()
+    ) {
       return;
     }
     this.selectedColumnId.set(col.id);
@@ -1892,6 +1969,7 @@ export class App implements OnInit, OnDestroy {
               }
               return next;
             });
+            this.saveSidebarTreeStateToStorage();
             this.activeModal.set('none');
             this.showBanner('success', `Renamed database "${dbName}" to "${nextDbName}".`);
           },
@@ -1968,6 +2046,7 @@ export class App implements OnInit, OnDestroy {
               }
               return next;
             });
+            this.saveSidebarTreeStateToStorage();
             this.activeModal.set('none');
             this.showBanner('success', `Renamed table "${tableName}" to "${nextTblName}".`);
           },
@@ -2235,13 +2314,6 @@ export class App implements OnInit, OnDestroy {
           // Open or activate a dedicated SQL Server Database Tab for the newly created database
           this.ensureDatabaseTabOpenedAndActive(createdDb, activeTbl, true);
 
-          this.expandedDatabaseNodes.update((prev) => new Set(prev).add(createdDb));
-          if (activeTbl) {
-            this.expandedTableNodes.update((prev) =>
-              new Set(prev).add(`${createdDb}::${activeTbl}`)
-            );
-          }
-
           this.editingCell.set(null);
           this.activeCell.set(null);
           this.selectedRowIds.set(new Set());
@@ -2430,18 +2502,9 @@ export class App implements OnInit, OnDestroy {
         `Disconnected "${cleanDb}" and connected to "${otherDb.databaseName}".`
       );
     } else {
-      const blankTabId = `db_tab_${Date.now()}`;
-      this.databaseTabs.set([
-        {
-          tabId: blankTabId,
-          databaseName: '',
-          activeTableName: '',
-        },
-      ]);
-      this.activeDatabaseTabId.set(blankTabId);
       this.showBanner(
         'info',
-        `Disconnected "${cleanDb}". Select a database for this tab to reconnect.`
+        `At least one database tab must remain connected.`
       );
     }
   }
@@ -2519,16 +2582,22 @@ export class App implements OnInit, OnDestroy {
 
     const remaining = currentTabs.filter((t) => t.tabId !== tabId);
     if (remaining.length === 0) {
-      // Open a fresh tab waiting for database selection
-      const blankId = `db_tab_${Date.now()}`;
-      this.databaseTabs.set([
-        {
-          tabId: blankId,
-          databaseName: '',
-          activeTableName: '',
-        },
-      ]);
-      this.activeDatabaseTabId.set(blankId);
+      const otherDb = this.databases().find(
+        (d) => d.databaseName.toLowerCase() !== targetTab.databaseName.toLowerCase()
+      );
+      if (otherDb) {
+        const nextTabId = `db_tab_${Date.now()}`;
+        const nextTbl = otherDb.activeTableName || otherDb.tables?.[0]?.tableName || '';
+        this.databaseTabs.set([
+          {
+            tabId: nextTabId,
+            databaseName: otherDb.databaseName,
+            activeTableName: nextTbl,
+          },
+        ]);
+        this.activeDatabaseTabId.set(nextTabId);
+        this.switchDatabase(otherDb.databaseName, nextTbl || undefined, undefined, false);
+      }
       return;
     }
 
@@ -2562,7 +2631,6 @@ export class App implements OnInit, OnDestroy {
 
     this.activeDatabaseName.set(cleanDb);
     this.syncTablesSignalForActiveDatabase(this.databases(), cleanDb);
-    this.expandedDatabaseNodes.update((prev) => new Set(prev).add(cleanDb));
     this.selectedRowIds.set(new Set());
     this.selectedColumnId.set(null);
     this.activeCell.set(null);
@@ -2815,11 +2883,6 @@ export class App implements OnInit, OnDestroy {
             this.activities.set(res.activities);
           }
 
-          this.expandedDatabaseNodes.update((prev) => new Set(prev).add(targetDbName));
-          this.expandedTableNodes.update((prev) =>
-            new Set(prev).add(`${targetDbName}::${createdTableName}`)
-          );
-
           if (isTargetActiveDb) {
             const sanitizedRows = this.sanitizeClientRowsAgainstColumns(res.columns, res.rows);
             this.activeTableName.set(createdTableName);
@@ -2892,9 +2955,6 @@ export class App implements OnInit, OnDestroy {
           ? { ...t, activeTableName: tableName }
           : t
       )
-    );
-    this.expandedTableNodes.update((prev) =>
-      new Set(prev).add(`${currentDb}::${tableName}`)
     );
     this.selectedRowIds.set(new Set());
     this.selectedColumnId.set(null);
@@ -3300,12 +3360,6 @@ export class App implements OnInit, OnDestroy {
                 );
               }
             }
-            this.expandedDatabaseNodes.update((prev) => new Set(prev).add(activeDb));
-            if (activeTbl) {
-              this.expandedTableNodes.update((prev) =>
-                new Set(prev).add(`${activeDb}::${activeTbl}`)
-              );
-            }
             this.columns.set(res.columns);
             this.rows.set(sanitizedRows);
             this.visibleRowLimit.set(Math.max(this.lazyBatchSize, sanitizedRows.length));
@@ -3354,8 +3408,7 @@ export class App implements OnInit, OnDestroy {
   public queryDatabaseRows(resetOffset = true, customLimit?: number): void {
     if (!this.isBrowser) return;
     const offset = resetOffset ? 0 : this.rows().length;
-    const desiredCapacity = Math.max(this.lazyBatchSize, this.estimatedVisibleRowCapacity() + 4);
-    const limit = customLimit ?? (resetOffset ? desiredCapacity : this.lazyBatchSize);
+    const limit = customLimit ?? this.lazyBatchSize;
 
     if (!resetOffset) {
       this.isLazyLoadingMore.set(true);
@@ -5927,11 +5980,6 @@ export class App implements OnInit, OnDestroy {
             : '',
       };
 
-      this.expandedDatabaseNodes.update((prev) => new Set(prev).add(targetDbName));
-      this.expandedTableNodes.update((prev) =>
-        new Set(prev).add(`${targetDbName}::${targetTableName}`)
-      );
-
       if (!isTargetActiveTable) {
         const updatedCols = [...existingTargetCols, newCol];
         this.databases.update((dbs) =>
@@ -6478,30 +6526,51 @@ export class App implements OnInit, OnDestroy {
   // =========================================================================
 
   public onTableScroll(event: Event): void {
-    const el = event.target as HTMLElement;
-    if (!el || el.scrollTop <= 0) return;
+    const el = (event.currentTarget || event.target) as HTMLElement | null;
+    if (!el) return;
     const remainingBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (remainingBottom < 48 && this.hasMoreLazyRows() && !this.isLazyLoadingMore()) {
+    if (remainingBottom <= 180 && this.hasMoreLazyRows() && !this.isLazyLoadingMore()) {
+      this.loadNextLazyBatch();
+    }
+  }
+
+  public onTableWheel(event: WheelEvent): void {
+    if (event.deltaY <= 0) return;
+    const el = event.currentTarget as HTMLElement | null;
+    if (!el) return;
+    const remainingBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (remainingBottom <= 200 && this.hasMoreLazyRows() && !this.isLazyLoadingMore()) {
+      this.loadNextLazyBatch();
+    }
+  }
+
+  public onTableTouchMove(event: TouchEvent): void {
+    const el = event.currentTarget as HTMLElement | null;
+    if (!el) return;
+    const remainingBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    if (remainingBottom <= 200 && this.hasMoreLazyRows() && !this.isLazyLoadingMore()) {
       this.loadNextLazyBatch();
     }
   }
 
   public onWindowScroll(): void {
-    // Table has its own dedicated 10-row scroll container; window scroll does not auto-expand table
+    // Table has its own dedicated scroll container; window scroll does not auto-expand table
   }
 
   public loadNextLazyBatch(): void {
     if (!this.hasMoreLazyRows() || this.isLazyLoadingMore()) return;
-    if (this.dbHasMoreRows()) {
-      this.queryDatabaseRows(false);
-    } else {
+    if (this.visibleRowLimit() < this.filteredAndSortedRows().length) {
       this.isLazyLoadingMore.set(true);
       setTimeout(() => {
-        this.visibleRowLimit.update((curr) =>
-          Math.min(this.filteredAndSortedRows().length, curr + this.lazyBatchSize)
-        );
+        const nextLimit = this.visibleRowLimit() + this.lazyBatchSize;
+        this.visibleRowLimit.set(nextLimit);
         this.isLazyLoadingMore.set(false);
-      }, 120);
+        if (nextLimit > this.filteredAndSortedRows().length && this.dbHasMoreRows()) {
+          this.queryDatabaseRows(false);
+        }
+      }, 40);
+    } else if (this.dbHasMoreRows()) {
+      this.queryDatabaseRows(false);
     }
   }
 
@@ -6725,6 +6794,18 @@ export class App implements OnInit, OnDestroy {
       event.preventDefault();
       const active = this.activeCell()!;
       this.startInlineEdit(active.rowId, active.colId);
+    } else if (
+      (event.key === 'ArrowDown' || event.key === 'PageDown') &&
+      !this.editingCell() &&
+      this.hasMoreLazyRows() &&
+      !this.isLazyLoadingMore()
+    ) {
+      const visible = this.visibleRows();
+      const activeRowId = this.activeCell()?.rowId;
+      const activeIdx = activeRowId ? visible.findIndex((r) => r.id === activeRowId) : -1;
+      if (activeIdx === -1 || activeIdx >= visible.length - 3) {
+        this.loadNextLazyBatch();
+      }
     }
   }
 
@@ -8236,12 +8317,20 @@ export class App implements OnInit, OnDestroy {
     this.applyTheme(theme);
   }
 
+  public toggleLightDarkTheme(event?: Event): void {
+    event?.stopPropagation();
+    const next: GridarioTheme =
+      this.activeTheme() === 'classic-dark' ? 'classic-light' : 'classic-dark';
+    this.applyTheme(next);
+  }
+
   private applyTheme(theme: GridarioTheme): void {
-    this.activeTheme.set(theme);
+    const resolved: GridarioTheme = theme === 'classic-dark' ? 'classic-dark' : 'classic-light';
+    this.activeTheme.set(resolved);
     if (this.isBrowser) {
-      localStorage.setItem('gridario_ui_theme', theme);
-      document.documentElement.setAttribute('data-theme', theme);
-      document.body?.setAttribute('data-theme', theme);
+      localStorage.setItem('gridario_ui_theme', resolved);
+      document.documentElement.setAttribute('data-theme', resolved);
+      document.body?.setAttribute('data-theme', resolved);
     }
   }
 

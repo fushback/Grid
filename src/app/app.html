@@ -1,10 +1,14 @@
-<div class="min-h-screen flex flex-col bg-white text-black" [attr.data-theme]="activeTheme()">
+<div
+  class="h-screen max-h-screen overflow-hidden flex flex-col bg-white text-black"
+  style="height: 100dvh; max-height: 100dvh"
+  [attr.data-theme]="activeTheme()"
+>
   <!-- ===================================================================== -->
   <!-- GLOBAL FULL-SCREEN BLUR & FREEZE LOADER WITH PERCENTAGE               -->
   <!-- ===================================================================== -->
   @if (loader.isLoading()) {
     <div
-      class="gridario-loader-backdrop d-flex align-items-center justify-content-center"
+      class="gridario-loader-overlay d-flex align-items-center justify-content-center"
       (click)="$event.stopPropagation(); $event.preventDefault()"
       (mousedown)="$event.stopPropagation(); $event.preventDefault()"
       (contextmenu)="$event.stopPropagation(); $event.preventDefault()"
@@ -12,18 +16,19 @@
       aria-busy="true"
       aria-live="polite"
     >
+      <div class="gridario-loader-backdrop"></div>
       <div class="gridario-loader-card px-4 py-3 d-flex flex-column gap-2" style="width: 280px">
         <div class="d-flex align-items-center justify-content-between gap-2">
-          <span class="text-xs font-medium truncate" style="color: #000000">
+          <span class="text-xs font-semibold truncate gridario-loader-text">
             {{ loader.label() }}
           </span>
-          <span class="font-mono-tabular font-bold shrink-0" style="font-size: 13px; color: #000000">
-            {{ loader.progressPercent() }}<span style="color: #4285F4">%</span>
+          <span class="font-mono-tabular font-bold shrink-0 gridario-loader-text" style="font-size: 13px">
+            {{ loader.progressPercent() }}<span class="gridario-loader-text">%</span>
           </span>
         </div>
 
         <!-- Simple Linear Progress Line with 4-Color Palette (#4285F4, #EA4335, #FBBC05, #34A853) -->
-        <div class="w-100 rounded-full overflow-hidden" style="height: 6px; background-color: #f1f5f9">
+        <div class="w-100 rounded-full overflow-hidden gridario-loader-track" style="height: 6px">
           <div
             class="h-full rounded-full gridario-loader-bar-fill transition-all duration-75 ease-out"
             [style.width.%]="loader.progressPercent()"
@@ -36,7 +41,7 @@
   <!-- ===================================================================== -->
   <!-- CLEAN TOP HEADER: LEFT (BRAND + CLEAR SORT/FILTER), RIGHT (USER AVATAR)-->
   <!-- ===================================================================== -->
-  <header class="container-fluid px-3 md:px-4 py-2.5 bg-white border-b border-slate-200 sticky top-0 z-40">
+  <header class="container-fluid px-3 md:px-4 py-2 bg-white border-b border-slate-200 shrink-0 z-40">
     <div class="d-flex align-items-center justify-content-between gap-2">
       <!-- Left Hand Side: Brand + Clear Sort/Filter -->
       <div class="d-flex align-items-center gap-2 flex-wrap">
@@ -164,28 +169,46 @@
               <span>Edit Profile &amp; Cursor Color</span>
             </button>
 
-            <!-- 4-Theme Preference Switcher inside Settings Dropdown -->
-            <div class="pt-2 mb-2 border-t border-slate-200 d-flex flex-column gap-1.5">
-              <div class="pb-0.5 text-slate-400 font-semibold d-flex align-items-center justify-content-between" style="font-size: 10px">
-                <span>UI Theme (4 Modes)</span>
-                <mat-icon style="font-size: 13px; width: 13px; height: 13px; color: #4285F4">palette</mat-icon>
-              </div>
-              <div class="row g-1">
-                @for (tOpt of themeOptions; track tOpt.id) {
-                  <div class="col-6">
-                    <button
-                      type="button"
-                      (click)="setTheme(tOpt.id, $event)"
-                      class="w-100 btn btn-sm py-1 px-1.5 d-flex align-items-center gap-1 text-start text-xs truncate"
-                      [class.btn-primary]="activeTheme() === tOpt.id"
-                      [class.btn-outline-secondary]="activeTheme() !== tOpt.id"
-                      style="font-size: 10.5px"
-                    >
-                      <mat-icon style="font-size: 13px; width: 13px; height: 13px">{{ tOpt.icon }}</mat-icon>
-                      <span class="truncate">{{ tOpt.label }}</span>
-                    </button>
-                  </div>
-                }
+            <!-- Display Mode: Classic Light / Classic Dark Toggle Switch -->
+            <div class="pt-2 mb-2 border-t border-slate-200 d-flex align-items-center justify-content-between gap-2">
+              <span class="text-slate-600 font-semibold" style="font-size: 11px">Display mode :</span>
+              <div class="d-inline-flex align-items-center gap-2">
+                <button
+                  type="button"
+                  (click)="setTheme('classic-light', $event)"
+                  class="btn btn-sm p-0 border-0 bg-transparent text-xs cursor-pointer"
+                  [class.font-bold]="!isDarkMode()"
+                  [class.text-slate-900]="!isDarkMode()"
+                  [class.text-slate-400]="isDarkMode()"
+                  data-gridario-tip="Switch the workspace to Classic Light mode."
+                >
+                  Light
+                </button>
+
+                <button
+                  type="button"
+                  role="switch"
+                  [attr.aria-checked]="isDarkMode()"
+                  (click)="toggleLightDarkTheme($event)"
+                  class="gridario-theme-switch-btn p-0 border-0 position-relative rounded-full cursor-pointer transition-all"
+                  [class.is-dark]="isDarkMode()"
+                  data-gridario-tip="Toggle display mode between Classic Light and Classic Dark."
+                  aria-label="Toggle Light or Dark display mode"
+                >
+                  <span class="gridario-theme-switch-thumb rounded-full"></span>
+                </button>
+
+                <button
+                  type="button"
+                  (click)="setTheme('classic-dark', $event)"
+                  class="btn btn-sm p-0 border-0 bg-transparent text-xs cursor-pointer"
+                  [class.font-bold]="isDarkMode()"
+                  [class.text-slate-900]="isDarkMode()"
+                  [class.text-slate-400]="!isDarkMode()"
+                  data-gridario-tip="Switch the workspace to Classic Dark mode."
+                >
+                  Dark
+                </button>
               </div>
             </div>
 
@@ -374,10 +397,10 @@
   <!-- ===================================================================== -->
   <!-- WORKSPACE BODY: OBJECT EXPLORER SIDEBAR + MAIN CANVAS                 -->
   <!-- ===================================================================== -->
-  <div class="flex-grow-1 d-flex overflow-hidden position-relative">
+  <div class="flex-grow-1 d-flex overflow-hidden position-relative min-h-0">
     @if (isManageSidebarOpen()) {
       <aside
-        class="manage-sidebar-expanded d-flex flex-column shrink-0 select-none"
+        class="manage-sidebar-expanded d-flex flex-column shrink-0 select-none h-100 overflow-hidden"
         [class.is-resizing-pane]="isDraggingSidebarWidth()"
         [style.width.px]="sidebarWidthPx()"
         [style.min-width.px]="sidebarWidthPx()"
@@ -484,45 +507,29 @@
               }
             </div>
           </div>
-
-          <!-- Row 2: SSMS Available Databases Selector Dropdown (Synced with Active Database Tab & Bold Tree Node) -->
-          <div class="ssms-db-selector d-flex align-items-center gap-2">
-            <mat-icon
-              class="shrink-0"
-              style="color: #FBBC05"
-              title="Available Databases (Active Database in use)"
-            >
-              storage
-            </mat-icon>
-            <select
-              class="form-select form-select-sm py-0 ps-1 pe-4 border-0 bg-transparent font-mono-tabular font-semibold text-slate-900 flex-grow-1"
-              style="font-size: 12px; height: 26px; box-shadow: none"
-              [value]="activeDatabaseName()"
-              (change)="switchDatabase($any($event.target).value, undefined, $event)"
-              aria-label="Available Databases"
-            >
-              @for (db of databases(); track db.databaseName) {
-                <option
-                  [value]="db.databaseName"
-                  [selected]="db.databaseName.toLowerCase() === activeDatabaseName().toLowerCase()"
-                >
-                  {{ db.databaseName }} ({{ db.tables.length }} {{ db.tables.length === 1 ? 'table' : 'tables' }})
-                </option>
-              }
-            </select>
-          </div>
         </div>
 
         <!-- SSMS Object Explorer Hierarchical Tree Canvas -->
         <div
-          class="manage-tree-scroll flex-grow-1"
+          class="manage-tree-scroll flex-grow-1 min-h-0"
           [class.is-resizing-pane]="isDraggingSidebarHeight()"
-          [style.max-height.px]="sidebarTreeHeightPx()"
-          [style.height.px]="sidebarTreeHeightPx()"
         >
           <!-- Root Gridario Server Instance Node -->
-          <div class="manage-tree-row d-flex align-items-center gap-2 text-slate-900 font-semibold" style="font-size: 12.5px">
-            <span class="ssms-expander" style="cursor: default">−</span>
+          <div
+            class="manage-tree-row d-flex align-items-center gap-2 text-slate-900 font-semibold cursor-pointer"
+            style="font-size: 12.5px"
+            (click)="toggleServerNode($event)"
+            (keydown.enter)="toggleServerNode($event)"
+            tabindex="0"
+          >
+            <button
+              type="button"
+              (click)="toggleServerNode($event)"
+              class="ssms-expander"
+              [title]="isServerRootNodeExpanded() ? 'Collapse Server' : 'Expand Server'"
+            >
+              {{ isServerRootNodeExpanded() ? '−' : '+' }}
+            </button>
             <div class="position-relative d-inline-flex align-items-center justify-content-center shrink-0">
               <mat-icon style="color: #4285F4">dns</mat-icon>
               <span
@@ -536,48 +543,53 @@
           </div>
 
           <!-- Level 1 Branch under Server Instance: Databases Folder -->
-          <div class="manage-tree-branch mt-1">
-            <div class="ssms-tree-node-wrapper">
-              <div
-                class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5"
-                (contextmenu)="onSidebarContextMenu($event, 'databases_folder')"
-                (touchstart)="onSidebarTouchStart($event, 'databases_folder')"
-                (touchend)="onSidebarTouchEndOrMove()"
-                (touchmove)="onSidebarTouchEndOrMove()"
-              >
-                <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
+          @if (isServerRootNodeExpanded()) {
+            <div class="manage-tree-branch mt-1">
+              <div class="ssms-tree-node-wrapper">
+                <div
+                  class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
+                  (click)="toggleDatabasesFolderNode($event)"
+                  (keydown.enter)="toggleDatabasesFolderNode($event)"
+                  (contextmenu)="onSidebarContextMenu($event, 'databases_folder')"
+                  (touchstart)="onSidebarTouchStart($event, 'databases_folder')"
+                  (touchend)="onSidebarTouchEndOrMove()"
+                  (touchmove)="onSidebarTouchEndOrMove()"
+                  tabindex="0"
+                >
+                  <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
+                    <button
+                      type="button"
+                      (click)="toggleDatabasesFolderNode($event)"
+                      class="ssms-expander"
+                      [title]="isDatabasesFolderNodeExpanded() ? 'Collapse Databases folder' : 'Expand Databases folder'"
+                    >
+                      {{ isDatabasesFolderNodeExpanded() ? '−' : '+' }}
+                    </button>
+                    <mat-icon
+                      class="shrink-0"
+                      style="color: #FBBC05"
+                    >
+                      folder
+                    </mat-icon>
+                    <span class="font-semibold text-slate-900 truncate" style="font-size: 12.5px">
+                      Databases <span class="font-normal">({{ databases().length }})</span>
+                    </span>
+                  </div>
                   <button
                     type="button"
-                    (click)="expandAllManageTree($event)"
-                    class="ssms-expander"
-                    title="Expand Databases folder"
+                    (click)="openCreateDatabaseModal($event)"
+                    class="ssms-action-icon-btn ssms-action-add shrink-0"
+                    title="New Database..."
+                    aria-label="New Database"
                   >
-                    −
+                    <mat-icon>add</mat-icon>
                   </button>
-                  <mat-icon
-                    class="shrink-0"
-                    style="color: #FBBC05"
-                  >
-                    folder
-                  </mat-icon>
-                  <span class="font-semibold text-slate-900 truncate" style="font-size: 12.5px">
-                    Databases <span class="font-normal">({{ databases().length }})</span>
-                  </span>
                 </div>
-                <button
-                  type="button"
-                  (click)="openCreateDatabaseModal($event)"
-                  class="ssms-action-icon-btn ssms-action-add shrink-0"
-                  title="New Database..."
-                  aria-label="New Database"
-                >
-                  <mat-icon>add</mat-icon>
-                </button>
-              </div>
 
-              <!-- Level 2 Branch: Individual Database Nodes -->
-              <div class="manage-tree-branch mt-1 d-flex flex-column gap-1">
-                @for (db of filteredManageDatabases(); track db.databaseName) {
+                <!-- Level 2 Branch: Individual Database Nodes -->
+                @if (isDatabasesFolderNodeExpanded()) {
+                  <div class="manage-tree-branch mt-1 d-flex flex-column gap-1">
+                    @for (db of filteredManageDatabases(); track db.databaseName) {
                   @let isDbActive = db.databaseName.toLowerCase() === activeDatabaseName().toLowerCase();
                   @let isDbExpanded = isDatabaseNodeExpanded(db.databaseName);
                   <div class="ssms-tree-node-wrapper">
@@ -793,25 +805,15 @@
                   </div>
                 }
               </div>
-            </div>
+            }
           </div>
         </div>
-
-        <!-- Horizontal Split-Screen Resizer Handle for Object Explorer Tree Height -->
-        <div
-          class="gridpulse-split-handle-horizontal rounded-none border-x-0"
-          [class.split-active]="isDraggingSidebarHeight()"
-          (mousedown)="startSidebarHeightResize($event)"
-          (touchstart)="startSidebarHeightResize($event)"
-          (dblclick)="toggleSidebarExpandedView($event)"
-          title="Drag up/down to expand or contract Object Explorer tree height (Double-click to toggle)"
-        >
-          <span class="gridpulse-split-grip-pill-h"></span>
-        </div>
+      }
+    </div>
 
         <!-- Object Explorer Bottom Connection Status Bar -->
         <div
-          class="px-2.5 py-1 bg-white border-t border-black d-flex align-items-center justify-content-between text-slate-900 font-mono-tabular"
+          class="px-2.5 py-1 bg-white border-t border-black d-flex align-items-center justify-content-between text-slate-900 font-mono-tabular shrink-0"
           style="font-size: 10.5px"
         >
           <div class="d-flex align-items-center gap-1.5 truncate">
@@ -865,15 +867,15 @@
     }
 
     <!-- Right-Side Column: SQL Server Design Database Tabs Bar + Active Database Tab Page (with Excel Table Sheet Tabs inside) -->
-    <div class="flex-grow-1 d-flex flex-column overflow-hidden min-w-0 bg-slate-100">
+    <div class="flex-grow-1 d-flex flex-column overflow-hidden min-w-0 min-h-0 h-100 bg-slate-100">
       <!-- ===================================================================== -->
       <!-- SQL SERVER DESIGN / BROWSER-STYLE DATABASE TABS BAR (TOP OF WORKSPACE)-->
-      <!-- Every tab connects to a Database; switching tabs syncs the sidebar    -->
-      <!-- dropdown, sidebar bold highlight, and the Excel Table Tabs in footer. -->
+      <!-- Treated as the header of the Database Tab workspace, with the Excel   -->
+      <!-- sheet tabs fixed in the footer of this Database Tab below the table.  -->
       <!-- ===================================================================== -->
-      <div class="bg-slate-200 border-b border-slate-300 px-2 pt-1.5 pb-0 d-flex align-items-end justify-content-between gap-2 select-none">
+      <div class="bg-slate-200 border-b border-slate-300 px-2 pt-1.5 pb-0 d-flex align-items-end justify-content-between gap-2 select-none shrink-0">
         <!-- Open Database Connection Tabs Strip -->
-        <div class="d-flex align-items-end gap-1 overflow-x-auto flex-grow-1" style="scrollbar-width: thin">
+        <div class="d-flex align-items-end gap-1 overflow-x-auto flex-grow-1">
           @for (dbTab of databaseTabs(); track dbTab.tabId; let tIdx = $index) {
             @let isCurrentDbTab = dbTab.tabId === activeDatabaseTabId();
             <div
@@ -905,69 +907,20 @@
                 storage
               </mat-icon>
               <span class="font-mono-tabular">
-                {{ dbTab.databaseName || 'New Tab (Select DB)' }}
+                {{ dbTab.databaseName || activeDatabaseName() }}
               </span>
-              <button
-                type="button"
-                (click)="closeDatabaseTab(dbTab.tabId, $event)"
-                class="btn btn-sm p-0 ms-1 border-0 bg-transparent text-slate-400 hover:text-red-600 d-inline-flex align-items-center gridario-icon-only-btn"
-                [title]="dbTab.databaseName ? 'Disconnect ' + dbTab.databaseName + ' & close tab' : 'Close tab'"
-                aria-label="Close database tab"
-              >
-                <mat-icon style="font-size: 14px; width: 14px; height: 14px">close</mat-icon>
-              </button>
-            </div>
-          }
-
-          <!-- + New Database Tab Button (Browser / SSMS New Connection Tab) -->
-          <button
-            type="button"
-            (click)="createNewDatabaseTab($event)"
-            class="btn btn-sm px-2 py-1 mb-0.5 border border-slate-300 bg-white hover:bg-slate-100 text-slate-800 rounded d-inline-flex align-items-center gap-1 text-xs font-semibold shrink-0 shadow-2xs"
-            title="Open a new Database Tab and select which database should be active for this tab"
-            aria-label="New Database Tab"
-          >
-            <mat-icon style="font-size: 15px; width: 15px; height: 15px; color: #34A853">add</mat-icon>
-            <span>New Tab</span>
-          </button>
-        </div>
-
-        <!-- Active Tab Database Connection Selector & Disconnect Controls -->
-        <div class="d-flex align-items-center gap-1.5 pb-1 shrink-0">
-          <div class="d-inline-flex align-items-center gap-1 bg-white border border-slate-300 rounded px-2 py-0.5 shadow-2xs">
-            <mat-icon style="font-size: 14px; width: 14px; height: 14px; color: #FBBC05">storage</mat-icon>
-            <span class="text-slate-500 font-mono-tabular d-none d-sm-inline" style="font-size: 10.5px">Tab DB:</span>
-            <select
-              class="form-select form-select-sm py-0 ps-1 pe-4 border-0 bg-transparent font-mono-tabular font-bold text-slate-900"
-              style="font-size: 11.5px; height: 22px; box-shadow: none"
-              [value]="isCurrentTabAwaitingDbSelection() ? '' : activeDatabaseName()"
-              (change)="assignDatabaseToTab(activeDatabaseTab()?.tabId || '', $any($event.target).value, $event)"
-              aria-label="Select active database for current tab"
-            >
-              @if (isCurrentTabAwaitingDbSelection()) {
-                <option value="" disabled selected>-- Select Database for Tab --</option>
-              }
-              @for (db of databases(); track db.databaseName) {
-                <option
-                  [value]="db.databaseName"
-                  [selected]="!isCurrentTabAwaitingDbSelection() && db.databaseName.toLowerCase() === activeDatabaseName().toLowerCase()"
+              @if (databaseTabs().length > 1) {
+                <button
+                  type="button"
+                  (click)="closeDatabaseTab(dbTab.tabId, $event)"
+                  class="btn btn-sm p-0 ms-1 border-0 bg-transparent text-slate-400 hover:text-red-600 d-inline-flex align-items-center gridario-icon-only-btn"
+                  [title]="'Disconnect ' + dbTab.databaseName + ' & close tab'"
+                  aria-label="Close database tab"
                 >
-                  {{ db.databaseName }} ({{ db.tables.length }} tbl)
-                </option>
+                  <mat-icon style="font-size: 14px; width: 14px; height: 14px">close</mat-icon>
+                </button>
               }
-            </select>
-          </div>
-
-          @if (activeDatabaseName()) {
-            <button
-              type="button"
-              (click)="disconnectDatabaseFromSidebar(activeDatabaseName(), $event)"
-              class="btn btn-sm py-0.5 px-2 bg-white hover:bg-red-50 text-red-600 border border-slate-300 rounded d-inline-flex align-items-center gap-1 text-xs font-medium"
-              [title]="'Disconnect database ' + activeDatabaseName() + ' from active tab'"
-            >
-              <mat-icon style="font-size: 14px; width: 14px; height: 14px">link_off</mat-icon>
-              <span class="d-none d-md-inline">Disconnect</span>
-            </button>
+            </div>
           }
         </div>
       </div>
@@ -975,42 +928,10 @@
       <!-- ===================================================================== -->
       <!-- ACTIVE SQL SERVER DATABASE TAB BODY (Contains Table Grid + Excel Tabs)-->
       <!-- ===================================================================== -->
-      <div class="flex-grow-1 d-flex flex-column overflow-hidden min-w-0 bg-white border-x border-b border-slate-300">
-        @if (isCurrentTabAwaitingDbSelection()) {
-          <!-- New Tab Database Selector Prompt -->
-          <div class="mx-2 md:mx-4 mt-2.5 p-3 rounded-xl bg-blue-50/70 border border-blue-200 d-flex flex-wrap align-items-center justify-content-between gap-2">
-            <div class="d-flex align-items-center gap-2">
-              <mat-icon class="text-blue-600">tab</mat-icon>
-              <div class="text-xs text-slate-800">
-                <strong>New Database Tab Opened:</strong> Select which database should be active for this tab:
-              </div>
-            </div>
-            <div class="d-flex align-items-center gap-1.5 flex-wrap">
-              @for (db of databases(); track db.databaseName) {
-                <button
-                  type="button"
-                  (click)="assignDatabaseToTab(activeDatabaseTab()?.tabId || '', db.databaseName, $event)"
-                  class="btn btn-sm py-1 px-2.5 bg-white hover:bg-blue-600 hover:text-white text-slate-800 border border-blue-300 rounded-lg d-inline-flex align-items-center gap-1.5 text-xs font-semibold shadow-2xs transition-all"
-                >
-                  <mat-icon style="font-size: 14px; width: 14px; height: 14px; color: #FBBC05">storage</mat-icon>
-                  <span>Connect {{ db.databaseName }} ({{ db.tables.length }} tables)</span>
-                </button>
-              }
-              <button
-                type="button"
-                (click)="openCreateDatabaseModal($event)"
-                class="btn btn-sm py-1 px-2.5 btn-primary rounded-lg d-inline-flex align-items-center gap-1 text-xs font-semibold"
-              >
-                <mat-icon style="font-size: 14px; width: 14px; height: 14px">add</mat-icon>
-                <span>Create New Database...</span>
-              </button>
-            </div>
-          </div>
-        }
-
-      <main class="container-fluid px-2 md:px-4 py-2.5 flex-grow-1 d-flex flex-column">
+      <div class="flex-grow-1 d-flex flex-column overflow-hidden min-w-0 min-h-0 bg-white border-x border-b border-slate-300">
+      <main class="container-fluid px-2 md:px-3 py-2 flex-grow-1 d-flex flex-column overflow-hidden min-h-0">
         @if (!activeTableName() || tables().length === 0) {
-          <div class="p-4 my-2 rounded-xl bg-white border border-slate-200 shadow-2xs d-flex flex-wrap align-items-center justify-content-between gap-3">
+          <div class="p-4 my-2 rounded-xl bg-white border border-slate-200 shadow-2xs d-flex flex-wrap align-items-center justify-content-between gap-3 shrink-0">
             <div class="d-flex align-items-center gap-3">
               <div class="p-2.5 rounded-lg bg-blue-50 text-blue-600 d-inline-flex align-items-center justify-content-center">
                 <mat-icon>storage</mat-icon>
@@ -1020,28 +941,28 @@
                   Database "{{ activeDatabaseName() }}" has no tables yet
                 </h3>
                 <p class="text-xs text-slate-500 m-0 mt-0.5">
-                  In Object Explorer on the left, the "{{ activeDatabaseName() }}" node is currently empty. Use "+" on the database node in Object Explorer to create a table.
+                  In Object Explorer on the left, right-click the "{{ activeDatabaseName() }}" database node and choose "New" to create a table.
                 </p>
               </div>
             </div>
           </div>
         } @else if (sortedColumns().length === 0) {
-          <div class="p-3 mb-2 rounded-xl bg-amber-50 border border-amber-200 d-flex flex-wrap align-items-center justify-content-between gap-2">
+          <div class="p-3 mb-2 rounded-xl bg-amber-50 border border-amber-200 d-flex flex-wrap align-items-center justify-content-between gap-2 shrink-0">
             <div class="d-flex align-items-center gap-2 text-xs text-amber-900">
               <mat-icon class="text-amber-700">view_column</mat-icon>
               <span>
-                Table <strong>{{ activeDatabaseName() }}.{{ activeTableName() }}</strong> currently has no columns (its node in Object Explorer is empty). Use "+" on the table node in Object Explorer to add a column.
+                Table <strong>{{ activeDatabaseName() }}.{{ activeTableName() }}</strong> currently has no columns. Use "+" on the table node in Object Explorer to add a column.
               </span>
             </div>
           </div>
         }
 
         <div
-          class="table-responsive gridpulse-table-container flex-grow-1 shadow-xs"
+          class="table-responsive gridpulse-table-container flex-grow-1 min-h-0 shadow-xs"
           [class.is-resizing-pane]="isDraggingTableHeight()"
-          [style.max-height.px]="tableViewHeightPx()"
-          [style.height.px]="tableViewHeightPx()"
           (scroll)="onTableScroll($event)"
+          (wheel)="onTableWheel($event)"
+          (touchmove)="onTableTouchMove($event)"
         >
           <table class="table table-bordered table-hover gridpulse-table align-middle">
         <thead>
@@ -1657,26 +1578,27 @@
               }
             </tr>
           }
+          @if (hasMoreLazyRows()) {
+            <tr class="gridpulse-lazy-sentinel-row" style="height: 140px; border: 0; background: transparent">
+              <td
+                [attr.colspan]="sortedColumns().length + 2"
+                class="text-center align-middle text-xs text-slate-400 border-0 py-3"
+                style="background: transparent"
+              >
+                @if (isLazyLoadingMore()) {
+                  <span>Loading more rows...</span>
+                } @else {
+                  <span>Scroll down to load more rows ({{ visibleRows().length }} of {{ dbFilteredTotalRows() }})</span>
+                }
+              </td>
+            </tr>
+          }
         </tbody>
       </table>
     </div>
 
-    <!-- Horizontal Split-Screen Resizer Handle (Drag up/down to see more or fewer table rows) -->
-    <div
-      class="gridpulse-split-handle-horizontal"
-      [class.split-active]="isDraggingTableHeight()"
-      (mousedown)="startTableHeightResize($event)"
-      (touchstart)="startTableHeightResize($event)"
-      (dblclick)="toggleTableViewExpanded($event)"
-      title="Drag up or down to expand/contract table view height and see more rows (Double-click to toggle expanded view)"
-      role="separator"
-      aria-orientation="horizontal"
-    >
-      <span class="gridpulse-split-grip-pill-h"></span>
-    </div>
-
     <!-- Showing [loaded data in UI] of [total count of row in db table] rows -->
-    <div class="pt-1.5 px-1 d-flex align-items-center justify-content-between flex-wrap gap-2 text-xs text-slate-700 font-medium font-mono-tabular">
+    <div class="pt-1.5 px-1 d-flex align-items-center justify-content-between flex-wrap gap-2 text-xs text-slate-700 font-medium font-mono-tabular shrink-0">
       <div class="d-flex align-items-center gap-2 flex-wrap">
         <span>
           Showing {{ visibleRows().length }} of {{ dbFilteredTotalRows() }} rows in <strong>{{ activeDatabaseName() }}</strong> table <strong>{{ activeTableName() }}</strong>
@@ -1706,9 +1628,9 @@
   </main>
 
   <!-- ===================================================================== -->
-  <!-- EXCEL SHEET TABS FOOTER BAR (1 Tab = 1 Database Table, Scroll + Arrows)-->
+  <!-- EXCEL SHEET TABS FOOTER BAR (Fixed in Footer of Database Tab)         -->
   <!-- ===================================================================== -->
-  <footer class="excel-sheet-footer bg-slate-200 border-t border-slate-300 px-2 py-1 sticky bottom-0 z-30">
+  <footer class="excel-sheet-footer bg-slate-200 border-t border-slate-300 px-2 py-1 shrink-0 z-30">
     <div class="d-flex align-items-center justify-content-between gap-2">
       <!-- Left Scroll Arrows -->
       <div class="d-flex align-items-center gap-1 shrink-0">
@@ -1785,17 +1707,6 @@
             }
           </div>
         }
-        <!-- + New Table Sheet Tab Button inside current Database Tab (Excel Worksheet "+" Idea) -->
-        <button
-          type="button"
-          (click)="openCreateTableModal($event, activeDatabaseName())"
-          class="btn btn-sm px-2 py-1 bg-white hover:bg-emerald-50 text-emerald-700 border border-slate-300 rounded d-inline-flex align-items-center gap-1 text-xs font-semibold shrink-0"
-          [title]="'Create new table sheet tab in database ' + activeDatabaseName()"
-          aria-label="Create new table sheet tab"
-        >
-          <mat-icon style="font-size: 15px; width: 15px; height: 15px">add</mat-icon>
-          <span>New Table</span>
-        </button>
       </div>
 
       <!-- Right Side Table Schema Summary (Inside Database Tab) -->
@@ -2408,10 +2319,14 @@
         <button
           type="button"
           (click)="openCreateTableForDatabaseFromTree(sidebarContextMenu().databaseName, $event); closeAllMenus()"
-          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 font-medium text-slate-800"
+          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center justify-content-between gap-2 font-semibold text-emerald-800"
+          data-gridario-tip="Create a new table inside this database."
         >
-          <mat-icon style="color: #34A853">add</mat-icon>
-          <span>Create Table in "{{ sidebarContextMenu().databaseName }}"...</span>
+          <span class="d-inline-flex align-items-center gap-2">
+            <mat-icon style="color: #34A853">add</mat-icon>
+            <span>New (Create Table)...</span>
+          </span>
+          <span class="px-1.5 py-0 rounded bg-emerald-100 text-emerald-800 font-mono-tabular" style="font-size: 10px">Table</span>
         </button>
 
         <button
@@ -2446,6 +2361,36 @@
       }
 
       @if (sidebarContextMenu().targetType === 'table') {
+        <!-- Select: Open and display this table on the screen -->
+        <button
+          type="button"
+          (click)="selectTableFromContextMenu(sidebarContextMenu().databaseName, sidebarContextMenu().tableName, $event)"
+          class="w-100 text-start px-3 py-1.5 bg-blue-50/70 border-0 hover:bg-blue-100 d-flex align-items-center justify-content-between gap-2 font-semibold text-blue-800"
+          data-gridario-tip="Select and open this table on the main spreadsheet screen."
+        >
+          <span class="d-inline-flex align-items-center gap-2">
+            <mat-icon style="color: #4285F4">table_view</mat-icon>
+            <span>Select</span>
+          </span>
+          <span class="px-1.5 py-0 rounded bg-blue-100 text-blue-800 font-mono-tabular" style="font-size: 10px">Open</span>
+        </button>
+
+        <!-- New: Create a new table in this database -->
+        <button
+          type="button"
+          (click)="openCreateTableForDatabaseFromTree(sidebarContextMenu().databaseName, $event); closeAllMenus()"
+          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center justify-content-between gap-2 font-semibold text-emerald-800"
+          data-gridario-tip="Create a new table inside this database."
+        >
+          <span class="d-inline-flex align-items-center gap-2">
+            <mat-icon style="color: #34A853">add_box</mat-icon>
+            <span>New</span>
+          </span>
+          <span class="px-1.5 py-0 rounded bg-emerald-100 text-emerald-800 font-mono-tabular" style="font-size: 10px">Create Table</span>
+        </button>
+
+        <div class="border-t border-slate-100 my-1"></div>
+
         <button
           type="button"
           (click)="openAddColumnForTableFromTree(sidebarContextMenu().databaseName, sidebarContextMenu().tableName, $event); closeAllMenus()"
@@ -2453,15 +2398,6 @@
         >
           <mat-icon style="color: #34A853">add</mat-icon>
           <span>Create Field in "{{ sidebarContextMenu().tableName }}"...</span>
-        </button>
-
-        <button
-          type="button"
-          (click)="openCreateTableForDatabaseFromTree(sidebarContextMenu().databaseName, $event); closeAllMenus()"
-          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-slate-700"
-        >
-          <mat-icon style="color: #4285F4">table_chart</mat-icon>
-          <span>Create New Table...</span>
         </button>
 
         <button

@@ -11,13 +11,17 @@
   --palette-green: #34A853;
 }
 
+html,
 body {
   font-family: var(--font-sans);
   background-color: #FFFFFF;
   color: #000000;
   margin: 0;
   padding: 0;
-  overflow-x: hidden;
+  width: 100%;
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
 }
 
 /* Crisp Black & White Text Enforcement (Excluding Icons) */
@@ -380,29 +384,47 @@ mat-icon.text-purple-700 {
   }
 }
 
-.gridario-loader-backdrop {
+.gridario-loader-overlay {
   position: fixed;
   inset: 0;
   z-index: 9999;
-  background: rgba(255, 255, 255, 0.55);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  background: transparent !important;
+  background-color: transparent !important;
   cursor: wait;
   user-select: none;
 }
 
+.gridario-loader-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  background-color: rgba(255, 255, 255, 0.4) !important;
+  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
+  pointer-events: none;
+}
+
 .gridario-loader-card {
   position: relative;
+  z-index: 1;
   min-width: 240px;
   max-width: 290px;
-  background: #FFFFFF;
+  background: #FFFFFF !important;
+  background-color: #FFFFFF !important;
   color: #000000;
-  border: 1px solid rgba(0, 0, 0, 0.12);
+  border: 1px solid rgba(100, 116, 139, 0.28);
   border-radius: 0.875rem;
-  box-shadow:
-    0 12px 32px -8px rgba(0, 0, 0, 0.16),
-    0 2px 6px rgba(0, 0, 0, 0.06);
+  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.16);
   overflow: hidden;
+}
+
+.gridario-loader-text {
+  color: #000000;
+}
+
+.gridario-loader-track {
+  background-color: #f1f5f9 !important;
+  border: 1px solid rgba(100, 116, 139, 0.25);
 }
 
 .gridario-loader-orbit {
@@ -460,14 +482,14 @@ mat-icon.text-purple-700 {
 
 /* Resizable scrollable table container (supports split-screen drag & expand/contract) */
 .gridpulse-table-container {
-  max-height: 380px;
-  min-height: 200px;
+  flex: 1 1 0%;
+  min-height: 0;
+  max-height: none;
   overflow: auto;
   position: relative;
   background: #FFFFFF;
   border: 1px solid #cbd5e1;
   border-radius: 0.5rem 0.5rem 0 0;
-  transition: height 80ms ease, max-height 80ms ease;
 }
 
 .gridpulse-table-container.is-resizing-pane,
@@ -899,8 +921,9 @@ mat-icon.text-purple-700 {
 
 /* SSMS Tree Viewport */
 .manage-tree-scroll {
-  max-height: 520px;
-  min-height: 200px;
+  flex: 1 1 0%;
+  min-height: 0;
+  max-height: none;
   overflow-y: auto;
   overflow-x: auto;
   background-color: #FFFFFF;
@@ -908,7 +931,6 @@ mat-icon.text-purple-700 {
   padding: 8px 8px 12px 8px;
   font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, var(--font-sans);
   font-size: 12.5px;
-  transition: height 80ms ease, max-height 80ms ease;
 }
 
 .manage-tree-scroll mat-icon,
@@ -1502,425 +1524,32 @@ mat-icon.text-purple-700 {
   border-top: 2px solid #34A853 !important;
 }
 
-/* ------------------------------------------------------------------------- */
-/* THEME 3: NEUMORPHIC UI LIGHT MODE (data-theme="neumorphic-light")         */
-/* Soft extruded tactile surfaces with #4285F4, #EA4335, #FBBC05, #34A853    */
-/* ------------------------------------------------------------------------- */
-[data-theme='neumorphic-light'],
-[data-theme='neumorphic-light'] .app-theme-shell {
-  background-color: #e6ebf2 !important;
-  color: #1e293b !important;
+[data-theme='classic-dark'] .gridario-loader-overlay {
+  background: transparent !important;
+  background-color: transparent !important;
 }
 
-[data-theme='neumorphic-light'] header {
-  background-color: #e6ebf2 !important;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.7) !important;
-  box-shadow: 0 4px 12px #c8d0db !important;
+[data-theme='classic-dark'] .gridario-loader-backdrop {
+  background-color: rgba(0, 0, 25, 0.4) !important;
+  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
 }
 
-[data-theme='neumorphic-light'] .manage-sidebar-expanded {
-  background-color: #e6ebf2 !important;
-  border: 1px solid rgba(255, 255, 255, 0.75) !important;
-  box-shadow: 6px 0 14px #c5cdd9, -4px 0 10px #ffffff !important;
-}
-
-[data-theme='neumorphic-light'] .ssms-titlebar {
-  background: linear-gradient(145deg, #243044, #1a2332) !important;
-  box-shadow: inset 1px 1px 2px rgba(255, 255, 255, 0.15), 0 3px 6px rgba(0, 0, 0, 0.15) !important;
-}
-
-[data-theme='neumorphic-light'] .ssms-toolbar,
-[data-theme='neumorphic-light'] .excel-sheet-footer {
-  background-color: #e6ebf2 !important;
-  border-color: #cfd6e0 !important;
-}
-
-[data-theme='neumorphic-light'] .ssms-db-selector {
-  background-color: #e6ebf2 !important;
-  border: 1px solid rgba(255, 255, 255, 0.6) !important;
-  border-radius: 8px !important;
-  box-shadow: inset 3px 3px 6px #c5cdd9, inset -3px -3px 6px #ffffff !important;
-}
-
-[data-theme='neumorphic-light'] .manage-tree-scroll {
-  background-color: #ebf0f7 !important;
-  box-shadow: inset 4px 4px 8px #cad1dc, inset -4px -4px 8px #ffffff !important;
-}
-
-[data-theme='neumorphic-light'] .manage-tree-row {
-  border-radius: 8px !important;
-  border: 1px solid transparent !important;
-}
-
-[data-theme='neumorphic-light'] .manage-tree-row:hover,
-[data-theme='neumorphic-light'] .manage-tree-row.ssms-node-selected {
-  background-color: #e6ebf2 !important;
-  border-color: rgba(66, 133, 244, 0.4) !important;
-  box-shadow: 4px 4px 8px #c5cdd9, -4px -4px 8px #ffffff !important;
-}
-
-[data-theme='neumorphic-light'] .manage-tree-row.ssms-table-selected {
-  background-color: #e6ebf2 !important;
-  border-color: #FBBC05 !important;
-  box-shadow: 4px 4px 8px #c5cdd9, -4px -4px 8px #ffffff, inset 0 0 0 1px #FBBC05 !important;
-}
-
-[data-theme='neumorphic-light'] .gridpulse-table-container {
-  background-color: #eef2f8 !important;
-  border: 1px solid rgba(255, 255, 255, 0.8) !important;
-  border-radius: 12px !important;
-  box-shadow: 7px 7px 15px #c4ccd8, -7px -7px 15px #ffffff !important;
-}
-
-[data-theme='neumorphic-light'] .gridpulse-table thead th {
-  background: #e6ebf2 !important;
-  border-color: #d0d7e2 !important;
-  box-shadow: inset 1px 1px 0 #ffffff;
-}
-
-[data-theme='neumorphic-light'] .gridpulse-table tbody td {
-  background-color: #eef2f8 !important;
-  border-color: #d5dce6 !important;
-}
-
-[data-theme='neumorphic-light'] .btn,
-[data-theme='neumorphic-light'] .ssms-toolbar-btn,
-[data-theme='neumorphic-light'] .excel-sheet-tab {
-  border-radius: 8px !important;
-  box-shadow: 3px 3px 6px #c5cdd9, -3px -3px 6px #ffffff !important;
-  border-color: rgba(255, 255, 255, 0.65) !important;
-}
-
-[data-theme='neumorphic-light'] .excel-sheet-tab.excel-sheet-tab-active {
-  background-color: #eef2f8 !important;
-  box-shadow: inset 2px 2px 5px #c5cdd9, inset -2px -2px 5px #ffffff !important;
-  border-top: 2px solid #34A853 !important;
-}
-
-[data-theme='neumorphic-light'] .form-control,
-[data-theme='neumorphic-light'] .form-select {
-  background-color: #e6ebf2 !important;
-  border: 1px solid rgba(255, 255, 255, 0.7) !important;
-  border-radius: 7px !important;
-  box-shadow: inset 2px 2px 5px #c5cdd9, inset -2px -2px 5px #ffffff !important;
-}
-
-[data-theme='neumorphic-light'] .gridpulse-popup-card,
-[data-theme='neumorphic-light'] .gridpulse-floating-popup,
-[data-theme='neumorphic-light'] .gridpulse-context-popup {
-  background-color: #e6ebf2 !important;
-  border: 1px solid rgba(255, 255, 255, 0.8) !important;
-  box-shadow: 10px 10px 22px #bcc4d0, -8px -8px 18px #ffffff !important;
-}
-
-/* ------------------------------------------------------------------------- */
-/* THEME 4: NEUMORPHIC UI DARK MODE (data-theme="neumorphic-dark")           */
-/* - Black remains black (#000000)                                           */
-/* - All fixed bars, headers (even fixed columns), rows, cells & disabled    */
-/*   items share the same theme bg (#000000) with light grey (#9ca3af) text  */
-/* - Icon-only buttons in header & sidebar have only icon and no border      */
-/* ------------------------------------------------------------------------- */
-[data-theme='neumorphic-dark'],
-[data-theme='neumorphic-dark'] .app-theme-shell,
-[data-theme='neumorphic-dark'] header,
-[data-theme='neumorphic-dark'] main,
-[data-theme='neumorphic-dark'] footer,
-[data-theme='neumorphic-dark'] section,
-[data-theme='neumorphic-dark'] aside,
-[data-theme='neumorphic-dark'] nav,
-[data-theme='neumorphic-dark'] .manage-sidebar-expanded,
-[data-theme='neumorphic-dark'] .manage-sidebar-collapsed,
-[data-theme='neumorphic-dark'] .ssms-toolbar,
-[data-theme='neumorphic-dark'] .excel-sheet-footer,
-[data-theme='neumorphic-dark'] .excel-sheet-tabs-strip,
-[data-theme='neumorphic-dark'] .gridpulse-split-handle-horizontal,
-[data-theme='neumorphic-dark'] .gridpulse-split-handle-vertical,
-[data-theme='neumorphic-dark'] .card,
-[data-theme='neumorphic-dark'] .card-header,
-[data-theme='neumorphic-dark'] .card-body,
-[data-theme='neumorphic-dark'] .card-footer,
-[data-theme='neumorphic-dark'] .modal-content,
-[data-theme='neumorphic-dark'] .modal-header,
-[data-theme='neumorphic-dark'] .modal-body,
-[data-theme='neumorphic-dark'] .modal-footer,
-[data-theme='neumorphic-dark'] .dropdown-menu,
-[data-theme='neumorphic-dark'] .dropdown-item,
-[data-theme='neumorphic-dark'] .list-group,
-[data-theme='neumorphic-dark'] .list-group-item,
-[data-theme='neumorphic-dark'] .bg-light,
-[data-theme='neumorphic-dark'] .bg-secondary,
-[data-theme='neumorphic-dark'] .bg-white,
-[data-theme='neumorphic-dark'] .bg-black,
-[data-theme='neumorphic-dark'] [class*='bg-white'],
-[data-theme='neumorphic-dark'] [class*='bg-slate-'],
-[data-theme='neumorphic-dark'] [class*='bg-gray-'],
-[data-theme='neumorphic-dark'] [class*='bg-zinc-'],
-[data-theme='neumorphic-dark'] [class*='bg-neutral-'],
-[data-theme='neumorphic-dark'] [class*='bg-stone-'],
-[data-theme='neumorphic-dark'] [class*='bg-amber-50'],
-[data-theme='neumorphic-dark'] [class*='bg-amber-100'],
-[data-theme='neumorphic-dark'] [class*='bg-emerald-50'],
-[data-theme='neumorphic-dark'] [class*='bg-emerald-100'],
-[data-theme='neumorphic-dark'] [class*='bg-blue-50'],
-[data-theme='neumorphic-dark'] [class*='bg-blue-100'],
-[data-theme='neumorphic-dark'] [class*='bg-purple-50'],
-[data-theme='neumorphic-dark'] [class*='bg-purple-100'],
-[data-theme='neumorphic-dark'] [class*='bg-red-50'],
-[data-theme='neumorphic-dark'] [class*='bg-red-100'] {
+[data-theme='classic-dark'] .gridario-loader-card {
   background: #000000 !important;
   background-color: #000000 !important;
-  color: #f1f5f9 !important;
-  border-color: #1f242d !important;
-}
-
-[data-theme='neumorphic-dark'] .ssms-titlebar,
-[data-theme='neumorphic-dark'] .bg-black {
-  background: #000000 !important;
-  background-color: #000000 !important;
+  border-color: #27272a !important;
   color: #FFFFFF !important;
+  box-shadow: 0 12px 32px -8px rgba(0, 0, 0, 0.7) !important;
 }
 
-[data-theme='neumorphic-dark'] header {
-  box-shadow: 0 5px 14px #000000 !important;
+[data-theme='classic-dark'] .gridario-loader-track {
+  background-color: #18181b !important;
+  border-color: #27272a !important;
 }
 
-[data-theme='neumorphic-dark'] .text-slate-900,
-[data-theme='neumorphic-dark'] .text-slate-800,
-[data-theme='neumorphic-dark'] .text-slate-700,
-[data-theme='neumorphic-dark'] .text-black,
-[data-theme='neumorphic-dark'] .text-white {
-  color: #f1f5f9 !important;
-}
-
-[data-theme='neumorphic-dark'] .text-slate-600,
-[data-theme='neumorphic-dark'] .text-slate-500,
-[data-theme='neumorphic-dark'] .text-slate-400 {
-  color: #9ca3af !important;
-}
-
-[data-theme='neumorphic-dark'] .manage-tree-scroll {
-  background-color: #000000 !important;
-  color: #f1f5f9 !important;
-  box-shadow: inset 4px 4px 9px #000000, inset -3px -3px 7px #161a22 !important;
-}
-
-[data-theme='neumorphic-dark'] .manage-tree-row,
-[data-theme='neumorphic-dark'] .manage-tree-row span {
-  background: #000000 !important;
-  background-color: #000000 !important;
-  color: #e2e8f0 !important;
-  border-radius: 8px !important;
-}
-
-[data-theme='neumorphic-dark'] .manage-tree-branch,
-[data-theme='neumorphic-dark'] .ssms-tree-node-wrapper::before {
-  border-color: #475569 !important;
-}
-
-[data-theme='neumorphic-dark'] .ssms-expander {
-  background: transparent !important;
-  background-color: transparent !important;
-  color: #f8fafc !important;
-  border: none !important;
-  border-color: transparent !important;
-  box-shadow: none !important;
-}
-
-[data-theme='neumorphic-dark'] .ssms-db-selector {
-  background-color: #000000 !important;
-  color: #f8fafc !important;
-  border: 1px solid #1f242d !important;
-  border-radius: 8px !important;
-  box-shadow: inset 3px 3px 6px #000000, inset -3px -3px 6px #181c24 !important;
-}
-
-[data-theme='neumorphic-dark'] .manage-tree-row:hover,
-[data-theme='neumorphic-dark'] .manage-tree-row.ssms-node-selected {
-  background-color: #000000 !important;
-  border-color: #4285F4 !important;
-  box-shadow: 4px 4px 9px #000000, -3px -3px 7px #1a1f29 !important;
-}
-
-[data-theme='neumorphic-dark'] .manage-tree-row.ssms-table-selected {
-  background-color: #000000 !important;
-  border-color: #FBBC05 !important;
-  box-shadow: 4px 4px 9px #000000, -3px -3px 7px #1a1f29, inset 0 0 0 1px #FBBC05 !important;
-}
-
-[data-theme='neumorphic-dark'] .gridpulse-table-container {
-  background-color: #000000 !important;
-  border: 1px solid #1f242d !important;
-  border-radius: 12px !important;
-  box-shadow: 8px 8px 16px #000000, -5px -5px 12px #171b24 !important;
-}
-
-[data-theme='neumorphic-dark'] .table,
-[data-theme='neumorphic-dark'] .gridpulse-table {
-  --bs-table-bg: #000000 !important;
-  --bs-table-accent-bg: transparent !important;
-  --bs-table-striped-bg: transparent !important;
-  --bs-table-active-bg: transparent !important;
-  --bs-table-hover-bg: transparent !important;
-  --bs-table-bg-type: transparent !important;
-  --bs-table-bg-state: transparent !important;
-  --bs-table-color: #f1f5f9 !important;
-  --bs-table-hover-color: #f1f5f9 !important;
-  --bs-table-striped-color: #f1f5f9 !important;
-  --bs-table-active-color: #f1f5f9 !important;
-  background: #000000 !important;
-  background-color: #000000 !important;
-  color: #f1f5f9 !important;
-}
-
-[data-theme='neumorphic-dark'] .table > :not(caption) > * > *,
-[data-theme='neumorphic-dark'] .gridpulse-table thead,
-[data-theme='neumorphic-dark'] .gridpulse-table thead tr,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody,
-[data-theme='neumorphic-dark'] .gridpulse-table tfoot,
-[data-theme='neumorphic-dark'] .gridpulse-table tr,
-[data-theme='neumorphic-dark'] .gridpulse-table th,
-[data-theme='neumorphic-dark'] .gridpulse-table td,
-[data-theme='neumorphic-dark'] .gridpulse-table thead th,
-[data-theme='neumorphic-dark'] .gridpulse-table thead th[class*='bg-'],
-[data-theme='neumorphic-dark'] .gridpulse-table thead th[style*='sticky'],
-[data-theme='neumorphic-dark'] .gridpulse-table thead th > div,
-[data-theme='neumorphic-dark'] .gridpulse-table thead th > div > div,
-[data-theme='neumorphic-dark'] .gridpulse-table thead th span,
-[data-theme='neumorphic-dark'] .gridpulse-table thead th.sticky-col-check,
-[data-theme='neumorphic-dark'] .gridpulse-table thead th.sticky-col-check > div,
-[data-theme='neumorphic-dark'] .gridpulse-table thead th.sticky-col-index,
-[data-theme='neumorphic-dark'] .gridpulse-table thead th.sticky-col-index > div,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody tr,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody td,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody td[class*='bg-'],
-[data-theme='neumorphic-dark'] .gridpulse-table tbody td[style*='sticky'],
-[data-theme='neumorphic-dark'] .gridpulse-table tbody td > div,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody tr:hover,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody tr:hover td,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody tr:hover td > div,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody tr:hover td.sticky-col-check,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody tr:hover td.sticky-col-index,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody tr.row-selected,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody tr.row-selected td,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody tr.row-selected td > div,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody tr.row-selected td.sticky-col-check,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody tr.row-selected td.sticky-col-index,
-[data-theme='neumorphic-dark'] .gridario-first-row,
-[data-theme='neumorphic-dark'] .gridario-first-row td,
-[data-theme='neumorphic-dark'] .gridario-first-row td > div {
-  --bs-table-bg: #000000 !important;
-  --bs-table-bg-type: transparent !important;
-  --bs-table-bg-state: transparent !important;
-  --bs-table-accent-bg: transparent !important;
-  background: #000000 !important;
-  background-color: #000000 !important;
-  box-shadow: none !important;
-  color: #f1f5f9 !important;
-  border-color: #1f242d !important;
-}
-
-[data-theme='neumorphic-dark'] .gridpulse-table tbody td.cell-focused {
-  background: #000000 !important;
-  background-color: #000000 !important;
-  box-shadow: inset 0 0 0 2px #4285F4 !important;
-  color: #f1f5f9 !important;
-}
-
-[data-theme='neumorphic-dark'] .gridpulse-table tbody td.cell-invalid,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody tr.row-invalid td.cell-invalid {
-  background: #000000 !important;
-  background-color: #000000 !important;
-  box-shadow: inset 0 0 0 2px #EA4335 !important;
-  color: #EA4335 !important;
-}
-
-/* Fixed Bars & Non-Editable / Disabled Elements in Neumorphic Dark Mode:
-   Same background color (#000000) as the rest of the theme, light grey (#9ca3af) text */
-[data-theme='neumorphic-dark'] .sticky-col-check,
-[data-theme='neumorphic-dark'] .sticky-col-index,
-[data-theme='neumorphic-dark'] .sticky-col-index span,
-[data-theme='neumorphic-dark'] .gridpulse-table thead th.sticky-col-check,
-[data-theme='neumorphic-dark'] .gridpulse-table thead th.sticky-col-index,
-[data-theme='neumorphic-dark'] .gridpulse-table thead th.sticky-col-index span,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody td.sticky-col-check,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody td.sticky-col-index,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody td.sticky-col-index span,
-[data-theme='neumorphic-dark'] .gridario-non-editable,
-[data-theme='neumorphic-dark'] .gridario-non-editable span,
-[data-theme='neumorphic-dark'] td.gridario-non-editable,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody td > div.gridario-non-editable,
-[data-theme='neumorphic-dark'] .gridpulse-table tbody td > div.gridario-non-editable span,
-[data-theme='neumorphic-dark'] button:disabled,
-[data-theme='neumorphic-dark'] button[disabled],
-[data-theme='neumorphic-dark'] button:disabled span,
-[data-theme='neumorphic-dark'] button[disabled] span,
-[data-theme='neumorphic-dark'] input:disabled,
-[data-theme='neumorphic-dark'] select:disabled,
-[data-theme='neumorphic-dark'] textarea:disabled,
-[data-theme='neumorphic-dark'] .disabled,
-[data-theme='neumorphic-dark'] [disabled] {
-  background: #000000 !important;
-  background-color: #000000 !important;
-  color: #9ca3af !important;
-  border-color: #1f242d !important;
-}
-
-[data-theme='neumorphic-dark'] .btn:not(:disabled):not([disabled]):not(.gridario-icon-only-btn),
-[data-theme='neumorphic-dark'] .excel-sheet-tab {
-  background-color: #000000 !important;
-  color: #f1f5f9 !important;
-  border-radius: 8px !important;
-  border: 1px solid #1f242d !important;
-  box-shadow: 4px 4px 8px #000000, -3px -3px 7px #1a1f29 !important;
-}
-
-/* Dark mode icon-only buttons (header filter/sort/gear, sidebar object explorer open/close, toolbar icons):
-   Only icon and NO border */
-[data-theme='neumorphic-dark'] .gridario-icon-only-btn,
-[data-theme='neumorphic-dark'] .gridario-icon-only-btn:hover,
-[data-theme='neumorphic-dark'] .gridario-icon-only-btn:focus,
-[data-theme='neumorphic-dark'] .ssms-toolbar-btn,
-[data-theme='neumorphic-dark'] .ssms-toolbar-btn:hover,
-[data-theme='neumorphic-dark'] .gridpulse-table thead th button,
-[data-theme='neumorphic-dark'] .gridpulse-table thead th button:hover,
-[data-theme='neumorphic-dark'] .ssms-titlebar button,
-[data-theme='neumorphic-dark'] .manage-sidebar-collapsed button {
-  background: transparent !important;
-  background-color: transparent !important;
-  border: none !important;
-  border-width: 0 !important;
-  border-color: transparent !important;
-  outline: none !important;
-  box-shadow: none !important;
-}
-
-[data-theme='neumorphic-dark'] .excel-sheet-tab.excel-sheet-tab-active {
-  background-color: #000000 !important;
-  color: #34A853 !important;
-  box-shadow: inset 3px 3px 6px #000000, inset -3px -3px 6px #1a1f29 !important;
-  border-top: 2px solid #34A853 !important;
-}
-
-[data-theme='neumorphic-dark'] .form-control,
-[data-theme='neumorphic-dark'] .form-select,
-[data-theme='neumorphic-dark'] input:not([type='checkbox']):not([type='radio']),
-[data-theme='neumorphic-dark'] select,
-[data-theme='neumorphic-dark'] textarea {
-  background: #000000 !important;
-  background-color: #000000 !important;
-  color: #f8fafc !important;
-  border: 1px solid #1f242d !important;
-  border-radius: 7px !important;
-  box-shadow: inset 3px 3px 6px #000000, inset -3px -3px 6px #1a1f29 !important;
-}
-
-[data-theme='neumorphic-dark'] .gridpulse-popup-card,
-[data-theme='neumorphic-dark'] .gridpulse-floating-popup,
-[data-theme='neumorphic-dark'] .gridpulse-context-popup {
-  background-color: #000000 !important;
-  color: #f1f5f9 !important;
-  border: 1px solid #262c38 !important;
-  box-shadow: 10px 10px 24px #000000, -6px -6px 14px #181c24 !important;
+[data-theme='classic-dark'] .gridario-loader-text {
+  color: #FFFFFF !important;
 }
 
 /* ------------------------------------------------------------------------- */
@@ -1954,13 +1583,74 @@ mat-icon.text-purple-700 {
   letter-spacing: 0.01em;
 }
 
-[data-theme='classic-dark'] .gridario-action-tooltip,
-[data-theme='neumorphic-dark'] .gridario-action-tooltip {
+[data-theme='classic-dark'] .gridario-action-tooltip {
   background-color: #000000 !important;
   color: #ffffff !important;
   border: 1px solid #4285F4 !important;
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.85) !important;
 }
 
+/* ------------------------------------------------------------------------- */
+/* DISPLAY MODE LIGHT / DARK TOGGLE SWITCH                                   */
+/* ------------------------------------------------------------------------- */
+.gridario-theme-switch-btn {
+  width: 38px;
+  height: 20px;
+  background-color: #cbd5e1 !important;
+  border: 1px solid #94a3b8 !important;
+  border-radius: 9999px !important;
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  transition: background-color 180ms ease, border-color 180ms ease;
+}
 
+.gridario-theme-switch-btn.is-dark {
+  background-color: #4285F4 !important;
+  border-color: #4285F4 !important;
+}
 
+.gridario-theme-switch-thumb {
+  width: 14px;
+  height: 14px;
+  background-color: #ffffff !important;
+  border-radius: 9999px !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  transform: translateX(0);
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.gridario-theme-switch-btn.is-dark .gridario-theme-switch-thumb {
+  transform: translateX(18px);
+}
+
+/* ------------------------------------------------------------------------- */
+/* SMOOTH, THIN & PROFESSIONAL SCROLLBARS FOR CLASSIC LIGHT & CLASSIC DARK   */
+/* ------------------------------------------------------------------------- */
+*,
+*::before,
+*::after {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+[data-theme='classic-dark'],
+[data-theme='classic-dark'] * {
+  scrollbar-width: none !important;
+  -ms-overflow-style: none !important;
+}
+
+::-webkit-scrollbar,
+*::-webkit-scrollbar {
+  width: 0px !important;
+  height: 0px !important;
+  display: none !important;
+  background: transparent !important;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner,
+::-webkit-scrollbar-thumb {
+  display: none !important;
+  background: transparent !important;
+}
