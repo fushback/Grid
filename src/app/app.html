@@ -673,9 +673,10 @@
                               class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
                               [class.ssms-table-selected]="isTblActive"
                               (click)="selectTableFromTree(db.databaseName, tbl.tableName, $event)"
+                              (dblclick)="selectTableFromContextMenu(db.databaseName, tbl.tableName, $event)"
                               (keydown.enter)="selectTableFromTree(db.databaseName, tbl.tableName, $event)"
                               (contextmenu)="onSidebarContextMenu($event, 'table', db.databaseName, tbl.tableName)"
-                              (touchstart)="onSidebarTouchStart($event, 'table', db.databaseName, tbl.tableName)"
+                              (touchstart)="onTouchStart($event, 'table', db.databaseName, tbl.tableName)"
                               (touchend)="onSidebarTouchEndOrMove()"
                               (touchmove)="onSidebarTouchEndOrMove()"
                               tabindex="0"
@@ -717,7 +718,7 @@
                                   type="button"
                                   (click)="openRenameSidebarModal('table', db.databaseName, tbl.tableName, null, $event)"
                                   class="ssms-action-icon-btn ssms-action-edit"
-                                  [title]="'Rename table ' + tbl.tableName"
+                                  [title]="'Edit table ' + tbl.tableName"
                                 >
                                   <mat-icon>edit</mat-icon>
                                 </button>
@@ -817,11 +818,17 @@
           style="font-size: 10.5px"
         >
           <div class="d-flex align-items-center gap-1.5 truncate">
-            <span class="rounded-full shrink-0" style="width: 6px; height: 6px; background-color: #34A853"></span>
-            <span class="truncate">Ready · {{ activeDatabaseName() }}</span>
+            <span
+              class="rounded-full shrink-0"
+              style="width: 6px; height: 6px"
+              [style.background-color]="hasActiveConnection() ? '#34A853' : '#94a3b8'"
+            ></span>
+            <span class="truncate">
+              {{ hasActiveConnection() ? 'Ready · ' + activeDatabaseName() : 'No Active Connection' }}
+            </span>
           </div>
           <div class="d-flex align-items-center gap-1 shrink-0">
-            <span>{{ tables().length }} tbl(s)</span>
+            <span>{{ hasActiveConnection() ? tables().length + ' tbl(s)' : '0 tbl(s)' }}</span>
           </div>
         </div>
       </aside>
@@ -873,53 +880,55 @@
       <!-- Treated as the header of the Database Tab workspace, with the Excel   -->
       <!-- sheet tabs fixed in the footer of this Database Tab below the table.  -->
       <!-- ===================================================================== -->
-      <div class="bg-slate-200 border-b border-slate-300 px-2 pt-1.5 pb-0 d-flex align-items-end justify-content-between gap-2 select-none shrink-0">
-        <!-- Open Database Connection Tabs Strip -->
-        <div class="d-flex align-items-end gap-1 overflow-x-auto flex-grow-1">
+      <!-- ===================================================================== -->
+      <!-- SQL SERVER DESIGN / BROWSER-STYLE DATABASE TABS BAR (TOP OF WORKSPACE)-->
+      <!-- Displays the active Database Name e.g. [DatabaseName] with close icon -->
+      <!-- ===================================================================== -->
+      <div class="bg-slate-200 border-b border-slate-300 px-2 pt-1 pb-1 d-flex align-items-center justify-content-between gap-2 select-none shrink-0" style="min-height: 36px">
+        <div class="excel-sheet-tabs-strip d-flex align-items-center gap-1 overflow-x-auto flex-grow-1 py-0.5">
           @for (dbTab of databaseTabs(); track dbTab.tabId; let tIdx = $index) {
             @let isCurrentDbTab = dbTab.tabId === activeDatabaseTabId();
             <div
-              class="d-inline-flex align-items-center gap-1.5 px-3 py-1.5 rounded-t-lg border border-b-0 cursor-pointer whitespace-nowrap text-xs transition-all"
+              class="excel-top-tab excel-sheet-tab d-inline-flex align-items-center gap-1.5 px-3 py-1.5 rounded-top border cursor-pointer whitespace-nowrap select-none text-xs transition-all"
+              [class.excel-top-tab-active]="isCurrentDbTab"
+              [class.excel-sheet-tab-active]="isCurrentDbTab"
               [class.bg-white]="isCurrentDbTab"
-              [class.text-slate-900]="isCurrentDbTab"
+              [class.text-emerald-800]="isCurrentDbTab"
               [class.font-bold]="isCurrentDbTab"
               [class.border-slate-300]="isCurrentDbTab"
-              [class.shadow-2xs]="isCurrentDbTab"
-              [class.bg-slate-300/70]="!isCurrentDbTab"
-              [class.text-slate-700]="!isCurrentDbTab"
-              [class.border-transparent]="!isCurrentDbTab"
-              [style.border-top]="isCurrentDbTab ? '3px solid #FBBC05' : '3px solid transparent'"
+              [class.bg-slate-100]="!isCurrentDbTab"
+              [class.text-slate-600]="!isCurrentDbTab"
+              [class.border-slate-300]="!isCurrentDbTab"
               (click)="selectDatabaseTab(dbTab.tabId, $event)"
               (keydown.enter)="selectDatabaseTab(dbTab.tabId, $event)"
               tabindex="0"
-              [title]="dbTab.databaseName ? 'SQL Server Database Tab: ' + dbTab.databaseName + (dbTab.activeTableName ? ' (' + dbTab.activeTableName + ')' : '') : 'New Database Tab — Select a database for this tab'"
+              [title]="dbTab.databaseName ? 'Database Connection: ' + dbTab.databaseName : 'New Database Tab'"
             >
               <span
                 class="rounded-full shrink-0"
                 style="width: 7px; height: 7px"
-                [style.background-color]="dbTab.databaseName ? '#34A853' : '#FBBC05'"
+                [style.background-color]="isCurrentDbTab ? '#34A853' : dbTab.databaseName ? '#94a3b8' : '#FBBC05'"
                 [title]="dbTab.databaseName ? 'Connected to ' + dbTab.databaseName : 'Awaiting database selection'"
               ></span>
               <mat-icon
-                style="font-size: 15px; width: 15px; height: 15px"
-                [style.color]="isCurrentDbTab ? '#4285F4' : '#64748b'"
+                [class.text-emerald-600]="isCurrentDbTab"
+                [class.text-slate-400]="!isCurrentDbTab"
+                style="font-size: 16px; width: 16px; height: 16px"
               >
                 storage
               </mat-icon>
               <span class="font-mono-tabular">
-                {{ dbTab.databaseName || activeDatabaseName() }}
+                {{ getDatabaseTabDisplayTableName(dbTab) }}
               </span>
-              @if (databaseTabs().length > 1) {
-                <button
-                  type="button"
-                  (click)="closeDatabaseTab(dbTab.tabId, $event)"
-                  class="btn btn-sm p-0 ms-1 border-0 bg-transparent text-slate-400 hover:text-red-600 d-inline-flex align-items-center gridario-icon-only-btn"
-                  [title]="'Disconnect ' + dbTab.databaseName + ' & close tab'"
-                  aria-label="Close database tab"
-                >
-                  <mat-icon style="font-size: 14px; width: 14px; height: 14px">close</mat-icon>
-                </button>
-              }
+              <button
+                type="button"
+                (click)="closeDatabaseTab(dbTab.tabId, $event)"
+                class="btn btn-sm p-0 ms-1 border-0 bg-transparent text-slate-400 hover:text-red-600 d-inline-flex align-items-center gridario-icon-only-btn"
+                [title]="'Close connection for ' + getDatabaseTabDisplayTableName(dbTab)"
+                aria-label="Close database connection tab"
+              >
+                <mat-icon style="font-size: 14px; width: 14px; height: 14px">close</mat-icon>
+              </button>
             </div>
           }
         </div>
@@ -929,8 +938,13 @@
       <!-- ACTIVE SQL SERVER DATABASE TAB BODY (Contains Table Grid + Excel Tabs)-->
       <!-- ===================================================================== -->
       <div class="flex-grow-1 d-flex flex-column overflow-hidden min-w-0 min-h-0 bg-white border-x border-b border-slate-300">
+      @if (!hasActiveConnection()) {
+        <div class="flex-grow-1 d-flex flex-column align-items-center justify-content-center p-4 text-center select-none bg-white h-100">
+          <div class="text-base font-semibold text-slate-700">No Active Connection</div>
+        </div>
+      } @else {
       <main class="container-fluid px-2 md:px-3 py-2 flex-grow-1 d-flex flex-column overflow-hidden min-h-0">
-        @if (!activeTableName() || tables().length === 0) {
+        @if (tables().length === 0) {
           <div class="p-4 my-2 rounded-xl bg-white border border-slate-200 shadow-2xs d-flex flex-wrap align-items-center justify-content-between gap-3 shrink-0">
             <div class="d-flex align-items-center gap-3">
               <div class="p-2.5 rounded-lg bg-blue-50 text-blue-600 d-inline-flex align-items-center justify-content-center">
@@ -946,6 +960,16 @@
               </div>
             </div>
           </div>
+        } @else if (!activeTableName()) {
+          <div class="flex-grow-1 d-flex flex-column align-items-center justify-content-center p-4 text-center select-none bg-white h-100 border border-slate-200 rounded-xl">
+            <mat-icon class="mb-2" style="font-size: 28px; width: 28px; height: 28px; color: #4285F4">table_chart</mat-icon>
+            <div class="text-sm font-semibold text-slate-800">
+              No Table Open in "{{ activeDatabaseName() }}"
+            </div>
+            <div class="text-xs text-slate-500 mt-1">
+              Open a table from Object Explorer on the left (right-click a table and choose "Select", or double-click it) to view its rows.
+            </div>
+          </div>
         } @else if (sortedColumns().length === 0) {
           <div class="p-3 mb-2 rounded-xl bg-amber-50 border border-amber-200 d-flex flex-wrap align-items-center justify-content-between gap-2 shrink-0">
             <div class="d-flex align-items-center gap-2 text-xs text-amber-900">
@@ -957,15 +981,13 @@
           </div>
         }
 
+        @if (activeTableName()) {
         <div
           class="table-responsive gridpulse-table-container flex-grow-1 min-h-0 shadow-xs"
           [class.is-resizing-pane]="isDraggingTableHeight()"
-          (scroll)="onTableScroll($event)"
-          (wheel)="onTableWheel($event)"
-          (touchmove)="onTableTouchMove($event)"
         >
           <table class="table table-bordered table-hover gridpulse-table align-middle">
-        <thead>
+        <thead (wheel)="onTheadWheel($event)">
           <tr>
             <!-- Master Select All Checkbox Column -->
             <th
@@ -1003,8 +1025,10 @@
             <!-- Dynamic Spreadsheet Columns with Excel Letter (A, B, C...), Direct Header Multi-Sort, Per-Column Search, & Excel Multi-Filter -->
             @for (col of sortedColumns(); track col.id; let cIdx = $index) {
               <th
+                [style.flex]="'0 0 ' + col.width + 'px'"
                 [style.width.px]="col.width"
                 [style.min-width.px]="col.width"
+                [style.max-width.px]="col.width"
                 [class.bg-blue-50]="selectedColumnId() === col.id"
                 [class.clipboard-copy-col]="isColInClipboard(col.id, 'copy')"
                 [class.clipboard-cut-col]="isColInClipboard(col.id, 'cut')"
@@ -1089,14 +1113,14 @@
                       class="form-control form-control-sm text-xs py-0.5 ps-2 pe-5 bg-white border-slate-300"
                       style="font-size: 11px; height: 24px"
                       [placeholder]="'Search ' + col.name + '...'"
-                      [value]="draftColumnHeaderSearches()[col.id] ?? columnHeaderSearches()[col.id] ?? ''"
+                      [value]="draftColumnHeaderSearches()[col.id] || columnHeaderSearches()[col.id] || ''"
                       (click)="$event.stopPropagation()"
                       (input)="updateColumnHeaderSearch(col.id, $any($event.target).value)"
                       (keydown.enter)="applyColumnHeaderSearch(col.id, $event)"
                       [attr.aria-label]="'Search ' + col.name"
                     />
                     <div class="position-absolute end-0 me-1 d-inline-flex align-items-center gap-0.5">
-                      @if ((draftColumnHeaderSearches()[col.id] ?? '') !== (columnHeaderSearches()[col.id] ?? '')) {
+                      @if ((draftColumnHeaderSearches()[col.id] || '') !== (columnHeaderSearches()[col.id] || '')) {
                         <button
                           type="button"
                           (click)="applyColumnHeaderSearch(col.id, $event)"
@@ -1135,7 +1159,11 @@
           </tr>
         </thead>
 
-        <tbody>
+        <tbody
+          (scroll)="onTableScroll($event)"
+          (wheel)="onTableWheel($event)"
+          (touchmove)="onTableTouchMove($event)"
+        >
           @if (activeTableName() && sortedColumns().length > 0) {
             <!-- ===================================================================== -->
             <!-- SQL SERVER ALWAYS-EMPTY FIRST ROW (ADD ROW FUNCTIONALITY - ROW 1)     -->
@@ -1144,12 +1172,15 @@
             <!-- ===================================================================== -->
             <tr
               class="bg-emerald-50/40 border-b-2 border-emerald-200 gridario-first-row"
+              [attr.data-row-id]="newRowSentinelId"
               [class.row-selected]="activeCell()?.rowId === newRowSentinelId"
-              title="First Row (Add Row): Type values and press Enter (or click Save) to add a new row, or paste single/multiple rows here to insert them one by one."
+              (focusin)="onDataRowFocusIn(newRowSentinelId)"
+              (focusout)="onFirstRowFocusOut($event)"
+              title="First Row (Add Row): Always editable — type values and move out of row (or press Enter) to auto-save new row to DB."
             >
               <!-- First Row Action / Commit Column -->
               <td
-                class="sticky-col-check text-center bg-emerald-50/70"
+                class="sticky-col-check text-center bg-emerald-50/70 p-0"
                 (contextmenu)="onContextMenu($event, 'new_row', newRowSentinelId, null, 1)"
                 (touchstart)="onTouchStart($event, 'new_row', newRowSentinelId, null, 1)"
                 (touchend)="onTouchEndOrMove()"
@@ -1170,7 +1201,7 @@
                     <mat-icon
                       class="text-emerald-600"
                       style="font-size: 15px; width: 15px; height: 15px"
-                      title="Add Row (Always-empty first row for adding or pasting new records)"
+                      title="Add Row (Always-editable first row for adding or pasting new records)"
                     >
                       playlist_add
                     </mat-icon>
@@ -1180,13 +1211,13 @@
 
               <!-- First Row Visual Index #1 (Cannot be deleted) -->
               <td
-                class="sticky-col-index text-center font-mono-tabular text-xs font-bold text-emerald-800 bg-emerald-50/70 cursor-pointer"
+                class="sticky-col-index text-center font-mono-tabular text-xs font-bold text-emerald-800 bg-emerald-50/70 cursor-pointer p-0"
                 (contextmenu)="onContextMenu($event, 'new_row', newRowSentinelId, null, 1)"
                 (touchstart)="onTouchStart($event, 'new_row', newRowSentinelId, null, 1)"
                 (touchend)="onTouchEndOrMove()"
                 (touchmove)="onTouchEndOrMove()"
                 (click)="hasNewRowDraftValues() ? commitFirstRowAddRow($event) : null"
-                title="Row 1 (Add New Row) — Always empty row for adding or pasting data. Cannot be deleted."
+                title="Row 1 (Add New Row) — Always editable row for adding or pasting data. Cannot be deleted."
               >
                 <div class="d-flex align-items-center justify-content-center gap-0.5">
                   <span>1</span>
@@ -1194,147 +1225,108 @@
                 </div>
               </td>
 
-              <!-- First Row Cells for Each Column -->
+              <!-- First Row Cells for Each Column (Always Contenteditable / Seamless Cell Input) -->
               @for (col of sortedColumns(); track col.id) {
                 @let isNewRowFocused = activeCell()?.rowId === newRowSentinelId && activeCell()?.colId === col.id;
-                @let isNewRowEditing = editingNewRowColId() === col.id;
                 @let newRowErr = newRowValidationErrors()[col.id];
                 @let isColLockedId = isIdPrimaryKeyColumn(col);
 
                 <td
+                  [style.flex]="'0 0 ' + col.width + 'px'"
+                  [style.width.px]="col.width"
+                  [style.min-width.px]="col.width"
+                  [style.max-width.px]="col.width"
                   [class.cell-focused]="isNewRowFocused"
                   [class.cell-invalid]="!!newRowErr"
                   [class.gridario-non-editable]="isColLockedId || col.colType === 'formula'"
-                  [title]="newRowErr ? newRowErr : isColLockedId ? 'Auto-increment Primary Key (assigned automatically on row insert)' : 'Click to enter ' + col.name + ' for new row, or paste single/multiple rows (Ctrl+V)'"
-                  class="position-relative cursor-cell bg-white/90"
-                  (click)="selectNewRowCell(col.id, $event); !isColLockedId && col.colType !== 'formula' && col.colType !== 'checkbox' ? startNewRowCellEdit(col.id, $event) : null"
-                  (dblclick)="!isColLockedId && col.colType !== 'formula' ? startNewRowCellEdit(col.id, $event) : null"
+                  [title]="newRowErr ? newRowErr : isColLockedId ? 'Auto-increment Primary Key (assigned automatically on row insert)' : 'Type ' + col.name + ' for new row, or paste single/multiple rows (Ctrl+V)'"
+                  class="position-relative cursor-cell bg-white/90 p-0 m-0"
+                  (click)="selectNewRowCell(col.id, $event)"
                   (contextmenu)="onContextMenu($event, 'new_row', newRowSentinelId, col.id, 1)"
                   (touchstart)="onTouchStart($event, 'new_row', newRowSentinelId, col.id, 1)"
                   (touchend)="onTouchEndOrMove()"
                   (touchmove)="onTouchEndOrMove()"
                 >
                   @if (isColLockedId) {
-                    <div class="px-2.5 h-100 d-flex align-items-center justify-content-end font-mono-tabular text-slate-400 bg-slate-50/70 text-xs italic truncate gridario-non-editable">
-                      <span>(Auto ID)</span>
+                    <div
+                      contenteditable="false"
+                      class="excel-cell-readonly text-end font-mono-tabular text-slate-400 bg-slate-50/70 italic gridario-non-editable"
+                    >
+                      (Auto ID)
                     </div>
                   } @else if (col.colType === 'formula') {
-                    <div class="px-2.5 h-100 d-flex align-items-center justify-content-end font-mono-tabular text-slate-400 bg-slate-50/70 text-xs italic truncate gridario-non-editable">
-                      <span>(Formula)</span>
+                    <div
+                      contenteditable="false"
+                      class="excel-cell-readonly text-end font-mono-tabular text-slate-400 bg-slate-50/70 italic gridario-non-editable"
+                    >
+                      (Formula)
                     </div>
                   } @else if (col.colType === 'checkbox') {
-                    <div class="d-flex align-items-center justify-content-center h-100 px-2">
+                    <div class="d-flex align-items-center justify-content-center w-100 h-100 m-0 p-0">
                       <input
+                        [id]="'new-row-inline-input-' + col.id"
                         type="checkbox"
                         class="form-check-input m-0 cursor-pointer"
                         [checked]="getNewRowCellDisplayValue(col) === true"
+                        (focus)="onNewRowCellFocus(col.id, $event)"
                         (click)="toggleNewRowCheckbox(col.id, $event)"
-                        (keydown.enter)="commitFirstRowAddRow($event)"
+                        (keydown)="onNewRowCellKeydown($event, col.id)"
                         [attr.aria-label]="'New row ' + col.name"
                       />
                     </div>
-                  } @else if (isNewRowEditing) {
-                    <div class="px-1.5 h-100 d-flex align-items-center">
-                      @if (col.colType === 'dropdown') {
-                        <select
-                          [id]="'new-row-inline-input-' + col.id"
-                          [formControl]="newRowCellEditControl"
-                          (click)="$event.stopPropagation()"
-                          (contextmenu)="onContextMenu($event, 'new_row', newRowSentinelId, col.id, 1)"
-                          (change)="commitNewRowCellEdit(false)"
-                          (blur)="commitNewRowCellEdit(false)"
-                          (keydown)="onNewRowCellKeydown($event, col.id)"
-                          class="form-select form-select-sm text-xs py-0.5 px-2 border-emerald-500"
-                          aria-label="Select new row option"
-                        >
-                          <option value="">-- Select {{ col.name }} --</option>
-                          @for (opt of getDropdownOptionsForCol(col); track opt) {
-                            <option [value]="opt">{{ opt }}</option>
-                          }
-                        </select>
-                      } @else if (col.colType === 'lookup' && getLookupOptionsForCol(col).length > 0) {
-                        <select
-                          [id]="'new-row-inline-input-' + col.id"
-                          [formControl]="newRowCellEditControl"
-                          (click)="$event.stopPropagation()"
-                          (contextmenu)="onContextMenu($event, 'new_row', newRowSentinelId, col.id, 1)"
-                          (change)="commitNewRowCellEdit(false)"
-                          (blur)="commitNewRowCellEdit(false)"
-                          (keydown)="onNewRowCellKeydown($event, col.id)"
-                          class="form-select form-select-sm text-xs py-0.5 px-2 border-emerald-500"
-                          aria-label="Select new row lookup option"
-                        >
-                          <option value="">-- Select {{ col.name }} --</option>
-                          @for (item of getLookupOptionsForCol(col); track item.id) {
-                            <option [value]="item.name">{{ formatLookupOptionLabel(item) }}</option>
-                          }
-                        </select>
-                      } @else if (col.colType === 'date') {
-                        <input
-                          [id]="'new-row-inline-input-' + col.id"
-                          type="text"
-                          placeholder="YYYY-MM-DD"
-                          [formControl]="newRowCellEditControl"
-                          (click)="$event.stopPropagation()"
-                          (contextmenu)="onContextMenu($event, 'new_row', newRowSentinelId, col.id, 1)"
-                          (blur)="commitNewRowCellEdit(false)"
-                          (keydown)="onNewRowCellKeydown($event, col.id)"
-                          class="form-control form-control-sm font-mono-tabular text-xs py-0.5 px-2 border-emerald-500"
-                          aria-label="New row date cell"
-                        />
-                      } @else if (col.colType === 'number') {
-                        <input
-                          [id]="'new-row-inline-input-' + col.id"
-                          type="text"
-                          inputmode="decimal"
-                          [placeholder]="'Add ' + col.name + '...'"
-                          [formControl]="newRowCellEditControl"
-                          (click)="$event.stopPropagation()"
-                          (contextmenu)="onContextMenu($event, 'new_row', newRowSentinelId, col.id, 1)"
-                          (blur)="commitNewRowCellEdit(false)"
-                          (keydown)="onNewRowCellKeydown($event, col.id)"
-                          class="form-control form-control-sm font-mono-tabular text-xs text-end py-0.5 px-2 border-emerald-500"
-                          aria-label="New row numeric cell"
-                        />
-                      } @else {
-                        <input
-                          [id]="'new-row-inline-input-' + col.id"
-                          type="text"
-                          maxlength="2000"
-                          [placeholder]="'Add ' + col.name + '...'"
-                          [formControl]="newRowCellEditControl"
-                          (click)="$event.stopPropagation()"
-                          (contextmenu)="onContextMenu($event, 'new_row', newRowSentinelId, col.id, 1)"
-                          (blur)="commitNewRowCellEdit(false)"
-                          (keydown)="onNewRowCellKeydown($event, col.id)"
-                          class="form-control form-control-sm text-xs py-0.5 px-2 border-emerald-500"
-                          aria-label="New row text cell"
-                        />
+                  } @else if (col.colType === 'dropdown') {
+                    <select
+                      [id]="'new-row-inline-input-' + col.id"
+                      [value]="getNewRowEditableCellDomText(col)"
+                      (click)="$event.stopPropagation()"
+                      (focus)="onNewRowCellFocus(col.id, $event)"
+                      (contextmenu)="onContextMenu($event, 'new_row', newRowSentinelId, col.id, 1)"
+                      (change)="onNewRowSelectChange(col.id, $any($event.target).value)"
+                      (blur)="onNewRowEditableCellBlur(col.id, $event)"
+                      (keydown)="onNewRowCellKeydown($event, col.id)"
+                      class="excel-cell-select"
+                      [attr.aria-label]="'Select new row ' + col.name"
+                    >
+                      <option value="">-- {{ col.name }}{{ isColumnNotNull(col) ? ' *' : '' }} --</option>
+                      @for (opt of getDropdownOptionsForCol(col); track opt) {
+                        <option [value]="opt">{{ opt }}</option>
                       }
-                    </div>
+                    </select>
+                  } @else if (col.colType === 'lookup' && getLookupOptionsForCol(col).length > 0) {
+                    <select
+                      [id]="'new-row-inline-input-' + col.id"
+                      [value]="getNewRowMatchedLookupCellJson(col)"
+                      (click)="$event.stopPropagation()"
+                      (focus)="onNewRowCellFocus(col.id, $event)"
+                      (contextmenu)="onContextMenu($event, 'new_row', newRowSentinelId, col.id, 1)"
+                      (change)="onNewRowSelectChange(col.id, $any($event.target).value)"
+                      (blur)="onNewRowEditableCellBlur(col.id, $event)"
+                      (keydown)="onNewRowCellKeydown($event, col.id)"
+                      class="excel-cell-select font-mono-tabular"
+                      [attr.aria-label]="'Select new row lookup ' + col.name"
+                    >
+                      <option value="">-- {{ col.name }}{{ isColumnNotNull(col) ? ' *' : '' }} --</option>
+                      @for (item of getLookupOptionsForCol(col); track item.id) {
+                        <option [value]="item.json">{{ formatLookupOptionLabel(item) }}</option>
+                      }
+                    </select>
                   } @else {
                     <div
-                      class="px-2.5 h-100 d-flex align-items-center justify-content-between gap-1 truncate"
-                      [class.justify-content-end]="col.colType === 'number'"
-                      [class.font-mono-tabular]="col.colType === 'number' || col.colType === 'date'"
-                    >
-                      @if (getNewRowCellDisplayValue(col) !== '' && getNewRowCellDisplayValue(col) !== null && getNewRowCellDisplayValue(col) !== undefined) {
-                        <span class="truncate text-slate-900 font-medium">{{ getNewRowCellDisplayValue(col) }}</span>
-                      } @else {
-                        <span class="truncate text-slate-400 italic" style="font-size: 11px">
-                          {{ newRowErr ? '(Required)' : 'Add ' + col.name }}@if (!newRowErr && isColumnNotNull(col)) {<span class="gridario-not-null-star">*</span>}{{ newRowErr ? '' : '...' }}
-                        </span>
-                      }
-                      @if (newRowErr) {
-                        <mat-icon
-                          class="text-red-700 shrink-0"
-                          style="font-size: 14px; width: 14px; height: 14px"
-                          [title]="newRowErr"
-                        >
-                          error
-                        </mat-icon>
-                      }
-                    </div>
+                      [id]="'new-row-inline-input-' + col.id"
+                      contenteditable="true"
+                      spellcheck="false"
+                      role="textbox"
+                      [attr.aria-label]="'New row ' + col.name"
+                      [attr.data-placeholder]="newRowErr ? '(Required)' : 'Add ' + col.name + (isColumnNotNull(col) ? ' *' : '') + (col.colType === 'date' ? ' (YYYY-MM-DD)' : '')"
+                      class="excel-cell-editable text-slate-900"
+                      [class.text-end]="col.colType === 'number'"
+                      [class.font-mono-tabular]="col.colType === 'number' || col.colType === 'date' || col.colType === 'lookup'"
+                      [textContent]="getNewRowEditableCellDomText(col)"
+                      (focus)="onNewRowCellFocus(col.id, $event)"
+                      (input)="onNewRowContentEditableInput(col.id, $event)"
+                      (blur)="onNewRowEditableCellBlur(col.id, $event)"
+                      (keydown)="onNewRowCellKeydown($event, col.id)"
+                    ></div>
                   }
                 </td>
               }
@@ -1345,22 +1337,25 @@
             @let rowHasError = isRowInvalid(row.id);
             @let visualRowNum = rIdx + 2;
             <tr
+              [attr.data-row-id]="row.id"
               [class.row-selected]="selectedRowIds().has(row.id)"
               [class.row-invalid]="rowHasError"
               [class.clipboard-copy-row]="isRowInClipboard(row.id, 'copy')"
               [class.clipboard-cut-row]="isRowInClipboard(row.id, 'cut')"
+              (focusin)="onDataRowFocusIn(row.id)"
+              (focusout)="onDataRowFocusOut(row.id, $event)"
               [title]="rowHasError ? 'Unsaved row — fix highlighted red cell(s) to save to database: ' + getRowErrorSummary(row.id) : ''"
             >
               <!-- Row Select Checkbox -->
               <td
-                class="sticky-col-check text-center"
+                class="sticky-col-check text-center p-0"
                 (click)="toggleRowSelection(row.id, $event)"
                 (contextmenu)="onContextMenu($event, 'row', row.id, null, visualRowNum)"
                 (touchstart)="onTouchStart($event, 'row', row.id, null, visualRowNum)"
                 (touchend)="onTouchEndOrMove()"
                 (touchmove)="onTouchEndOrMove()"
               >
-                <div class="d-flex align-items-center justify-content-center h-100 px-2">
+                <div class="d-flex align-items-center justify-content-center h-100 px-1">
                   <input
                     type="checkbox"
                     class="form-check-input m-0 cursor-pointer"
@@ -1374,7 +1369,7 @@
 
               <!-- Row Number Index (Right-click or Long-press for Row Context Menu) -->
               <td
-                class="sticky-col-index text-center font-mono-tabular text-xs text-slate-500 cursor-pointer"
+                class="sticky-col-index text-center font-mono-tabular text-xs text-slate-500 cursor-pointer p-0"
                 (contextmenu)="onContextMenu($event, 'row', row.id, null, visualRowNum)"
                 (touchstart)="onTouchStart($event, 'row', row.id, null, visualRowNum)"
                 (touchend)="onTouchEndOrMove()"
@@ -1395,24 +1390,26 @@
                 </div>
               </td>
 
-              <!-- Data Cells (Right-click or Long-press for Context Menu) -->
+              <!-- Data Cells (Always Contenteditable / Seamless Excel Cell Inputs, Auto-Save on Row Exit) -->
               @for (col of sortedColumns(); track col.id) {
                 @let isFocused = activeCell()?.rowId === row.id && activeCell()?.colId === col.id;
-                @let isEditing = editingCell()?.rowId === row.id && editingCell()?.colId === col.id;
                 @let isInvalid = isCellInvalid(row.id, col.id);
                 @let cellErrorMsg = getCellErrorMessage(row.id, col.id);
                 @let remoteCollab = getCollaboratorOnCell(row.id, col.id);
 
                 <td
+                  [style.flex]="'0 0 ' + col.width + 'px'"
+                  [style.width.px]="col.width"
+                  [style.min-width.px]="col.width"
+                  [style.max-width.px]="col.width"
                   [class.cell-focused]="isFocused"
                   [class.cell-invalid]="isInvalid"
                   [class.clipboard-copy-col]="isColInClipboard(col.id, 'copy')"
                   [class.clipboard-cut-col]="isColInClipboard(col.id, 'cut')"
                   [style.box-shadow]="remoteCollab ? 'inset 0 0 0 2px ' + remoteCollab.color : null"
                   [title]="isInvalid ? cellErrorMsg : ''"
-                  class="position-relative cursor-cell"
+                  class="position-relative cursor-cell p-0 m-0"
                   (click)="selectCell(row.id, col.id)"
-                  (dblclick)="startInlineEdit(row.id, col.id, $event)"
                   (contextmenu)="onContextMenu($event, 'cell', row.id, col.id, visualRowNum)"
                   (touchstart)="onTouchStart($event, 'cell', row.id, col.id, visualRowNum)"
                   (touchend)="onTouchEndOrMove()"
@@ -1429,157 +1426,104 @@
                     </span>
                   }
 
-                  @if (isEditing) {
-                    <!-- Inline Cell Editor by Column Type -->
-                    <div class="px-1.5 h-100 d-flex align-items-center">
-                      @if (col.colType === 'dropdown') {
-                        <select
-                          [formControl]="cellEditControl"
-                          (click)="$event.stopPropagation()"
-                          (contextmenu)="onContextMenu($event, 'cell', row.id, col.id, visualRowNum)"
-                          (change)="commitInlineEdit()"
-                          (blur)="onInlineInputBlur()"
-                          (keydown.escape)="cancelInlineEdit()"
-                          class="form-select form-select-sm text-xs py-0.5 px-2 border-blue-500"
-                          aria-label="Select cell option"
-                        >
-                          @if (!getDropdownOptionsForCol(col).includes(cellEditControl.value)) {
-                            <option [value]="cellEditControl.value" disabled>
-                              {{ cellEditControl.value || '(Empty)' }} — Select valid option
-                            </option>
-                          }
-                          @for (opt of getDropdownOptionsForCol(col); track opt) {
-                            <option [value]="opt">{{ opt }}</option>
-                          }
-                        </select>
-                      } @else if (col.colType === 'lookup' && getLookupOptionsForCol(col).length > 0) {
-                        <select
-                          [formControl]="cellEditControl"
-                          (click)="$event.stopPropagation()"
-                          (contextmenu)="onContextMenu($event, 'cell', row.id, col.id, visualRowNum)"
-                          (change)="commitInlineEdit()"
-                          (blur)="onInlineInputBlur()"
-                          (keydown.escape)="cancelInlineEdit()"
-                          class="form-select form-select-sm text-xs py-0.5 px-2 border-blue-500"
-                          aria-label="Select lookup option"
-                        >
-                          @for (item of getLookupOptionsForCol(col); track item.id) {
-                            <option [value]="item.name">{{ formatLookupOptionLabel(item) }}</option>
-                          }
-                        </select>
-                      } @else if (col.colType === 'date') {
-                        <input
-                          type="text"
-                          placeholder="YYYY-MM-DD"
-                          [formControl]="cellEditControl"
-                          (click)="$event.stopPropagation()"
-                          (contextmenu)="onContextMenu($event, 'cell', row.id, col.id, visualRowNum)"
-                          (keydown.enter)="commitInlineEdit()"
-                          (keydown.escape)="cancelInlineEdit()"
-                          (blur)="onInlineInputBlur()"
-                          class="form-control form-control-sm font-mono-tabular text-xs py-0.5 px-2 border-blue-500"
-                          aria-label="Edit date cell"
-                        />
-                      } @else if (col.colType === 'number') {
-                        <input
-                          type="text"
-                          inputmode="decimal"
-                          [formControl]="cellEditControl"
-                          (click)="$event.stopPropagation()"
-                          (contextmenu)="onContextMenu($event, 'cell', row.id, col.id, visualRowNum)"
-                          (keydown.enter)="commitInlineEdit()"
-                          (keydown.escape)="cancelInlineEdit()"
-                          (blur)="onInlineInputBlur()"
-                          class="form-control form-control-sm font-mono-tabular text-xs text-end py-0.5 px-2 border-blue-500"
-                          aria-label="Edit numeric cell"
-                        />
-                      } @else {
-                        <input
-                          type="text"
-                          maxlength="2000"
-                          [formControl]="cellEditControl"
-                          (click)="$event.stopPropagation()"
-                          (contextmenu)="onContextMenu($event, 'cell', row.id, col.id, visualRowNum)"
-                          (keydown.enter)="commitInlineEdit()"
-                          (keydown.escape)="cancelInlineEdit()"
-                          (blur)="onInlineInputBlur()"
-                          class="form-control form-control-sm text-xs py-0.5 px-2 border-blue-500"
-                          aria-label="Edit text cell"
-                        />
-                      }
+                  @if (col.isPrimaryKey || col.isIdentity) {
+                    <div
+                      [id]="'grid-cell-' + row.id + '-' + col.id"
+                      contenteditable="false"
+                      class="excel-cell-readonly text-end font-mono-tabular text-amber-900 bg-amber-50/50 font-semibold gridario-non-editable"
+                    >
+                      {{ formatCellForGrid(row, col) }}
                     </div>
+                  } @else if (col.colType === 'formula') {
+                    <div
+                      [id]="'grid-cell-' + row.id + '-' + col.id"
+                      contenteditable="false"
+                      (dblclick)="openEditColumnModal(col)"
+                      class="excel-cell-readonly text-end font-mono-tabular text-blue-700 font-medium bg-slate-50 gridario-non-editable"
+                      title="Computed Formula ({{ col.formula }}) — Double-click to edit formula"
+                    >
+                      {{ formatCellForGrid(row, col) }}
+                    </div>
+                  } @else if (col.colType === 'checkbox') {
+                    <div class="d-flex align-items-center justify-content-center w-100 h-100 m-0 p-0">
+                      <input
+                        [id]="'grid-cell-' + row.id + '-' + col.id"
+                        type="checkbox"
+                        class="form-check-input m-0 cursor-pointer"
+                        [checked]="getDisplayCellValue(row, col) === true"
+                        (focus)="onCellFocus(row.id, col.id, $event)"
+                        (click)="$event.stopPropagation()"
+                        (change)="onCheckboxCellChange(row.id, col.id, $any($event.target).checked, $event)"
+                        (keydown)="onAlwaysEditableCellKeydown($event, row.id, col.id)"
+                        [attr.aria-label]="col.name"
+                      />
+                    </div>
+                  } @else if (col.colType === 'dropdown') {
+                    <select
+                      [id]="'grid-cell-' + row.id + '-' + col.id"
+                      [value]="getRawCellString(row, col)"
+                      (click)="$event.stopPropagation()"
+                      (focus)="onCellFocus(row.id, col.id, $event)"
+                      (contextmenu)="onContextMenu($event, 'cell', row.id, col.id, visualRowNum)"
+                      (change)="onSelectCellChange(row.id, col.id, $any($event.target).value)"
+                      (blur)="onEditableCellBlur(row.id, col.id, $event)"
+                      (keydown)="onAlwaysEditableCellKeydown($event, row.id, col.id)"
+                      class="excel-cell-select text-slate-800"
+                      [attr.aria-label]="col.name"
+                    >
+                      @if (!getDropdownOptionsForCol(col).includes(getRawCellString(row, col))) {
+                        <option [value]="getRawCellString(row, col)">
+                          {{ getRawCellString(row, col) || '(Empty)' }}
+                        </option>
+                      }
+                      @for (opt of getDropdownOptionsForCol(col); track opt) {
+                        <option [value]="opt">{{ opt }}</option>
+                      }
+                    </select>
+                  } @else if (col.colType === 'lookup' && getLookupOptionsForCol(col).length > 0) {
+                    <select
+                      [id]="'grid-cell-' + row.id + '-' + col.id"
+                      [value]="getMatchedLookupCellJson(row, col)"
+                      (click)="$event.stopPropagation()"
+                      (focus)="onCellFocus(row.id, col.id, $event)"
+                      (contextmenu)="onContextMenu($event, 'cell', row.id, col.id, visualRowNum)"
+                      (change)="onSelectCellChange(row.id, col.id, $any($event.target).value)"
+                      (blur)="onEditableCellBlur(row.id, col.id, $event)"
+                      (keydown)="onAlwaysEditableCellKeydown($event, row.id, col.id)"
+                      class="excel-cell-select font-mono-tabular text-slate-800"
+                      [attr.aria-label]="col.name"
+                    >
+                      @if (!getMatchedLookupCellJson(row, col)) {
+                        <option value="">(Empty)</option>
+                      }
+                      @for (item of getLookupOptionsForCol(col); track item.id) {
+                        <option [value]="item.json">{{ formatLookupOptionLabel(item) }}</option>
+                      }
+                    </select>
                   } @else {
-                    <!-- Standard Cell Display by Column Type -->
-                    @if (col.colType === 'checkbox' && !isInvalid) {
-                      <div class="d-flex align-items-center justify-content-center h-100 px-2">
-                        <input
-                          type="checkbox"
-                          class="form-check-input m-0 cursor-pointer"
-                          [checked]="getDisplayCellValue(row, col) === true"
-                          (click)="toggleCheckboxCell(row.id, col.id, $event)"
-                          [attr.aria-label]="col.name"
-                        />
-                      </div>
-                    } @else if (col.isPrimaryKey || col.isIdentity) {
-                      <div class="px-2.5 h-100 d-flex align-items-center justify-content-end font-mono-tabular text-amber-900 bg-amber-50/50 font-semibold truncate gridario-non-editable">
-                        <span class="truncate">{{ formatCellForGrid(row, col) }}</span>
-                      </div>
-                    } @else if (col.colType === 'number' || col.colType === 'formula') {
-                      <div
-                        class="px-2.5 h-100 d-flex align-items-center justify-content-between gap-1 font-mono-tabular text-end truncate"
-                        [class.text-slate-900]="col.colType === 'number' && !isInvalid"
-                        [class.text-blue-700]="col.colType === 'formula' && !isInvalid"
-                        [class.font-medium]="col.colType === 'formula'"
-                        [class.bg-slate-50]="col.colType === 'formula' && !rowHasError && !isInvalid"
-                        [class.gridario-non-editable]="col.colType === 'formula' && !isInvalid"
-                      >
-                        @if (isInvalid) {
-                          <mat-icon
-                            class="text-red-700 shrink-0"
-                            style="font-size: 14px; width: 14px; height: 14px"
-                            [title]="cellErrorMsg"
-                          >
-                            error
-                          </mat-icon>
-                        } @else {
-                          <span></span>
-                        }
-                        <span class="truncate">{{ formatCellForGrid(row, col) || (isInvalid ? '(Empty)' : '') }}</span>
-                      </div>
-                    } @else if (col.colType === 'date') {
-                      <div class="px-2.5 h-100 d-flex align-items-center justify-content-between gap-1 font-mono-tabular text-slate-700 truncate">
-                        <span class="truncate">{{ formatCellForGrid(row, col) || (isInvalid ? '(Empty)' : '') }}</span>
-                        @if (isInvalid) {
-                          <mat-icon
-                            class="text-red-700 shrink-0"
-                            style="font-size: 14px; width: 14px; height: 14px"
-                            [title]="cellErrorMsg"
-                          >
-                            error
-                          </mat-icon>
-                        }
-                      </div>
-                    } @else {
-                      <div class="px-2.5 h-100 d-flex align-items-center justify-content-between gap-1 text-slate-800 truncate">
-                        <span class="truncate">{{ formatCellForGrid(row, col) || (isInvalid ? '(Empty)' : '') }}</span>
-                        @if (isInvalid) {
-                          <mat-icon
-                            class="text-red-700 shrink-0"
-                            style="font-size: 14px; width: 14px; height: 14px"
-                            [title]="cellErrorMsg"
-                          >
-                            error
-                          </mat-icon>
-                        }
-                      </div>
-                    }
+                    <div
+                      [id]="'grid-cell-' + row.id + '-' + col.id"
+                      contenteditable="true"
+                      spellcheck="false"
+                      role="textbox"
+                      [attr.aria-label]="col.name"
+                      [attr.data-placeholder]="isInvalid ? '(Empty / Invalid)' : ''"
+                      class="excel-cell-editable text-slate-900"
+                      [class.text-end]="col.colType === 'number'"
+                      [class.font-mono-tabular]="col.colType === 'number' || col.colType === 'date' || col.colType === 'lookup'"
+                      [textContent]="getEditableCellDomText(row, col)"
+                      (focus)="onCellFocus(row.id, col.id, $event)"
+                      (input)="onContentEditableCellInput(row.id, col.id, $event)"
+                      (blur)="onEditableCellBlur(row.id, col.id, $event)"
+                      (keydown)="onAlwaysEditableCellKeydown($event, row.id, col.id)"
+                    ></div>
                   }
                 </td>
               }
             </tr>
           }
           @if (hasMoreLazyRows()) {
-            <tr class="gridpulse-lazy-sentinel-row" style="height: 140px; border: 0; background: transparent">
+            <tr class="gridpulse-lazy-sentinel-row" style="height: 420px; border: 0; background: transparent">
               <td
                 [attr.colspan]="sortedColumns().length + 2"
                 class="text-center align-middle text-xs text-slate-400 border-0 py-3"
@@ -1604,7 +1548,7 @@
           Showing {{ visibleRows().length }} of {{ dbFilteredTotalRows() }} rows in <strong>{{ activeDatabaseName() }}</strong> table <strong>{{ activeTableName() }}</strong>
         </span>
         @if (hasNewRowDraftValues()) {
-          <div class="d-inline-flex align-items-center gap-1.5 ms-2">
+          <div class="d-inline-flex align-items-center gap-1.5 ms-2" data-first-row-reset="true">
             <button
               type="button"
               (click)="commitFirstRowAddRow($event)"
@@ -1615,6 +1559,7 @@
             </button>
             <button
               type="button"
+              data-first-row-reset="true"
               (click)="clearNewRowDraft($event)"
               class="btn btn-sm py-0.5 px-2 btn-outline-secondary d-inline-flex align-items-center gap-1 text-xs"
             >
@@ -1625,10 +1570,11 @@
         }
       </div>
     </div>
+        }
   </main>
 
   <!-- ===================================================================== -->
-  <!-- EXCEL SHEET TABS FOOTER BAR (Fixed in Footer of Database Tab)         -->
+  <!-- EXCEL SHEET TABS FOOTER BAR (Open Tables from Sidebar for Active DB)  -->
   <!-- ===================================================================== -->
   <footer class="excel-sheet-footer bg-slate-200 border-t border-slate-300 px-2 py-1 shrink-0 z-30">
     <div class="d-flex align-items-center justify-content-between gap-2">
@@ -1654,12 +1600,12 @@
         </button>
       </div>
 
-      <!-- Horizontally Scrollable Excel Sheet Tabs Strip -->
+      <!-- Horizontally Scrollable Open Table Tabs Strip -->
       <div
         id="excel-sheet-tabs-scroll-container"
         class="excel-sheet-tabs-strip d-flex align-items-center gap-1 overflow-x-auto flex-grow-1 py-0.5"
       >
-        @for (tbl of tables(); track tbl.tableName) {
+        @for (tbl of openTablesForActiveDatabase(); track tbl.tableName) {
           @let isActiveTab = tbl.tableName === activeTableName();
           <div
             class="excel-sheet-tab d-inline-flex align-items-center gap-1.5 px-3 py-1.5 rounded-top border cursor-pointer whitespace-nowrap select-none text-xs transition-all"
@@ -1674,7 +1620,7 @@
             (click)="switchTable(tbl.tableName, $event)"
             (keydown.enter)="switchTable(tbl.tableName, $event)"
             tabindex="0"
-            [title]="'DB Table: ' + tbl.tableName + ' (' + tbl.rowCount + ' rows, ' + tbl.columnCount + ' columns)'"
+            [title]="'Open Table Tab: ' + tbl.tableName + ' (' + tbl.rowCount + ' rows, ' + tbl.columnCount + ' columns)'"
           >
             <mat-icon
               [class.text-emerald-600]="isActiveTab"
@@ -1695,16 +1641,15 @@
               {{ tbl.rowCount }}
             </span>
 
-            @if (tables().length > 1) {
-              <button
-                type="button"
-                (click)="deleteTable(tbl.tableName, $event)"
-                class="btn btn-sm p-0 ms-1 border-0 bg-transparent text-slate-400 hover:text-red-600 d-inline-flex align-items-center gridario-icon-only-btn"
-                [title]="'Drop table ' + tbl.tableName + ' from database'"
-              >
-                <mat-icon style="font-size: 15px; width: 15px; height: 15px">close</mat-icon>
-              </button>
-            }
+            <button
+              type="button"
+              (click)="closeTableTab(tbl.tableName, $event)"
+              class="btn btn-sm p-0 ms-1 border-0 bg-transparent text-slate-400 hover:text-red-600 d-inline-flex align-items-center gridario-icon-only-btn"
+              [title]="'Close ' + tbl.tableName + ' tab'"
+              aria-label="Close table tab"
+            >
+              <mat-icon style="font-size: 15px; width: 15px; height: 15px">close</mat-icon>
+            </button>
           </div>
         }
       </div>
@@ -1721,6 +1666,7 @@
       </div>
     </div>
   </footer>
+      }
       </div>
     </div>
   </div>
@@ -2849,7 +2795,7 @@
               <option value="number">Number / NUMERIC</option>
               <option value="date">Date / DATE</option>
               <option value="dropdown">Select Dropdown / ENUM</option>
-              <option value="lookup">Array / Lookup</option>
+              <option value="lookup">Lookup / Foreign Key JSON (Linked Table)</option>
               <option value="checkbox">Checkbox / BOOLEAN</option>
               <option value="formula">Formula</option>
             </select>
@@ -2871,17 +2817,79 @@
           }
 
           @if (schemaModalColType() === 'lookup') {
-            <div>
-              <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="col-lookup-input">
-                Array / Lookup Values
-              </label>
-              <input
-                id="col-lookup-input"
-                type="text"
-                formControlName="optionsCsv"
-                placeholder="[{id: 1, name: car}, {id: 2, name: bus}, {id: 3, name: truck}]"
-                class="form-control form-control-sm font-mono-tabular text-xs"
-              />
+            <div class="p-2.5 bg-slate-50 rounded-lg border border-slate-200 d-flex flex-column gap-2">
+              <div>
+                <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="col-lookup-table-select">
+                  Foreign Key Linked Table (Other Table or Same Table)
+                </label>
+                <select
+                  id="col-lookup-table-select"
+                  formControlName="lookupTableName"
+                  (change)="onSchemaLookupTableChange()"
+                  class="form-select form-select-sm text-xs font-mono-tabular"
+                >
+                  <option value="">-- Custom JSON Array (Not linked to a table) --</option>
+                  @for (tbl of getAvailableLookupTablesForSchemaModal(); track tbl.tableName) {
+                    <option [value]="tbl.tableName">
+                      Link Table: {{ tbl.tableName }}
+                      {{ tbl.tableName.toLowerCase() === (targetColumnSchemaTableName() || activeTableName()).toLowerCase() ? '(Same Table)' : '' }}
+                      ({{ tbl.rowCount }} rows, {{ tbl.columnCount }} fields)
+                    </option>
+                  }
+                </select>
+                <div class="text-slate-500 mt-1" style="font-size: 11px">
+                  Links to another table or the same table like a Foreign Key and creates a live JSON object <code>&#123;[ID], [SelectedField...]&#125;</code>. Automatically updates whenever fields are renamed, added, or deleted.
+                </div>
+              </div>
+
+              <div>
+                <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="col-lookup-template-input">
+                  Lookup JSON Fields Template (<code>&#123;[ID], [SelectedField]&#125;</code> — click fields like Formula)
+                </label>
+                <input
+                  id="col-lookup-template-input"
+                  type="text"
+                  formControlName="formula"
+                  (input)="onSchemaLookupTemplateInput()"
+                  placeholder="{[ID], [Name]}"
+                  class="form-control form-control-sm font-mono-tabular text-xs mb-1.5"
+                />
+                <div class="d-flex align-items-center flex-wrap gap-1">
+                  <span class="text-slate-500" style="font-size: 10px">Select fields:</span>
+                  @for (colName of getSchemaLookupTargetColumns(); track colName) {
+                    <button
+                      type="button"
+                      (click)="toggleSchemaLookupFieldChip(colName)"
+                      [disabled]="colName.toLowerCase() === 'id'"
+                      [class]="
+                        isSchemaLookupFieldSelected(colName)
+                          ? 'btn btn-sm py-0.5 px-2 bg-emerald-600 text-white border border-emerald-700 text-xs font-mono-tabular'
+                          : 'btn btn-sm py-0.5 px-2 bg-white text-slate-700 border border-slate-300 text-xs font-mono-tabular'
+                      "
+                      [title]="
+                        colName.toLowerCase() === 'id'
+                          ? '[ID] Primary Key is always included in Lookup JSON'
+                          : 'Click to toggle [' + colName + '] in Lookup JSON template'
+                      "
+                    >
+                      [{{ colName }}]
+                    </button>
+                  }
+                </div>
+              </div>
+
+              <div>
+                <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="col-lookup-input">
+                  Linked Table JSON Records (Auto-synced from Linked Table)
+                </label>
+                <input
+                  id="col-lookup-input"
+                  type="text"
+                  formControlName="optionsCsv"
+                  placeholder='[{"ID":1,"Name":"car"},{"ID":2,"Name":"bus"}]'
+                  class="form-control form-control-sm font-mono-tabular text-xs"
+                />
+              </div>
             </div>
           }
 
@@ -2917,17 +2925,30 @@
                 <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="col-default-input">
                   Default Value
                 </label>
-                <input
-                  id="col-default-input"
-                  type="text"
-                  formControlName="defaultValue"
-                  [placeholder]="
-                    schemaModalColType() === 'checkbox'
-                      ? '1 or true, 0 or false'
-                      : 'Default value...'
-                  "
-                  class="form-control form-control-sm text-xs"
-                />
+                @if (schemaModalColType() === 'lookup' && getSchemaModalLookupItems().length > 0) {
+                  <select
+                    id="col-default-input"
+                    formControlName="defaultValue"
+                    class="form-select form-select-sm font-mono-tabular text-xs"
+                  >
+                    <option value="">-- No default record --</option>
+                    @for (item of getSchemaModalLookupItems(); track item.id) {
+                      <option [value]="item.json">{{ formatLookupOptionLabel(item) }}</option>
+                    }
+                  </select>
+                } @else {
+                  <input
+                    id="col-default-input"
+                    type="text"
+                    formControlName="defaultValue"
+                    [placeholder]="
+                      schemaModalColType() === 'checkbox'
+                        ? '1 or true, 0 or false'
+                        : 'Default value...'
+                    "
+                    class="form-control form-control-sm text-xs"
+                  />
+                }
               </div>
 
               <div class="col-12 col-sm-6 pt-3 d-flex align-items-center">
@@ -3033,12 +3054,12 @@
                 } @else if (col.colType === 'lookup' && getLookupOptionsForCol(col).length > 0) {
                   <select
                     [id]="'new-row-' + col.id"
-                    class="form-select form-select-sm text-xs"
+                    class="form-select form-select-sm font-mono-tabular text-xs"
                     [value]="newRowValues()[col.id]"
                     (change)="updateNewRowField(col.id, $any($event.target).value)"
                   >
                     @for (item of getLookupOptionsForCol(col); track item.id) {
-                      <option [value]="item.name">{{ formatLookupOptionLabel(item) }}</option>
+                      <option [value]="item.json">{{ formatLookupOptionLabel(item) }}</option>
                     }
                   </select>
                 } @else if (col.colType === 'checkbox') {
@@ -3210,7 +3231,7 @@
   }
 
   <!-- ===================================================================== -->
-  <!-- MODAL 4B: CREATE TABLE                                                -->
+  <!-- MODAL 4B: CREATE / EDIT TABLE (WITH TABULAR MULTI-FIELD DESIGNER)     -->
   <!-- ===================================================================== -->
   @if (activeModal() === 'create_table') {
     <div
@@ -3221,15 +3242,24 @@
     >
       <div
         class="bg-white rounded-xl border border-slate-200 shadow-md w-100 p-4 gridpulse-popup-card"
-        style="max-width: 440px"
+        style="max-width: 940px"
         (click)="$event.stopPropagation()"
         (keydown.escape)="activeModal.set('none')"
         tabindex="0"
       >
         <div class="d-flex align-items-center justify-content-between pb-2.5 border-b border-slate-200">
-          <h2 class="text-sm font-bold text-slate-900 m-0">
-            Create Table
-          </h2>
+          <div>
+            <h2 class="text-sm font-bold text-slate-900 m-0">
+              @if (editingTableOriginalName()) {
+                Edit Table "{{ editingTableOriginalName() }}" in "{{ newTableForm.controls.databaseName.value || activeDatabaseName() }}"
+              } @else {
+                Create Table in "{{ newTableForm.controls.databaseName.value || activeDatabaseName() }}"
+              }
+            </h2>
+            <p class="text-xs text-slate-500 m-0 mt-0.5">
+              Use the <strong>first row (Top Row)</strong> to add a new field, or edit all existing fields below in tabular format. Use <strong>Tab</strong> / <strong>Shift+Tab</strong> or <strong>Arrow</strong> keys to move across cells.
+            </p>
+          </div>
           <button
             type="button"
             (click)="activeModal.set('none')"
@@ -3242,40 +3272,631 @@
         <div class="py-3 d-flex flex-column gap-3">
           @if (createTableErrorMessage()) {
             <div class="p-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs d-flex align-items-center gap-2">
+              <mat-icon class="text-red-600 shrink-0" style="font-size: 16px; width: 16px; height: 16px">error_outline</mat-icon>
               <span>{{ createTableErrorMessage() }}</span>
             </div>
           }
 
-          <div>
-            <label class="form-label text-xs font-bold text-slate-800 mb-1" for="new-table-name-input">
-              Table Name
-            </label>
-            <input
-              id="new-table-name-input"
-              type="text"
-              [formControl]="newTableForm.controls.tableName"
-              placeholder="Table name"
-              class="form-control form-control-sm font-mono-tabular text-xs"
-            />
+          <div class="row g-2 align-items-end">
+            <div class="col-12 col-md-6">
+              <label class="form-label text-xs font-bold text-slate-800 mb-1" for="new-table-name-input">
+                Table Name *
+              </label>
+              <input
+                id="new-table-name-input"
+                type="text"
+                [formControl]="newTableForm.controls.tableName"
+                placeholder="e.g. Orders, Inventory, Customers..."
+                class="form-control form-control-sm font-mono-tabular text-xs"
+              />
+            </div>
+
+            <div class="col-12 col-md-6 d-flex align-items-center justify-content-md-end gap-2">
+              <button
+                type="button"
+                (click)="addNewTableColumnDraft(true)"
+                class="btn btn-sm btn-outline-primary d-inline-flex align-items-center gap-1 text-xs font-semibold"
+              >
+                <mat-icon style="font-size: 15px; width: 15px; height: 15px">add</mat-icon>
+                <span>Add Blank Row</span>
+              </button>
+              @if (newTableColumns().length > 0 && !editingTableOriginalName()) {
+                <button
+                  type="button"
+                  (click)="clearAllNewTableDraftColumns()"
+                  class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1 text-xs"
+                >
+                  <mat-icon style="font-size: 15px; width: 15px; height: 15px">clear_all</mat-icon>
+                  <span>Clear Fields</span>
+                </button>
+              }
+            </div>
+          </div>
+
+          <!-- Tabular Field Schema Designer Grid -->
+          <div class="border border-slate-300 rounded-lg overflow-hidden">
+            <div style="max-height: 380px; overflow: auto">
+              <table class="table table-bordered table-sm align-middle m-0 text-xs excel-schema-table">
+                <thead class="bg-slate-100 text-slate-800">
+                  <tr>
+                    <th class="text-center font-mono-tabular py-2 px-2" style="width: 48px">#</th>
+                    <th class="py-2 px-2.5" style="min-width: 170px">Field Name *</th>
+                    <th class="py-2 px-2.5" style="min-width: 175px">Data Type *</th>
+                    <th class="py-2 px-2.5" style="min-width: 290px">
+                      Default Value / Formula / Lookup &amp; Dropdown Options
+                    </th>
+                    <th class="py-2 px-2.5 text-center" style="width: 130px">Is Null</th>
+                    <th class="py-2 px-2 text-center" style="width: 52px">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <!-- ======================================================= -->
+                  <!-- FIRST ROW / TOP ROW: ADD NEW FIELD                      -->
+                  <!-- ======================================================= -->
+                  @let topDraft = newTableTopDraft();
+                  <tr class="bg-emerald-50/70">
+                    <td class="text-center font-mono-tabular font-bold text-emerald-700 p-0" title="Top Row: Add a new field to this table">
+                      <div class="px-1.5 py-1">NEW</div>
+                    </td>
+
+                    <!-- Top Row Cell 1: Field Name to Add -->
+                    <td class="p-0">
+                      <input
+                        id="create-tbl-top-name"
+                        type="text"
+                        [value]="topDraft.name"
+                        (input)="updateTopNewTableColumnDraft({ name: $any($event.target).value })"
+                        (keydown)="onCreateTableCellKeydown($event, -1, 'name', false)"
+                        placeholder="+ New field name (Enter or Tab to add)..."
+                        class="form-control form-control-sm font-mono-tabular text-xs"
+                      />
+                    </td>
+
+                    <!-- Top Row Cell 2: Data Type -->
+                    <td class="p-0">
+                      <select
+                        id="create-tbl-top-type"
+                        [value]="topDraft.colType"
+                        (change)="updateTopNewTableColumnDraft({ colType: $any($event.target).value })"
+                        (keydown)="onCreateTableCellKeydown($event, -1, 'type', false)"
+                        class="form-select form-select-sm text-xs"
+                      >
+                        <option value="text">Text / VARCHAR</option>
+                        <option value="varchar_max">Text / VARCHAR(MAX)</option>
+                        <option value="number">Number / NUMERIC</option>
+                        <option value="date">Date / DATE</option>
+                        <option value="dropdown">Select Dropdown / ENUM</option>
+                        <option value="lookup">Lookup / Foreign Key JSON</option>
+                        <option value="checkbox">Checkbox / BOOLEAN</option>
+                        <option value="formula">Formula</option>
+                      </select>
+                    </td>
+
+                    <!-- Top Row Cell 3: Default Value / Formula / Lookup / Dropdown -->
+                    <td class="p-0">
+                      @if (topDraft.colType === 'formula') {
+                        <div class="d-flex flex-column excel-subcell-stack">
+                          <input
+                            id="create-tbl-top-default"
+                            type="text"
+                            [value]="topDraft.formula"
+                            (input)="updateTopNewTableColumnDraft({ formula: $any($event.target).value })"
+                            (keydown)="onCreateTableCellKeydown($event, -1, 'default', true)"
+                            placeholder="e.g. =[Quantity] * [UnitPrice]"
+                            class="form-control form-control-sm font-mono-tabular text-xs"
+                          />
+                          <div class="d-flex align-items-center flex-wrap gap-1 px-1.5 py-1">
+                            <span class="text-slate-500" style="font-size: 10px">Insert field:</span>
+                            @for (refName of getNewTableFormulaReferences(-1); track refName) {
+                              <button
+                                type="button"
+                                tabindex="-1"
+                                (click)="appendColumnRefToTopNewTableFormula(refName)"
+                                class="btn btn-sm py-0 px-1.5 bg-white border border-slate-300 font-mono-tabular"
+                                style="font-size: 10px; line-height: 15px"
+                              >
+                                [{{ refName }}]
+                              </button>
+                            }
+                          </div>
+                        </div>
+                      } @else if (topDraft.colType === 'lookup') {
+                        <div class="d-flex flex-column excel-subcell-stack">
+                          <select
+                            id="create-tbl-top-lookup-table"
+                            [value]="topDraft.lookupTableName || ''"
+                            (change)="updateTopNewTableColumnDraft({ lookupTableName: $any($event.target).value })"
+                            (keydown)="onCreateTableCellKeydown($event, -1, 'options', false)"
+                            title="Link Other Table or Same Table for Lookup JSON"
+                            class="form-select form-select-sm font-mono-tabular text-xs"
+                          >
+                            <option value="">-- Custom Lookup JSON --</option>
+                            @for (tbl of getAvailableLookupTablesForCreateTableModal(); track tbl.tableName) {
+                              <option [value]="tbl.tableName">
+                                FK Link Table: {{ tbl.tableName }}
+                                {{ tbl.tableName.toLowerCase() === (newTableForm.controls.tableName.value || editingTableOriginalName() || activeTableName()).toLowerCase() ? '(Same Table)' : '' }}
+                                ({{ tbl.rowCount }} rows)
+                              </option>
+                            }
+                          </select>
+                          <input
+                            id="create-tbl-top-lookup-template"
+                            type="text"
+                            [value]="topDraft.formula || '{[ID]}'"
+                            (input)="updateTopNewTableColumnDraft({ formula: $any($event.target).value })"
+                            (keydown)="onCreateTableCellKeydown($event, -1, 'options', false)"
+                            placeholder="{[ID], [Name]}"
+                            title="Lookup JSON template {[ID], [SelectedField...]}"
+                            class="form-control form-control-sm font-mono-tabular text-xs"
+                          />
+                          @if (topDraft.lookupTableName) {
+                            <div class="d-flex align-items-center flex-wrap gap-1 px-1.5 py-1">
+                              <span class="text-slate-500" style="font-size: 10px">Select fields:</span>
+                              @for (refName of getDraftLookupTargetColumns(topDraft.lookupTableName, -1); track refName) {
+                                <button
+                                  type="button"
+                                  tabindex="-1"
+                                  [disabled]="refName.toLowerCase() === 'id'"
+                                  (click)="toggleTopDraftLookupFieldChip(refName)"
+                                  [class]="
+                                    isDraftLookupFieldSelected(topDraft, refName, -1)
+                                      ? 'btn btn-sm py-0 px-1.5 bg-emerald-600 text-white border border-emerald-700 font-mono-tabular'
+                                      : 'btn btn-sm py-0 px-1.5 bg-white text-slate-700 border border-slate-300 font-mono-tabular'
+                                  "
+                                  style="font-size: 10px; line-height: 15px"
+                                >
+                                  [{{ refName }}]
+                                </button>
+                              }
+                            </div>
+                          }
+                          <input
+                            id="create-tbl-top-options"
+                            type="text"
+                            [value]="topDraft.optionsCsv"
+                            (input)="updateTopNewTableColumnDraft({ optionsCsv: $any($event.target).value })"
+                            (keydown)="onCreateTableCellKeydown($event, -1, 'options', false)"
+                            placeholder='[{"ID":1,"Name":"car"},{"ID":2,"Name":"bus"}]'
+                            title="Linked Table JSON records (auto-updates when linked table changes)"
+                            class="form-control form-control-sm font-mono-tabular text-xs"
+                          />
+                          @if (getDraftLookupItems(topDraft).length > 0) {
+                            <select
+                              id="create-tbl-top-default"
+                              [value]="topDraft.columnValue"
+                              (change)="updateTopNewTableColumnDraft({ columnValue: $any($event.target).value })"
+                              (keydown)="onCreateTableCellKeydown($event, -1, 'default', false)"
+                              class="form-select form-select-sm font-mono-tabular text-xs"
+                            >
+                              <option value="">-- Default Linked JSON Record (Optional) --</option>
+                              @for (item of getDraftLookupItems(topDraft); track item.id) {
+                                <option [value]="item.json">{{ formatLookupOptionLabel(item) }}</option>
+                              }
+                            </select>
+                          } @else {
+                            <input
+                              id="create-tbl-top-default"
+                              type="text"
+                              [value]="topDraft.columnValue"
+                              (input)="updateTopNewTableColumnDraft({ columnValue: $any($event.target).value })"
+                              (keydown)="onCreateTableCellKeydown($event, -1, 'default', false)"
+                              placeholder="Default lookup JSON or ID..."
+                              class="form-control form-control-sm font-mono-tabular text-xs"
+                            />
+                          }
+                        </div>
+                      } @else if (topDraft.colType === 'dropdown') {
+                        <div class="d-flex flex-column excel-subcell-stack">
+                          <input
+                            id="create-tbl-top-options"
+                            type="text"
+                            [value]="topDraft.optionsCsv"
+                            (input)="updateTopNewTableColumnDraft({ optionsCsv: $any($event.target).value })"
+                            (keydown)="onCreateTableCellKeydown($event, -1, 'options', false)"
+                            placeholder="Options (comma-separated): High, Medium, Low"
+                            title="Comma-separated dropdown options"
+                            class="form-control form-control-sm text-xs"
+                          />
+                          <input
+                            id="create-tbl-top-default"
+                            type="text"
+                            [value]="topDraft.columnValue"
+                            (input)="updateTopNewTableColumnDraft({ columnValue: $any($event.target).value })"
+                            (keydown)="onCreateTableCellKeydown($event, -1, 'default', false)"
+                            placeholder="Default option (e.g. High)"
+                            class="form-control form-control-sm text-xs"
+                          />
+                        </div>
+                      } @else if (topDraft.colType === 'checkbox') {
+                        <select
+                          id="create-tbl-top-default"
+                          [value]="topDraft.columnValue"
+                          (change)="updateTopNewTableColumnDraft({ columnValue: $any($event.target).value })"
+                          (keydown)="onCreateTableCellKeydown($event, -1, 'default', false)"
+                          class="form-select form-select-sm text-xs"
+                        >
+                          <option value="">No default (false)</option>
+                          <option value="true">True (Checked)</option>
+                          <option value="false">False (Unchecked)</option>
+                        </select>
+                      } @else if (topDraft.colType === 'date') {
+                        <input
+                          id="create-tbl-top-default"
+                          type="date"
+                          [value]="topDraft.columnValue"
+                          (input)="updateTopNewTableColumnDraft({ columnValue: $any($event.target).value })"
+                          (keydown)="onCreateTableCellKeydown($event, -1, 'default', false)"
+                          class="form-control form-control-sm font-mono-tabular text-xs"
+                        />
+                      } @else if (topDraft.colType === 'number') {
+                        <input
+                          id="create-tbl-top-default"
+                          type="number"
+                          step="any"
+                          [value]="topDraft.columnValue"
+                          (input)="updateTopNewTableColumnDraft({ columnValue: $any($event.target).value })"
+                          (keydown)="onCreateTableCellKeydown($event, -1, 'default', false)"
+                          placeholder="Default number (e.g. 0)"
+                          class="form-control form-control-sm font-mono-tabular text-xs"
+                        />
+                      } @else {
+                        <input
+                          id="create-tbl-top-default"
+                          type="text"
+                          [value]="topDraft.columnValue"
+                          (input)="updateTopNewTableColumnDraft({ columnValue: $any($event.target).value })"
+                          (keydown)="onCreateTableCellKeydown($event, -1, 'default', false)"
+                          placeholder="Default value for new field..."
+                          class="form-control form-control-sm text-xs"
+                        />
+                      }
+                    </td>
+
+                    <!-- Top Row Cell 4: Is Null (NULL / NOT NULL) -->
+                    <td class="p-0 text-center">
+                      @if (topDraft.colType === 'formula') {
+                        <span class="text-slate-500 font-mono-tabular px-2 py-1 d-inline-block" style="font-size: 11px">Computed</span>
+                      } @else {
+                        <select
+                          id="create-tbl-top-null"
+                          [value]="topDraft.isNullable ? 'null' : 'not_null'"
+                          (change)="updateTopNewTableColumnDraft({ isNullable: $any($event.target).value === 'null' })"
+                          (keydown)="onCreateTableCellKeydown($event, -1, 'null', true)"
+                          class="form-select form-select-sm font-mono-tabular text-xs"
+                        >
+                          <option value="null">NULL</option>
+                          <option value="not_null">NOT NULL</option>
+                        </select>
+                      }
+                    </td>
+
+                    <!-- Top Row Cell 5: Add Field Button -->
+                    <td class="p-0 text-center">
+                      <button
+                        type="button"
+                        (click)="commitTopNewTableColumnDraft(true)"
+                        class="btn btn-sm btn-success py-0.5 px-2 d-inline-flex align-items-center justify-content-center"
+                        title="Add field to table"
+                      >
+                        <mat-icon style="font-size: 16px; width: 16px; height: 16px">add</mat-icon>
+                      </button>
+                    </td>
+                  </tr>
+
+                  <!-- ======================================================= -->
+                  <!-- LOCKED PRIMARY KEY ROW (ID)                             -->
+                  <!-- ======================================================= -->
+                  <tr class="bg-amber-50/60 text-slate-700">
+                    <td class="text-center font-mono-tabular font-bold text-amber-800 p-0">
+                      <div class="px-2 py-1">PK</div>
+                    </td>
+                    <td class="p-0 font-mono-tabular font-bold">
+                      <div class="d-flex align-items-center gap-1.5 px-2 py-1">
+                        <mat-icon style="font-size: 14px; width: 14px; height: 14px; color: #FBBC05">vpn_key</mat-icon>
+                        <span>ID</span>
+                      </div>
+                    </td>
+                    <td class="p-0 font-mono-tabular text-slate-600">
+                      <div class="px-2 py-1">Number / INT (IDENTITY 1,1)</div>
+                    </td>
+                    <td class="p-0 font-mono-tabular text-slate-500">
+                      <div class="px-2 py-1">Auto-increment (1, 2, 3...)</div>
+                    </td>
+                    <td class="p-0 text-center font-mono-tabular font-bold text-slate-700">
+                      <div class="px-2 py-1">NOT NULL</div>
+                    </td>
+                    <td class="p-0 text-center text-slate-400">
+                      <div class="px-2 py-1">
+                        <mat-icon style="font-size: 14px; width: 14px; height: 14px" title="Locked Primary Key">lock</mat-icon>
+                      </div>
+                    </td>
+                  </tr>
+
+                  <!-- ======================================================= -->
+                  <!-- EXISTING & ADDED FIELD ROWS (EDITABLE IN-PLACE)         -->
+                  <!-- ======================================================= -->
+                  @for (draft of newTableColumns(); track draft.id; let idx = $index) {
+                    <tr>
+                      <td class="text-center font-mono-tabular text-slate-500 p-0">
+                        <div class="px-2 py-1">{{ idx + 1 }}</div>
+                      </td>
+
+                      <!-- Cell 1: Field Name -->
+                      <td class="p-0">
+                        <input
+                          [id]="'create-tbl-name-' + idx"
+                          type="text"
+                          [value]="draft.name"
+                          (input)="updateNewTableColumnDraft(idx, { name: $any($event.target).value })"
+                          (keydown)="onCreateTableCellKeydown($event, idx, 'name', false)"
+                          placeholder="e.g. Quantity, Price..."
+                          class="form-control form-control-sm font-mono-tabular text-xs"
+                        />
+                      </td>
+
+                      <!-- Cell 2: Data Type -->
+                      <td class="p-0">
+                        <select
+                          [id]="'create-tbl-type-' + idx"
+                          [value]="draft.colType"
+                          (change)="updateNewTableColumnDraft(idx, { colType: $any($event.target).value })"
+                          (keydown)="onCreateTableCellKeydown($event, idx, 'type', false)"
+                          class="form-select form-select-sm text-xs"
+                        >
+                          <option value="text">Text / VARCHAR</option>
+                          <option value="varchar_max">Text / VARCHAR(MAX)</option>
+                          <option value="number">Number / NUMERIC</option>
+                          <option value="date">Date / DATE</option>
+                          <option value="dropdown">Select Dropdown / ENUM</option>
+                          <option value="lookup">Lookup / Foreign Key JSON</option>
+                          <option value="checkbox">Checkbox / BOOLEAN</option>
+                          <option value="formula">Formula</option>
+                        </select>
+                      </td>
+
+                      <!-- Cell 3: Default Value / Formula Expression / Lookup Array / Dropdown Options -->
+                      <td class="p-0">
+                        @if (draft.colType === 'formula') {
+                          <div class="d-flex flex-column excel-subcell-stack">
+                            <input
+                              [id]="'create-tbl-default-' + idx"
+                              type="text"
+                              [value]="draft.formula"
+                              (input)="updateNewTableColumnDraft(idx, { formula: $any($event.target).value })"
+                              (keydown)="onCreateTableCellKeydown($event, idx, 'default', true)"
+                              placeholder="e.g. =[Quantity] * [UnitPrice]"
+                              class="form-control form-control-sm font-mono-tabular text-xs"
+                            />
+                            <div class="d-flex align-items-center flex-wrap gap-1 px-1.5 py-1">
+                              <span class="text-slate-400" style="font-size: 10px">Insert field:</span>
+                              @for (refName of getNewTableFormulaReferences(idx); track refName) {
+                                <button
+                                  type="button"
+                                  tabindex="-1"
+                                  (click)="appendColumnRefToNewTableFormula(idx, refName)"
+                                  class="btn btn-sm py-0 px-1.5 bg-slate-100 border border-slate-300 font-mono-tabular"
+                                  style="font-size: 10px; line-height: 15px"
+                                >
+                                  [{{ refName }}]
+                                </button>
+                              }
+                            </div>
+                          </div>
+                        } @else if (draft.colType === 'lookup') {
+                          <div class="d-flex flex-column excel-subcell-stack">
+                            <select
+                              [id]="'create-tbl-lookup-table-' + idx"
+                              [value]="draft.lookupTableName || ''"
+                              (change)="updateNewTableColumnDraft(idx, { lookupTableName: $any($event.target).value })"
+                              (keydown)="onCreateTableCellKeydown($event, idx, 'options', false)"
+                              title="Link Other Table or Same Table for Lookup JSON"
+                              class="form-select form-select-sm font-mono-tabular text-xs"
+                            >
+                              <option value="">-- Custom Lookup JSON --</option>
+                              @for (tbl of getAvailableLookupTablesForCreateTableModal(); track tbl.tableName) {
+                                <option [value]="tbl.tableName">
+                                  FK Link Table: {{ tbl.tableName }}
+                                  {{ tbl.tableName.toLowerCase() === (newTableForm.controls.tableName.value || editingTableOriginalName() || activeTableName()).toLowerCase() ? '(Same Table)' : '' }}
+                                  ({{ tbl.rowCount }} rows)
+                                </option>
+                              }
+                            </select>
+                            <input
+                              [id]="'create-tbl-lookup-template-' + idx"
+                              type="text"
+                              [value]="draft.formula || '{[ID]}'"
+                              (input)="updateNewTableColumnDraft(idx, { formula: $any($event.target).value })"
+                              (keydown)="onCreateTableCellKeydown($event, idx, 'options', false)"
+                              placeholder="{[ID], [Name]}"
+                              title="Lookup JSON template {[ID], [SelectedField...]}"
+                              class="form-control form-control-sm font-mono-tabular text-xs"
+                            />
+                            @if (draft.lookupTableName) {
+                              <div class="d-flex align-items-center flex-wrap gap-1 px-1.5 py-1">
+                                <span class="text-slate-400" style="font-size: 10px">Select fields:</span>
+                                @for (refName of getDraftLookupTargetColumns(draft.lookupTableName, idx); track refName) {
+                                  <button
+                                    type="button"
+                                    tabindex="-1"
+                                    [disabled]="refName.toLowerCase() === 'id'"
+                                    (click)="toggleRowDraftLookupFieldChip(idx, refName)"
+                                    [class]="
+                                      isDraftLookupFieldSelected(draft, refName, idx)
+                                        ? 'btn btn-sm py-0 px-1.5 bg-emerald-600 text-white border border-emerald-700 font-mono-tabular'
+                                        : 'btn btn-sm py-0 px-1.5 bg-slate-100 text-slate-700 border border-slate-300 font-mono-tabular'
+                                    "
+                                    style="font-size: 10px; line-height: 15px"
+                                  >
+                                    [{{ refName }}]
+                                  </button>
+                                }
+                              </div>
+                            }
+                            <input
+                              [id]="'create-tbl-options-' + idx"
+                              type="text"
+                              [value]="draft.optionsCsv"
+                              (input)="updateNewTableColumnDraft(idx, { optionsCsv: $any($event.target).value })"
+                              (keydown)="onCreateTableCellKeydown($event, idx, 'options', false)"
+                              placeholder='[{"ID":1,"Name":"car"},{"ID":2,"Name":"bus"}]'
+                              title="Linked Table JSON records (auto-updates when linked table changes)"
+                              class="form-control form-control-sm font-mono-tabular text-xs"
+                            />
+                            @if (getDraftLookupItems(draft).length > 0) {
+                              <select
+                                [id]="'create-tbl-default-' + idx"
+                                [value]="draft.columnValue"
+                                (change)="updateNewTableColumnDraft(idx, { columnValue: $any($event.target).value })"
+                                (keydown)="onCreateTableCellKeydown($event, idx, 'default', false)"
+                                class="form-select form-select-sm font-mono-tabular text-xs"
+                              >
+                                <option value="">-- Default Linked JSON Record (Optional) --</option>
+                                @for (item of getDraftLookupItems(draft); track item.id) {
+                                  <option [value]="item.json">{{ formatLookupOptionLabel(item) }}</option>
+                                }
+                              </select>
+                            } @else {
+                              <input
+                                [id]="'create-tbl-default-' + idx"
+                                type="text"
+                                [value]="draft.columnValue"
+                                (input)="updateNewTableColumnDraft(idx, { columnValue: $any($event.target).value })"
+                                (keydown)="onCreateTableCellKeydown($event, idx, 'default', false)"
+                                placeholder="Default lookup JSON or ID..."
+                                class="form-control form-control-sm font-mono-tabular text-xs"
+                              />
+                            }
+                          </div>
+                        } @else if (draft.colType === 'dropdown') {
+                          <div class="d-flex flex-column excel-subcell-stack">
+                            <input
+                              [id]="'create-tbl-options-' + idx"
+                              type="text"
+                              [value]="draft.optionsCsv"
+                              (input)="updateNewTableColumnDraft(idx, { optionsCsv: $any($event.target).value })"
+                              (keydown)="onCreateTableCellKeydown($event, idx, 'options', false)"
+                              placeholder="Options (comma-separated): High, Medium, Low"
+                              title="Comma-separated dropdown options"
+                              class="form-control form-control-sm text-xs"
+                            />
+                            <input
+                              [id]="'create-tbl-default-' + idx"
+                              type="text"
+                              [value]="draft.columnValue"
+                              (input)="updateNewTableColumnDraft(idx, { columnValue: $any($event.target).value })"
+                              (keydown)="onCreateTableCellKeydown($event, idx, 'default', false)"
+                              placeholder="Default option (e.g. High)"
+                              class="form-control form-control-sm text-xs"
+                            />
+                          </div>
+                        } @else if (draft.colType === 'checkbox') {
+                          <select
+                            [id]="'create-tbl-default-' + idx"
+                            [value]="draft.columnValue"
+                            (change)="updateNewTableColumnDraft(idx, { columnValue: $any($event.target).value })"
+                            (keydown)="onCreateTableCellKeydown($event, idx, 'default', false)"
+                            class="form-select form-select-sm text-xs"
+                          >
+                            <option value="">No default (false)</option>
+                            <option value="true">True (Checked)</option>
+                            <option value="false">False (Unchecked)</option>
+                          </select>
+                        } @else if (draft.colType === 'date') {
+                          <input
+                            [id]="'create-tbl-default-' + idx"
+                            type="date"
+                            [value]="draft.columnValue"
+                            (input)="updateNewTableColumnDraft(idx, { columnValue: $any($event.target).value })"
+                            (keydown)="onCreateTableCellKeydown($event, idx, 'default', false)"
+                            class="form-control form-control-sm font-mono-tabular text-xs"
+                          />
+                        } @else if (draft.colType === 'number') {
+                          <input
+                            [id]="'create-tbl-default-' + idx"
+                            type="number"
+                            step="any"
+                            [value]="draft.columnValue"
+                            (input)="updateNewTableColumnDraft(idx, { columnValue: $any($event.target).value })"
+                            (keydown)="onCreateTableCellKeydown($event, idx, 'default', false)"
+                            placeholder="Default number (e.g. 0)"
+                            class="form-control form-control-sm font-mono-tabular text-xs"
+                          />
+                        } @else {
+                          <input
+                            [id]="'create-tbl-default-' + idx"
+                            type="text"
+                            [value]="draft.columnValue"
+                            (input)="updateNewTableColumnDraft(idx, { columnValue: $any($event.target).value })"
+                            (keydown)="onCreateTableCellKeydown($event, idx, 'default', false)"
+                            placeholder="Default value..."
+                            class="form-control form-control-sm text-xs"
+                          />
+                        }
+                      </td>
+
+                      <!-- Cell 4: Is Null (NULL / NOT NULL) -->
+                      <td class="p-0 text-center">
+                        @if (draft.colType === 'formula') {
+                          <span class="text-slate-400 font-mono-tabular px-2 py-1 d-inline-block" style="font-size: 11px">Computed</span>
+                        } @else {
+                          <select
+                            [id]="'create-tbl-null-' + idx"
+                            [value]="draft.isNullable ? 'null' : 'not_null'"
+                            (change)="updateNewTableColumnDraft(idx, { isNullable: $any($event.target).value === 'null' })"
+                            (keydown)="onCreateTableCellKeydown($event, idx, 'null', true)"
+                            class="form-select form-select-sm font-mono-tabular text-xs"
+                          >
+                            <option value="null">NULL</option>
+                            <option value="not_null">NOT NULL</option>
+                          </select>
+                        }
+                      </td>
+
+                      <!-- Cell 5: Remove Field Row -->
+                      <td class="p-0 text-center">
+                        <button
+                          type="button"
+                          tabindex="-1"
+                          (click)="removeNewTableColumnDraft(idx)"
+                          class="btn btn-sm p-1 border-0 bg-transparent text-slate-400 hover:text-red-600 d-inline-flex align-items-center"
+                          title="Remove field row"
+                        >
+                          <mat-icon style="font-size: 16px; width: 16px; height: 16px">delete_outline</mat-icon>
+                        </button>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
           </div>
         </div>
 
-        <div class="d-flex align-items-center justify-content-end gap-2 pt-2.5 border-t border-slate-200">
-          <button
-            type="button"
-            (click)="activeModal.set('none')"
-            class="btn btn-sm btn-outline-secondary text-xs"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            [disabled]="isCreatingTable()"
-            (click)="submitCreateTableModal()"
-            class="btn btn-sm btn-primary text-xs font-semibold px-3"
-          >
-            {{ isCreatingTable() ? 'Creating...' : 'Create Table' }}
-          </button>
+        <div class="d-flex align-items-center justify-content-between gap-2 pt-2.5 border-t border-slate-200">
+          <span class="text-xs text-slate-500 font-mono-tabular">
+            1 Primary Key (ID) + {{ newTableColumns().length }} field(s)
+          </span>
+          <div class="d-flex align-items-center gap-2">
+            <button
+              type="button"
+              (click)="activeModal.set('none')"
+              class="btn btn-sm btn-outline-secondary text-xs"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              [disabled]="isCreatingTable()"
+              (click)="submitCreateTableModal()"
+              class="btn btn-sm btn-primary text-xs font-semibold px-3"
+            >
+              @if (editingTableOriginalName()) {
+                {{ isCreatingTable() ? 'Saving...' : 'Save Table Changes' }}
+              } @else {
+                {{ isCreatingTable() ? 'Creating...' : 'Create Table' }}
+              }
+            </button>
+          </div>
         </div>
       </div>
     </div>

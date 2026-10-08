@@ -22,19 +22,20 @@ $cell-error-bg: #fca5a5;
   overflow: hidden;
 }
 
-// Full-viewport flex-scrollable table container
+// Full-viewport flex-scrollable table container (tbody scrolls, header stays fixed)
 .gridpulse-table-container {
   width: 100%;
   flex: 1 1 0%;
   min-height: 0;
   height: 100%;
   max-height: none;
-  overflow: auto;
+  overflow: hidden !important;
+  display: flex;
+  flex-direction: column;
   position: relative;
   background: #ffffff;
   border: 1px solid $border-subtle;
   border-radius: 0.5rem;
-  -webkit-overflow-scrolling: touch;
 
   @media (max-width: 767.98px) {
     border-radius: 0.375rem;
@@ -42,16 +43,34 @@ $cell-error-bg: #fca5a5;
 }
 
 .gridpulse-table {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  min-width: 100%;
   border-collapse: separate;
   border-spacing: 0;
-  width: max-content;
-  min-width: 100%;
   margin-bottom: 0 !important;
+  overflow: hidden;
+
+  thead {
+    display: block;
+    flex: 0 0 auto;
+    width: 100%;
+    overflow: hidden !important;
+  }
+
+  thead tr {
+    display: flex;
+    width: max-content;
+    min-width: 100%;
+    align-items: stretch;
+  }
 
   thead th {
-    position: sticky;
-    top: 0;
-    z-index: 20;
+    flex: 0 0 auto;
     background-color: $surface-header;
     border-bottom: 1px solid $border-strong;
     border-right: 1px solid $border-subtle;
@@ -70,13 +89,22 @@ $cell-error-bg: #fca5a5;
   }
 
   tbody {
+    display: block;
+    flex: 1 1 0%;
+    min-height: 0;
+    width: 100%;
+    overflow-y: auto !important;
+    overflow-x: auto !important;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
     td {
       border-bottom: 1px solid $border-subtle;
       border-right: 1px solid $border-subtle;
-      padding: 0;
-      height: 38px;
+      padding: 0 !important;
+      margin: 0 !important;
+      height: 30px;
       vertical-align: middle;
-      font-size: 0.825rem;
+      font-size: 0.8125rem;
       background-color: #ffffff;
       transition: background-color 120ms ease;
 
@@ -173,7 +201,10 @@ $cell-error-bg: #fca5a5;
   .excel-sheet-footer,
   .excel-sheet-tab,
   .excel-sheet-tab:hover,
-  .excel-sheet-tab-active {
+  .excel-sheet-tab-active,
+  .excel-top-tab,
+  .excel-top-tab:hover,
+  .excel-top-tab-active {
     background: #000000 !important;
     background-color: #000000 !important;
   }
@@ -193,7 +224,7 @@ $cell-error-bg: #fca5a5;
   }
 }
 
-// Excel-style bottom sheet tabs footer bar
+// Excel-style top & bottom sheet tabs bar
 .excel-sheet-footer {
   box-shadow: 0 -2px 6px rgba(15, 23, 42, 0.05);
 }
@@ -204,17 +235,22 @@ $cell-error-bg: #fca5a5;
   scroll-behavior: smooth;
 }
 
-.excel-sheet-tab {
-  border-bottom: 2px solid transparent;
+.excel-sheet-tab,
+.excel-top-tab {
+  border-top: 2px solid transparent;
+  border-bottom: 3px solid transparent;
   position: relative;
   &:hover {
     background-color: #f8fafc;
   }
 }
 
-.excel-sheet-tab-active {
+.excel-sheet-tab-active,
+.excel-top-tab-active {
+  border-top: 2px solid #34A853 !important;
   border-bottom: 3px solid #059669 !important;
   box-shadow: 0 -1px 3px rgba(15, 23, 42, 0.06);
 }
+
 
 

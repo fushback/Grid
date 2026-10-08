@@ -11,6 +11,7 @@ export type ColumnType =
 export interface LookupItem {
   id: string | number;
   name: string;
+  json: string;
   isActive?: boolean;
   attributes?: Record<string, string | number | boolean>;
 }
@@ -30,6 +31,7 @@ export interface GridColumn {
   defaultValue?: string;
   formula: string;
   optionsCsv: string;
+  lookupTableName?: string;
 }
 
 export interface DbTableSummary {
@@ -60,6 +62,7 @@ export interface NewTableColumnDraft {
   columnValue: string;
   formula: string;
   optionsCsv: string;
+  lookupTableName?: string;
   isPrimaryKey: boolean;
   isIdentity: boolean;
 }
@@ -135,11 +138,33 @@ export interface ValidationResult {
 }
 
 export function getDropdownOptions(col: GridColumn): string[] {
-  if (!col.optionsCsv) return [];
-  return col.optionsCsv
-    .split(',')
-    .map((s) => s.trim())
-    .filter((s) => s.length > 0);
+  const raw = (col.optionsCsv || '').trim();
+  const seen = new Set<string>();
+  const result: string[] = [];
+  if (raw) {
+    for (const part of raw.split(/[,\n;|]+/)) {
+      const clean = part.trim();
+      if (clean.length > 0 && !seen.has(clean)) {
+        seen.add(clean);
+        result.push(clean);
+      }
+    }
+  }
+  const defVal = col.defaultValue !== undefined ? String(col.defaultValue).trim() : '';
+  if (defVal && !defVal.startsWith('[') && !defVal.startsWith('{') && !defVal.startsWith('=')) {
+    if (result.length === 0) {
+      for (const part of defVal.split(/[,\n;|]+/)) {
+        const clean = part.trim();
+        if (clean.length > 0 && !seen.has(clean)) {
+          seen.add(clean);
+          result.push(clean);
+        }
+      }
+    } else if (!result.some((o) => o.toLowerCase() === defVal.toLowerCase())) {
+      result.push(defVal);
+    }
+  }
+  return result;
 }
 
 export function parseLookupString(raw: string): LookupItem[] {
@@ -148,10 +173,15 @@ export function parseLookupString(raw: string): LookupItem[] {
 
   try {
     const parsed = JSON.parse(trimmed);
-    if (Array.isArray(parsed)) {
+    const arr = Array.isArray(parsed)
+      ? parsed
+      : parsed && typeof parsed === 'object'
+      ? [parsed]
+      : null;
+    if (arr) {
       const items: LookupItem[] = [];
-      for (let idx = 0; idx < parsed.length; idx++) {
-        const entry = parsed[idx];
+      for (let idx = 0; idx < arr.length; idx++) {
+        const entry = arr[idx];
         if (entry && typeof entry === 'object') {
           const obj = entry as Record<string, unknown>;
           const attrs: Record<string, string | number | boolean> = {};
@@ -184,25 +214,38 @@ export function parseLookupString(raw: string): LookupItem[] {
                 );
           if (strName.length > 0 || Object.keys(attrs).length > 0) {
             const numId = Number(rawId);
+            const resolvedId =
+              Number.isFinite(numId) && String(rawId).trim() !== ''
+                ? numId
+                : String(rawId).trim();
+            if (Object.keys(attrs).length === 0) {
+              attrs['ID'] = resolvedId;
+              if (strName) attrs['name'] = strName;
+            }
             items.push({
-              id:
-                Number.isFinite(numId) && String(rawId).trim() !== ''
-                  ? numId
-                  : String(rawId).trim(),
-              name: strName || String(rawId).trim(),
+              id: resolvedId,
+              name: strName || String(resolvedId),
+              json: JSON.stringify(attrs),
               isActive,
               attributes: attrs,
             });
           }
         } else if (entry !== null && entry !== undefined && String(entry).trim() !== '') {
-          items.push({ id: idx + 1, name: String(entry).trim() });
+          const s = String(entry).trim();
+          const attrs = { id: idx + 1, name: s };
+          items.push({
+            id: idx + 1,
+            name: s,
+            json: JSON.stringify(attrs),
+            attributes: attrs,
+          });
         }
       }
       if (items.length > 0) return items;
     }
   } catch {
     // Fall through to relaxed JS object-array syntax parser:
-    // e.g. [{id: 1, name: car}, {id: 2, name: bus}] or [{id: 1, name: car, isactive: 1}, {id: 2, name: bus, isactive 0}]
+    // e.g. [{id: 1, name: car}, {id: 2, name: bus}]
   }
 
   const objBlocks = Array.from(trimmed.matchAll(/\{([^{}]+)\}/g));
@@ -233,7 +276,6 @@ export function parseLookupString(raw: string): LookupItem[] {
             .trim()
             .replace(/^['"]|['"]$/g, '');
         } else {
-          // Support space-separated key value such as "isactive 0"
           const spaceMatch = /^([a-zA-Z_][a-zA-Z0-9_]*)\s+(.+)$/.exec(part);
           if (spaceMatch) {
             rawKey = spaceMatch[1].trim();
@@ -284,9 +326,14 @@ export function parseLookupString(raw: string): LookupItem[] {
       }
 
       if (nameVal.length > 0 || Object.keys(attrs).length > 0) {
+        if (Object.keys(attrs).length === 0) {
+          attrs['id'] = idVal;
+          attrs['name'] = nameVal || String(idVal);
+        }
         items.push({
           id: idVal,
           name: nameVal || String(idVal),
+          json: JSON.stringify(attrs),
           isActive,
           attributes: attrs,
         });
@@ -300,11 +347,190 @@ export function parseLookupString(raw: string): LookupItem[] {
     .split(',')
     .map((s) => s.trim().replace(/^['"]|['"]$/g, ''))
     .filter((s) => s.length > 0)
-    .map((s, idx) => ({ id: idx + 1, name: s }));
+    .map((s, idx) => {
+      const attrs = { id: idx + 1, name: s };
+      return { id: idx + 1, name: s, json: JSON.stringify(attrs), attributes: attrs };
+    });
+}
+
+export function extractLookupTemplateTokens(rawTemplate?: string): string[] {
+  const str = String(rawTemplate || '').trim();
+  if (!str) return [];
+  const bracketMatches = Array.from(str.matchAll(/\[([^\]]+)\]/g))
+    .map((m) => m[1].trim())
+    .filter(Boolean);
+  if (bracketMatches.length > 0) {
+    return bracketMatches;
+  }
+  const inner = str.replace(/^\{|\}$/g, '').trim();
+  if (!inner) return [];
+  return inner
+    .split(',')
+    .map((s) => s.trim().replace(/^\[|\]$/g, '').trim())
+    .filter(Boolean);
+}
+
+export function formatLookupTemplateFromFieldNames(fieldNames: string[], pkName = 'ID'): string {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  const cleanPk = (pkName || 'ID').trim();
+  seen.add(cleanPk.toLowerCase());
+  ordered.push(`[${cleanPk}]`);
+
+  for (const raw of fieldNames) {
+    const clean = String(raw || '').trim().replace(/^\[|\]$/g, '').trim();
+    if (!clean) continue;
+    const lower = clean.toLowerCase();
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    ordered.push(`[${clean}]`);
+  }
+  return `{${ordered.join(', ')}}`;
+}
+
+export function resolveLookupTemplateAndColumns<
+  T extends {
+    id?: string;
+    name: string;
+    colType?: string;
+    isPrimaryKey?: boolean;
+    isIdentity?: boolean;
+  }
+>(
+  rawTemplate: string | undefined,
+  sourceColumns: T[],
+  mutations?: {
+    renamedColumns?: { oldName: string; newName: string }[];
+    addedColumnNames?: string[];
+    deletedColumnNames?: string[];
+  }
+): { selectedColumns: T[]; normalizedTemplate: string } {
+  const nonLookupCols = sourceColumns.filter((c) => c.colType !== 'lookup');
+  const effectiveCols = nonLookupCols.length > 0 ? nonLookupCols : sourceColumns;
+  const pkCol =
+    effectiveCols.find(
+      (c) =>
+        c.isPrimaryKey ||
+        c.isIdentity ||
+        c.name.toLowerCase() === 'id' ||
+        (c.id && c.id.toLowerCase() === 'id')
+    ) || effectiveCols[0];
+  const pkName = pkCol?.name || 'ID';
+
+  let tokens = extractLookupTemplateTokens(rawTemplate);
+
+  if (mutations) {
+    if (Array.isArray(mutations.renamedColumns) && mutations.renamedColumns.length > 0) {
+      const renameMap = new Map<string, string>();
+      for (const pair of mutations.renamedColumns) {
+        if (pair.oldName && pair.newName) {
+          renameMap.set(pair.oldName.trim().toLowerCase(), pair.newName.trim());
+        }
+      }
+      tokens = tokens.map((t) => renameMap.get(t.toLowerCase()) || t);
+    }
+    if (Array.isArray(mutations.deletedColumnNames) && mutations.deletedColumnNames.length > 0) {
+      const delSet = new Set(mutations.deletedColumnNames.map((n) => n.trim().toLowerCase()));
+      tokens = tokens.filter((t) => !delSet.has(t.toLowerCase()));
+    }
+    if (Array.isArray(mutations.addedColumnNames) && mutations.addedColumnNames.length > 0) {
+      for (const added of mutations.addedColumnNames) {
+        const cleanAdded = added.trim();
+        if (
+          cleanAdded &&
+          !tokens.some((t) => t.toLowerCase() === cleanAdded.toLowerCase())
+        ) {
+          tokens.push(cleanAdded);
+        }
+      }
+    }
+  }
+
+  const colByLower = new Map<string, T>();
+  for (const col of effectiveCols) {
+    colByLower.set(col.name.trim().toLowerCase(), col);
+    if (col.id) {
+      colByLower.set(col.id.trim().toLowerCase(), col);
+    }
+  }
+
+  const selectedColumns: T[] = [];
+  const selectedLower = new Set<string>();
+
+  if (pkCol) {
+    selectedColumns.push(pkCol);
+    selectedLower.add(pkCol.name.trim().toLowerCase());
+  }
+
+  for (const tok of tokens) {
+    const lower = tok.trim().toLowerCase();
+    if (selectedLower.has(lower)) continue;
+    const matched = colByLower.get(lower);
+    if (matched && !selectedLower.has(matched.name.trim().toLowerCase())) {
+      selectedColumns.push(matched);
+      selectedLower.add(matched.name.trim().toLowerCase());
+    }
+  }
+
+  // If no non-PK columns were matched (e.g. initial default or all selected fields were deleted),
+  // include all available non-lookup columns from the source table so the JSON has rich data
+  const hasExplicitSingleIdOnly =
+    tokens.length === 1 && tokens[0].toLowerCase() === pkName.toLowerCase();
+  if (selectedColumns.length <= 1 && !hasExplicitSingleIdOnly) {
+    for (const col of effectiveCols) {
+      const lower = col.name.trim().toLowerCase();
+      if (!selectedLower.has(lower)) {
+        selectedColumns.push(col);
+        selectedLower.add(lower);
+      }
+    }
+  }
+
+  const normalizedTemplate = formatLookupTemplateFromFieldNames(
+    selectedColumns.map((c) => c.name),
+    pkName
+  );
+  return { selectedColumns, normalizedTemplate };
 }
 
 export function getLookupOptions(col: GridColumn): LookupItem[] {
   return parseLookupString(col.optionsCsv || '');
+}
+
+export function matchLookupItemFromRaw(items: LookupItem[], rawVal: string): LookupItem | undefined {
+  if (!rawVal || items.length === 0) return undefined;
+  const trimmed = rawVal.trim();
+  const lower = trimmed.toLowerCase();
+
+  // 1. Check if rawVal is a JSON object or relaxed object with an id/key
+  const parsedInput = parseLookupString(trimmed);
+  if (parsedInput.length === 1) {
+    const inputItem = parsedInput[0];
+    const byId = items.find(
+      (i) => String(i.id).toLowerCase() === String(inputItem.id).toLowerCase()
+    );
+    if (byId) return byId;
+    const byName = items.find(
+      (i) => i.name.toLowerCase() === inputItem.name.toLowerCase()
+    );
+    if (byName) return byName;
+  }
+
+  // 2. Match by exact JSON, id, name, or attribute values
+  return items.find((item) => {
+    if (item.json.toLowerCase() === lower) return true;
+    if (String(item.id).toLowerCase() === lower) return true;
+    if (item.name.toLowerCase() === lower) return true;
+    if (`${item.id} - ${item.name}`.toLowerCase() === lower) return true;
+    if (`${item.id}: ${item.name}`.toLowerCase() === lower) return true;
+    if (`{id: ${item.id}, name: ${item.name}}`.toLowerCase() === lower) return true;
+    if (item.attributes) {
+      for (const val of Object.values(item.attributes)) {
+        if (String(val).toLowerCase() === lower) return true;
+      }
+    }
+    return false;
+  });
 }
 
 /**
@@ -496,37 +722,37 @@ export function validateCellValue(col: GridColumn, rawInput: unknown): Validatio
 
   if (col.colType === 'lookup') {
     const items = getLookupOptions(col);
+    if (items.length > 0) {
+      const matched = matchLookupItemFromRaw(items, strVal);
+      if (!matched) {
+        const allowedSummary = items
+          .slice(0, 8)
+          .map((i) => i.json)
+          .join(', ');
+        return {
+          valid: false,
+          normalizedValue: strVal,
+          errorMessage: `"${strVal}" is not in "${col.name}" linked lookup table${col.lookupTableName ? ` ("${col.lookupTableName}")` : ''}. Allowed: [${allowedSummary}]`,
+        };
+      }
+      return { valid: true, normalizedValue: matched.json, errorMessage: '' };
+    }
+
     if (strVal.startsWith('[') || strVal.startsWith('{')) {
       const parsedCellItems = parseLookupString(strVal);
       if (parsedCellItems.length === 0) {
         return {
           valid: false,
           normalizedValue: strVal,
-          errorMessage: `"${col.name}" requires a valid lookup item or array (e.g. [{id: 1, name: car}, {id: 2, name: bus}]).`,
+          errorMessage: `"${col.name}" requires a valid lookup JSON record.`,
         };
       }
-      return { valid: true, normalizedValue: strVal, errorMessage: '' };
-    }
-
-    if (items.length > 0) {
-      const lower = strVal.toLowerCase();
-      const matched = items.find(
-        (item) =>
-          String(item.id).toLowerCase() === lower ||
-          item.name.toLowerCase() === lower ||
-          `${item.id} - ${item.name}`.toLowerCase() === lower ||
-          `${item.id}: ${item.name}`.toLowerCase() === lower ||
-          `{id: ${item.id}, name: ${item.name}}`.toLowerCase() === lower
-      );
-      if (!matched) {
-        const allowedSummary = items.map((i) => `{id: ${i.id}, name: ${i.name}}`).join(', ');
-        return {
-          valid: false,
-          normalizedValue: strVal,
-          errorMessage: `"${strVal}" is not in "${col.name}" lookup list. Allowed: [${allowedSummary}]`,
-        };
-      }
-      return { valid: true, normalizedValue: matched.name, errorMessage: '' };
+      return {
+        valid: true,
+        normalizedValue:
+          parsedCellItems.length === 1 ? parsedCellItems[0].json : strVal,
+        errorMessage: '',
+      };
     }
 
     if (strVal.length > 2000) {

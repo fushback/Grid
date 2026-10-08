@@ -14,27 +14,72 @@ const { Pool } = pg;
 
 const browserDistFolder = join(import.meta.dirname, '../browser');
 const CLOUD_STORE_FILE = '/tmp/gridpulse-cloud-state-v3.json';
+const PERSISTENT_WORKSPACE_FILE = join(process.cwd(), '.gridpulse-workspace-state.json');
 
-function createPostgresPool(): pg.Pool | null {
-  let raw = (process.env['SUPABASE_POSTGRES_CONNECTION_STRING'] || '').trim();
-  if (!raw || raw.includes('YOUR_SUPABASE_PASSWORD')) return null;
+function readConnectionStringFromEnv(): string {
+  const fromEnv = (
+    process.env['SUPABASE_POSTGRES_CONNECTION_STRING'] ||
+    process.env['DATABASE_URL'] ||
+    ''
+  ).trim();
+  if (fromEnv && !fromEnv.includes('YOUR_SUPABASE_PASSWORD')) {
+    return fromEnv;
+  }
+  try {
+    const envPath = join(process.cwd(), '.env');
+    if (existsSync(envPath)) {
+      const content = readFileSync(envPath, 'utf-8');
+      for (const line of content.split(/\r?\n/)) {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) continue;
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx <= 0) continue;
+        const key = trimmed.slice(0, eqIdx).trim();
+        const val = trimmed
+          .slice(eqIdx + 1)
+          .trim()
+          .replace(/^["']|["']$/g, '');
+        if (
+          (key === 'SUPABASE_POSTGRES_CONNECTION_STRING' || key === 'DATABASE_URL') &&
+          val &&
+          !val.includes('YOUR_SUPABASE_PASSWORD')
+        ) {
+          return val;
+        }
+      }
+    }
+  } catch {
+    // Ignore .env read errors
+  }
+  return '';
+}
+
+let cachedPgPool: pg.Pool | null = null;
+let cachedPgConnStr = '';
+
+function getPgPool(): pg.Pool | null {
+  let raw = readConnectionStringFromEnv();
+  if (!raw) return null;
   const m = raw.match(/^(postgresql:\/\/[^:]+:)(.+)(@[^@]+)$/);
   if (m && m[2].includes('@')) {
     raw = m[1] + encodeURIComponent(m[2]) + m[3];
   }
+  if (cachedPgPool && cachedPgConnStr === raw) {
+    return cachedPgPool;
+  }
   try {
-    return new Pool({
+    cachedPgConnStr = raw;
+    cachedPgPool = new Pool({
       connectionString: raw,
       ssl: { rejectUnauthorized: false },
       max: 4,
       connectionTimeoutMillis: 6000,
     });
+    return cachedPgPool;
   } catch {
     return null;
   }
 }
-
-const pgPool = createPostgresPool();
 
 const app = express();
 app.use(express.json({ limit: '10mb' }));
@@ -64,6 +109,7 @@ interface ServerColumn {
   defaultValue?: string;
   formula: string;
   optionsCsv: string;
+  lookupTableName?: string;
 }
 
 interface ServerRow {
@@ -479,9 +525,38 @@ function resolveServerColumnDefaultValue(col: ServerColumn): string | number | b
     return matched || trimmed || opts[0] || '';
   }
   if (col.colType === 'lookup') {
+    const rawOpts = (col.optionsCsv || '').trim();
+    if (rawOpts.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(rawOpts);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          if (trimmed) {
+            const lowerTrimmed = trimmed.toLowerCase();
+            const matchedObj = parsed.find((entry) => {
+              if (!entry || typeof entry !== 'object') return false;
+              const obj = entry as Record<string, unknown>;
+              if (JSON.stringify(obj).toLowerCase() === lowerTrimmed) return true;
+              for (const v of Object.values(obj)) {
+                if (String(v ?? '').toLowerCase() === lowerTrimmed) return true;
+              }
+              return false;
+            });
+            if (matchedObj) {
+              return JSON.stringify(matchedObj);
+            }
+          }
+          if (col.required || col.isNullable === false || trimmed) {
+            return JSON.stringify(parsed[0]);
+          }
+          return '';
+        }
+      } catch {
+        // Fallback below
+      }
+    }
     if (trimmed) return trimmed;
-    const objMatch = /name\s*:\s*['"]?([^,'"}]+)['"]?/i.exec(col.optionsCsv || '');
-    return objMatch ? objMatch[1].trim() : '';
+    const objMatch = /\{([^{}]+)\}/.exec(rawOpts);
+    return objMatch ? `{${objMatch[1].trim()}}` : '';
   }
   return trimmed.slice(0, 2000) || (col.required || col.isNullable === false ? 'TBD' : '');
 }
@@ -1041,18 +1116,38 @@ function mapColTypeToSqlType(col: ServerColumn): string {
 }
 
 async function createDatabaseInRealBackend(databaseName: string): Promise<void> {
-  if (!pgPool || !databaseName) return;
+  const pool = getPgPool();
+  if (!pool || !databaseName) return;
   try {
-    await pgPool.query(`CREATE SCHEMA IF NOT EXISTS ${quoteSqlIdent(databaseName)}`);
+    await pool.query(`CREATE SCHEMA IF NOT EXISTS ${quoteSqlIdent(databaseName)}`);
   } catch {
     // Ignore schema creation errors
   }
 }
 
-async function dropDatabaseFromRealBackend(databaseName: string): Promise<void> {
-  if (!pgPool || !databaseName) return;
+async function renameDatabaseInRealBackend(
+  oldDatabaseName: string,
+  newDatabaseName: string
+): Promise<void> {
+  const pool = getPgPool();
+  if (!pool || !oldDatabaseName || !newDatabaseName) return;
+  const cleanOld = stripDboPrefix(oldDatabaseName);
+  const cleanNew = stripDboPrefix(newDatabaseName);
+  if (!cleanOld || !cleanNew || cleanOld.toLowerCase() === cleanNew.toLowerCase()) return;
   try {
-    await pgPool.query(`DROP SCHEMA IF EXISTS ${quoteSqlIdent(databaseName)} CASCADE`);
+    await pool.query(
+      `ALTER SCHEMA ${quoteSqlIdent(cleanOld)} RENAME TO ${quoteSqlIdent(cleanNew)}`
+    );
+  } catch {
+    await createDatabaseInRealBackend(cleanNew);
+  }
+}
+
+async function dropDatabaseFromRealBackend(databaseName: string): Promise<void> {
+  const pool = getPgPool();
+  if (!pool || !databaseName) return;
+  try {
+    await pool.query(`DROP SCHEMA IF EXISTS ${quoteSqlIdent(databaseName)} CASCADE`);
   } catch {
     // Ignore schema drop errors
   }
@@ -1063,13 +1158,14 @@ function stripDboPrefix(name: string): string {
 }
 
 async function syncTableToRealDatabase(table: ServerTable, databaseName?: string): Promise<void> {
-  if (!pgPool) return;
+  const pool = getPgPool();
+  if (!pool) return;
   table.tableName = stripDboPrefix(table.tableName) || table.tableName;
   const cleanDbName = databaseName ? stripDboPrefix(databaseName) : undefined;
   const sortedCols = [...table.columns].sort((a, b) => a.orderIndex - b.orderIndex);
   if (sortedCols.length === 0) return;
 
-  const client = await pgPool.connect().catch(() => null);
+  const client = await pool.connect().catch(() => null);
   if (!client) return;
 
   try {
@@ -1136,16 +1232,17 @@ async function syncTableToRealDatabase(table: ServerTable, databaseName?: string
 }
 
 async function dropTableFromRealDatabase(tableName: string, databaseName?: string): Promise<void> {
-  if (!pgPool) return;
+  const pool = getPgPool();
+  if (!pool) return;
   const cleanTable = stripDboPrefix(tableName) || tableName;
   const cleanDb = databaseName ? stripDboPrefix(databaseName) : undefined;
   try {
     if (cleanDb) {
-      await pgPool.query(
+      await pool.query(
         `DROP TABLE IF EXISTS ${quoteSqlIdent(cleanDb)}.${quoteSqlIdent(cleanTable)}`
       );
     }
-    await pgPool.query(`DROP TABLE IF EXISTS ${quoteSqlIdent(cleanTable)}`);
+    await pool.query(`DROP TABLE IF EXISTS ${quoteSqlIdent(cleanTable)}`);
   } catch {
     // Ignore drop errors
   }
@@ -1180,6 +1277,463 @@ function getDatabaseSummaries(state: CloudWorkspaceState): DbDatabaseSummary[] {
     createdAt: db.createdAt,
     updatedAt: db.updatedAt,
   }));
+}
+
+function extractLookupTemplateTokens(rawTemplate?: string): string[] {
+  const str = String(rawTemplate || '').trim();
+  if (!str) return [];
+  const bracketMatches = Array.from(str.matchAll(/\[([^\]]+)\]/g))
+    .map((m) => m[1].trim())
+    .filter(Boolean);
+  if (bracketMatches.length > 0) {
+    return bracketMatches;
+  }
+  const inner = str.replace(/^\{|\}$/g, '').trim();
+  if (!inner) return [];
+  return inner
+    .split(',')
+    .map((s) => s.trim().replace(/^\[|\]$/g, '').trim())
+    .filter(Boolean);
+}
+
+function formatLookupTemplateFromFieldNames(fieldNames: string[], pkName = 'ID'): string {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  const cleanPk = (pkName || 'ID').trim();
+  seen.add(cleanPk.toLowerCase());
+  ordered.push(`[${cleanPk}]`);
+
+  for (const raw of fieldNames) {
+    const clean = String(raw || '').trim().replace(/^\[|\]$/g, '').trim();
+    if (!clean) continue;
+    const lower = clean.toLowerCase();
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    ordered.push(`[${clean}]`);
+  }
+  return `{${ordered.join(', ')}}`;
+}
+
+function resolveLookupTemplateAndColumns(
+  rawTemplate: string | undefined,
+  sourceColumns: ServerColumn[],
+  mutations?: {
+    renamedColumns?: { oldName: string; newName: string }[];
+    addedColumnNames?: string[];
+    deletedColumnNames?: string[];
+  }
+): { selectedColumns: ServerColumn[]; normalizedTemplate: string } {
+  const sortedSource = [...(sourceColumns || [])].sort((a, b) => a.orderIndex - b.orderIndex);
+  const nonLookupCols = sortedSource.filter((c) => c.colType !== 'lookup');
+  const effectiveCols = nonLookupCols.length > 0 ? nonLookupCols : sortedSource;
+  const pkCol =
+    effectiveCols.find(
+      (c) =>
+        c.isPrimaryKey ||
+        c.isIdentity ||
+        c.name.toLowerCase() === 'id' ||
+        c.id.toLowerCase() === 'id'
+    ) || effectiveCols[0];
+  const pkName = pkCol?.name || 'ID';
+
+  let tokens = extractLookupTemplateTokens(rawTemplate);
+
+  if (mutations) {
+    if (Array.isArray(mutations.renamedColumns) && mutations.renamedColumns.length > 0) {
+      const renameMap = new Map<string, string>();
+      for (const pair of mutations.renamedColumns) {
+        if (pair.oldName && pair.newName) {
+          renameMap.set(pair.oldName.trim().toLowerCase(), pair.newName.trim());
+        }
+      }
+      tokens = tokens.map((t) => renameMap.get(t.toLowerCase()) || t);
+    }
+    if (Array.isArray(mutations.deletedColumnNames) && mutations.deletedColumnNames.length > 0) {
+      const delSet = new Set(mutations.deletedColumnNames.map((n) => n.trim().toLowerCase()));
+      tokens = tokens.filter((t) => !delSet.has(t.toLowerCase()));
+    }
+    if (Array.isArray(mutations.addedColumnNames) && mutations.addedColumnNames.length > 0) {
+      for (const added of mutations.addedColumnNames) {
+        const cleanAdded = added.trim();
+        if (
+          cleanAdded &&
+          !tokens.some((t) => t.toLowerCase() === cleanAdded.toLowerCase())
+        ) {
+          tokens.push(cleanAdded);
+        }
+      }
+    }
+  }
+
+  const colByLower = new Map<string, ServerColumn>();
+  for (const col of effectiveCols) {
+    colByLower.set(col.name.trim().toLowerCase(), col);
+    colByLower.set(col.id.trim().toLowerCase(), col);
+  }
+
+  const selectedColumns: ServerColumn[] = [];
+  const selectedLower = new Set<string>();
+
+  if (pkCol) {
+    selectedColumns.push(pkCol);
+    selectedLower.add(pkCol.name.trim().toLowerCase());
+  }
+
+  for (const tok of tokens) {
+    const lower = tok.trim().toLowerCase();
+    if (selectedLower.has(lower)) continue;
+    const matched = colByLower.get(lower);
+    if (matched && !selectedLower.has(matched.name.trim().toLowerCase())) {
+      selectedColumns.push(matched);
+      selectedLower.add(matched.name.trim().toLowerCase());
+    }
+  }
+
+  const hasExplicitSingleIdOnly =
+    tokens.length === 1 && tokens[0].toLowerCase() === pkName.toLowerCase();
+  if (selectedColumns.length <= 1 && !hasExplicitSingleIdOnly) {
+    for (const col of effectiveCols) {
+      const lower = col.name.trim().toLowerCase();
+      if (!selectedLower.has(lower)) {
+        selectedColumns.push(col);
+        selectedLower.add(lower);
+      }
+    }
+  }
+
+  const normalizedTemplate = formatLookupTemplateFromFieldNames(
+    selectedColumns.map((c) => c.name),
+    pkName
+  );
+  return { selectedColumns, normalizedTemplate };
+}
+
+function buildLinkedLookupRecordsFromTable(
+  sourceTable: ServerTable,
+  selectedColumnsOverride?: ServerColumn[]
+): {
+  id: string | number;
+  obj: Record<string, string | number | boolean>;
+  json: string;
+}[] {
+  const sortedCols = [...(sourceTable.columns || [])].sort(
+    (a, b) => a.orderIndex - b.orderIndex
+  );
+  const colsToInclude =
+    selectedColumnsOverride && selectedColumnsOverride.length > 0
+      ? selectedColumnsOverride
+      : sortedCols.filter((c) => c.colType !== 'lookup');
+  const effectiveCols = colsToInclude.length > 0 ? colsToInclude : sortedCols;
+
+  const sortedRows = [...(sourceTable.rows || [])].sort(
+    (a, b) => a.orderIndex - b.orderIndex
+  );
+  const pkCol =
+    sortedCols.find(
+      (c) =>
+        c.isPrimaryKey ||
+        c.isIdentity ||
+        c.name.toLowerCase() === 'id' ||
+        c.id.toLowerCase() === 'id'
+    ) || effectiveCols[0];
+
+  const records: {
+    id: string | number;
+    obj: Record<string, string | number | boolean>;
+    json: string;
+  }[] = [];
+
+  for (let i = 0; i < sortedRows.length; i++) {
+    const row = sortedRows[i];
+    const obj: Record<string, string | number | boolean> = {};
+    if (pkCol) {
+      obj[pkCol.name] = getServerDisplayValue(row, pkCol, sortedCols);
+    }
+    for (const col of effectiveCols) {
+      if (pkCol && col.name.toLowerCase() === pkCol.name.toLowerCase()) continue;
+      obj[col.name] = getServerDisplayValue(row, col, sortedCols);
+    }
+    const rawId = pkCol ? obj[pkCol.name] : obj['ID'] ?? obj['id'] ?? i + 1;
+    const numId = Number(rawId);
+    const id: string | number =
+      Number.isFinite(numId) && String(rawId).trim() !== ''
+        ? numId
+        : String(rawId ?? i + 1);
+    records.push({
+      id,
+      obj,
+      json: JSON.stringify(obj),
+    });
+  }
+
+  if (records.length === 0 && effectiveCols.length > 0) {
+    const sampleObj: Record<string, string | number | boolean> = {};
+    const pkName = pkCol ? pkCol.name : 'ID';
+    sampleObj[pkName] = 1;
+    for (const col of effectiveCols) {
+      if (col.name.toLowerCase() === pkName.toLowerCase()) continue;
+      const def = resolveServerColumnDefaultValue(col);
+      sampleObj[col.name] =
+        def !== '' && def !== undefined
+          ? def
+          : col.colType === 'number'
+          ? 0
+          : col.colType === 'checkbox'
+          ? false
+          : col.colType === 'date'
+          ? new Date().toISOString().slice(0, 10)
+          : `Sample ${col.name}`;
+    }
+    records.push({
+      id: 1,
+      obj: sampleObj,
+      json: JSON.stringify(sampleObj),
+    });
+  }
+
+  return records;
+}
+
+function extractForeignKeyIdOrMatchValue(rawCellVal: unknown): {
+  fkId?: string | number;
+  rawStr: string;
+} {
+  const rawStr = rawCellVal === null || rawCellVal === undefined ? '' : String(rawCellVal).trim();
+  if (!rawStr) return { rawStr: '' };
+
+  if (rawStr.startsWith('{') || rawStr.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(rawStr);
+      const target = Array.isArray(parsed) ? parsed[0] : parsed;
+      if (target && typeof target === 'object') {
+        const obj = target as Record<string, unknown>;
+        const idVal = obj['ID'] ?? obj['id'] ?? obj['key'];
+        if (idVal !== undefined && idVal !== null && String(idVal).trim() !== '') {
+          const num = Number(idVal);
+          return {
+            fkId: Number.isFinite(num) ? num : String(idVal).trim(),
+            rawStr,
+          };
+        }
+      }
+    } catch {
+      const idMatch = /(?:["']?(?:id|ID|key)["']?\s*:\s*)(['"]?[^,}'"\s]+['"]?)/.exec(rawStr);
+      if (idMatch) {
+        const cleaned = idMatch[1].replace(/^['"]|['"]$/g, '').trim();
+        const num = Number(cleaned);
+        return {
+          fkId: Number.isFinite(num) && cleaned !== '' ? num : cleaned,
+          rawStr,
+        };
+      }
+    }
+  }
+
+  return { rawStr };
+}
+
+interface LookupSchemaMutationSyncInfo {
+  databaseName: string;
+  oldTableName?: string;
+  newTableName?: string;
+  mutatedTableName?: string;
+  renamedColumns?: { oldName: string; newName: string }[];
+  addedColumnNames?: string[];
+  deletedColumnNames?: string[];
+}
+
+/**
+ * Synchronizes all `lookup` columns across all tables in the workspace with their
+ * linked foreign-key tables (`lookupTableName` — which can be another table OR the same table).
+ * Whenever a linked table (or the same table) has a field renamed, added, or deleted, or its table name or row data changes:
+ * 1. Updates `col.formula` template `{[ID], [Field1], [Field2]}` to reflect renamed, added, or deleted fields.
+ * 2. Rebuilds `col.optionsCsv` as a JSON array of the linked table's current schema & rows for those selected fields.
+ * 3. Updates `col.defaultValue` if it references a record in the linked table.
+ * 4. Updates every row's cell value in the lookup column so the stored JSON automatically reflects
+ *    any renamed, added, or deleted fields and updated row values from the linked/same table.
+ */
+function syncAllLinkedLookupColumnsInState(
+  state: CloudWorkspaceState,
+  mutationInfo?: LookupSchemaMutationSyncInfo
+): void {
+  if (!Array.isArray(state.databases)) return;
+
+  for (const db of state.databases) {
+    if (!Array.isArray(db.tables) || db.tables.length === 0) continue;
+
+    // 1. Update lookupTableName if a linked table in this database was renamed
+    if (
+      mutationInfo &&
+      mutationInfo.oldTableName &&
+      mutationInfo.newTableName &&
+      db.databaseName.toLowerCase() === mutationInfo.databaseName.toLowerCase() &&
+      mutationInfo.oldTableName.toLowerCase() !== mutationInfo.newTableName.toLowerCase()
+    ) {
+      for (const tbl of db.tables) {
+        for (const col of tbl.columns || []) {
+          if (
+            col.colType === 'lookup' &&
+            col.lookupTableName &&
+            col.lookupTableName.toLowerCase() === mutationInfo.oldTableName.toLowerCase()
+          ) {
+            col.lookupTableName = mutationInfo.newTableName;
+          }
+        }
+      }
+    }
+
+    // 2. Resolve and synchronize all lookup columns in this database
+    for (const tbl of db.tables) {
+      for (const col of tbl.columns || []) {
+        if (col.colType !== 'lookup') continue;
+
+        let linkedTblName = (col.lookupTableName || '').trim();
+        const rawOpts = (col.optionsCsv || '').trim();
+
+        // Support optionsCsv that directly names a table or uses FK:TableName
+        if (!linkedTblName && rawOpts && !rawOpts.startsWith('[') && !rawOpts.startsWith('{')) {
+          const fkCandidate = rawOpts.replace(/^fk:/i, '').trim();
+          const matchedTbl = db.tables.find(
+            (t) => t.tableName.toLowerCase() === fkCandidate.toLowerCase()
+          );
+          if (matchedTbl) {
+            linkedTblName = matchedTbl.tableName;
+          }
+        }
+
+        // Auto-link to another table or the same table when lookupTableName is not yet set
+        if (!linkedTblName) {
+          const otherTbl =
+            db.tables.find(
+              (t) => t.tableName.toLowerCase() !== tbl.tableName.toLowerCase()
+            ) || tbl || db.tables[0];
+          if (otherTbl) {
+            linkedTblName = otherTbl.tableName;
+          }
+        }
+
+        if (!linkedTblName) continue;
+
+        const sourceTable =
+          db.tables.find(
+            (t) => t.tableName.toLowerCase() === linkedTblName.toLowerCase()
+          ) || tbl;
+        if (!sourceTable) continue;
+
+        col.lookupTableName = sourceTable.tableName;
+
+        const targetMutatedName = (
+          mutationInfo?.mutatedTableName ||
+          mutationInfo?.newTableName ||
+          ''
+        ).trim();
+        const isSourceMutated =
+          Boolean(mutationInfo) &&
+          db.databaseName.toLowerCase() === (mutationInfo?.databaseName || '').toLowerCase() &&
+          targetMutatedName.toLowerCase() === sourceTable.tableName.toLowerCase();
+
+        const { selectedColumns, normalizedTemplate } = resolveLookupTemplateAndColumns(
+          col.formula,
+          sourceTable.columns || [],
+          isSourceMutated ? mutationInfo : undefined
+        );
+
+        col.formula = normalizedTemplate;
+        const linkedRecords = buildLinkedLookupRecordsFromTable(sourceTable, selectedColumns);
+        col.optionsCsv = JSON.stringify(linkedRecords.map((r) => r.obj));
+
+        const recordById = new Map<
+          string,
+          { id: string | number; obj: Record<string, string | number | boolean>; json: string }
+        >();
+        for (const rec of linkedRecords) {
+          recordById.set(String(rec.id).toLowerCase(), rec);
+        }
+
+        const resolveRecordJson = (rawVal: unknown, fallbackRowId?: unknown): string | null => {
+          const { fkId, rawStr } = extractForeignKeyIdOrMatchValue(rawVal);
+          if (fkId !== undefined) {
+            const byId = recordById.get(String(fkId).toLowerCase());
+            if (byId) return byId.json;
+          }
+          if (rawStr) {
+            const lower = rawStr.toLowerCase();
+            const byDirectId = recordById.get(lower);
+            if (byDirectId) return byDirectId.json;
+
+            for (const rec of linkedRecords) {
+              if (rec.json.toLowerCase() === lower) return rec.json;
+              for (const v of Object.values(rec.obj)) {
+                if (String(v ?? '').toLowerCase() === lower) {
+                  return rec.json;
+                }
+              }
+            }
+          }
+          if (fallbackRowId !== undefined && fallbackRowId !== null) {
+            const byRowId = recordById.get(String(fallbackRowId).toLowerCase());
+            if (byRowId) return byRowId.json;
+          }
+          return null;
+        };
+
+        // Update defaultValue if present so it also stays in sync with linked table schema changes
+        if (col.defaultValue && String(col.defaultValue).trim().length > 0) {
+          const updatedDef = resolveRecordJson(col.defaultValue);
+          if (updatedDef) {
+            col.defaultValue = updatedDef;
+          } else if (linkedRecords.length > 0) {
+            col.defaultValue = linkedRecords[0].json;
+          }
+        }
+
+        const isSelfLookup =
+          sourceTable.tableName.toLowerCase() === tbl.tableName.toLowerCase();
+
+        // Update all rows in this table so their lookup cell JSON reflects added, renamed, or deleted fields in sourceTable
+        for (const row of tbl.rows || []) {
+          if (!row.cells) continue;
+          const currentCellVal =
+            row.cells[col.name] !== undefined ? row.cells[col.name] : row.cells[col.id];
+          const rowPkVal = row.cells['ID'] ?? row.cells['id'];
+
+          if (
+            currentCellVal === undefined ||
+            currentCellVal === null ||
+            String(currentCellVal).trim() === ''
+          ) {
+            if (isSelfLookup && rowPkVal !== undefined) {
+              const selfRec = recordById.get(String(rowPkVal).toLowerCase());
+              if (selfRec) {
+                row.cells[col.name] = selfRec.json;
+                row.cells[col.id] = selfRec.json;
+                continue;
+              }
+            }
+            if (
+              (col.required || col.isNullable === false) &&
+              linkedRecords.length > 0
+            ) {
+              row.cells[col.name] = linkedRecords[0].json;
+              row.cells[col.id] = linkedRecords[0].json;
+            }
+            continue;
+          }
+          const syncedJson = resolveRecordJson(
+            currentCellVal,
+            isSelfLookup ? rowPkVal : undefined
+          );
+          if (syncedJson) {
+            row.cells[col.name] = syncedJson;
+            row.cells[col.id] = syncedJson;
+          } else if (linkedRecords.length > 0) {
+            row.cells[col.name] = linkedRecords[0].json;
+            row.cells[col.id] = linkedRecords[0].json;
+          }
+        }
+      }
+    }
+  }
 }
 
 function normalizeServerTable(t: ServerTable): ServerTable {
@@ -1238,6 +1792,7 @@ function ensureDatabasesHierarchy(state: CloudWorkspaceState): void {
       state.activeDatabaseName = state.databases[0].databaseName;
     }
   }
+  syncAllLinkedLookupColumnsInState(state);
 }
 
 function findDatabase(state: CloudWorkspaceState, requestedDbName?: string): ServerDatabase {
@@ -1308,48 +1863,83 @@ function getTargetTable(
   return target;
 }
 
-function loadOrCreateState(): CloudWorkspaceState {
+function parseAndHydrateWorkspaceState(raw: string): CloudWorkspaceState | null {
   try {
-    if (existsSync(CLOUD_STORE_FILE)) {
-      const raw = readFileSync(CLOUD_STORE_FILE, 'utf-8');
-      const parsed = JSON.parse(raw) as CloudWorkspaceState;
-      if (
-        parsed &&
-        (Array.isArray(parsed.databases) ||
-          Array.isArray(parsed.tables) ||
-          Array.isArray(parsed.columns))
-      ) {
-        ensureDatabasesHierarchy(parsed);
-        getTargetTable(parsed, parsed.activeTableName, parsed.activeDatabaseName);
+    const parsed = JSON.parse(raw) as CloudWorkspaceState;
+    if (
+      parsed &&
+      (Array.isArray(parsed.databases) ||
+        Array.isArray(parsed.tables) ||
+        Array.isArray(parsed.columns))
+    ) {
+      ensureDatabasesHierarchy(parsed);
+      getTargetTable(parsed, parsed.activeTableName, parsed.activeDatabaseName);
 
-        if (!Array.isArray(parsed.users) || parsed.users.length === 0) {
-          parsed.users = buildDefaultUsers();
-        }
-        if (!parsed.sessions) {
-          parsed.sessions = {};
-        }
-        if (!Array.isArray(parsed.versions) || parsed.versions.length === 0) {
-          parsed.versions = [
-            {
-              id: 'ver_v1_0',
-              versionTag: 'v1.0',
-              title: 'Initial Baseline Schema & Seed Data',
-              message: 'Baseline workspace snapshot with 12 columns and 500 records',
-              authorName: 'Alex Rivera',
-              authorColor: '#ca8a04',
-              createdAt: parsed.updatedAt || new Date().toISOString(),
-              rowCount: parsed.rows.length,
-              columnCount: parsed.columns.length,
-              columnsSnapshot: parsed.columns.map((c) => ({ ...c })),
-              rowsSnapshot: parsed.rows.slice(0, 500).map((r) => ({ ...r, cells: { ...r.cells } })),
-            },
-          ];
-        }
-        return parsed;
+      if (!Array.isArray(parsed.users) || parsed.users.length === 0) {
+        parsed.users = buildDefaultUsers();
       }
+      if (!parsed.sessions) {
+        parsed.sessions = {};
+      }
+      if (!Array.isArray(parsed.versions) || parsed.versions.length === 0) {
+        parsed.versions = [
+          {
+            id: 'ver_v1_0',
+            versionTag: 'v1.0',
+            title: 'Initial Baseline Schema & Seed Data',
+            message: 'Baseline workspace snapshot with 12 columns and 500 records',
+            authorName: 'Alex Rivera',
+            authorColor: '#ca8a04',
+            createdAt: parsed.updatedAt || new Date().toISOString(),
+            rowCount: parsed.rows.length,
+            columnCount: parsed.columns.length,
+            columnsSnapshot: parsed.columns.map((c) => ({ ...c })),
+            rowsSnapshot: parsed.rows.slice(0, 500).map((r) => ({ ...r, cells: { ...r.cells } })),
+          },
+        ];
+      }
+      return parsed;
     }
   } catch {
-    // Fallback to fresh seed state
+    // Ignore parse error
+  }
+  return null;
+}
+
+function loadOrCreateState(): CloudWorkspaceState {
+  // 1. Prefer persistent project workspace state file first (survives /tmp clears and restarts)
+  const candidateFiles = [PERSISTENT_WORKSPACE_FILE, CLOUD_STORE_FILE];
+  let bestState: CloudWorkspaceState | null = null;
+
+  for (const filePath of candidateFiles) {
+    try {
+      if (existsSync(filePath)) {
+        const raw = readFileSync(filePath, 'utf-8');
+        const hydrated = parseAndHydrateWorkspaceState(raw);
+        if (hydrated) {
+          if (
+            !bestState ||
+            Date.parse(hydrated.updatedAt || '') > Date.parse(bestState.updatedAt || '')
+          ) {
+            bestState = hydrated;
+          }
+        }
+      }
+    } catch {
+      // Ignore read errors
+    }
+  }
+
+  if (bestState) {
+    // Keep both files in sync immediately
+    try {
+      const serialized = JSON.stringify(bestState);
+      writeFileSync(PERSISTENT_WORKSPACE_FILE, serialized, 'utf-8');
+      writeFileSync(CLOUD_STORE_FILE, serialized, 'utf-8');
+    } catch {
+      // Ignore write errors
+    }
+    return bestState;
   }
 
   const defaultCols = ensurePrimaryKeyIdentityColumn(buildDefaultColumns());
@@ -1414,26 +2004,321 @@ function loadOrCreateState(): CloudWorkspaceState {
       },
     ],
   };
-  saveStateToDisk(initial);
+  // Do NOT call saveStateToDisk(initial) here! If disk files were missing on container boot,
+  // calling saveStateToDisk(initial) before ensurePostgresHydrated() would overwrite PostgreSQL's
+  // __gridpulse_workspace_state with the default Initiatives-only state!
   return initial;
 }
 
-function saveStateToDisk(state: CloudWorkspaceState): void {
+async function saveStateToPostgresMetadata(state: CloudWorkspaceState): Promise<void> {
+  const pool = getPgPool();
+  if (!pool) return;
   try {
-    writeFileSync(CLOUD_STORE_FILE, JSON.stringify(state), 'utf-8');
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS "public"."__gridpulse_workspace_state" (
+        "workspace_id" TEXT PRIMARY KEY,
+        "state_json" TEXT NOT NULL,
+        "updated_at" TIMESTAMPTZ DEFAULT NOW()
+      )
+    `);
+    await pool.query(
+      `
+      INSERT INTO "public"."__gridpulse_workspace_state" ("workspace_id", "state_json", "updated_at")
+      VALUES ($1, $2, NOW())
+      ON CONFLICT ("workspace_id")
+      DO UPDATE SET "state_json" = EXCLUDED."state_json", "updated_at" = NOW()
+      `,
+      ['ws_gridpulse_main', JSON.stringify(state)]
+    );
+  } catch {
+    // Ignore metadata table persistence errors
+  }
+}
+
+function writeStateFilesToDiskOnly(state: CloudWorkspaceState): void {
+  const serialized = JSON.stringify(state);
+  try {
+    writeFileSync(PERSISTENT_WORKSPACE_FILE, serialized, 'utf-8');
+  } catch {
+    // Ignore disk write issues in read-only environments
+  }
+  try {
+    writeFileSync(CLOUD_STORE_FILE, serialized, 'utf-8');
   } catch {
     // Ignore disk write issues in read-only environments
   }
 }
 
-const cloudState: CloudWorkspaceState = loadOrCreateState();
-// Mirror all existing databases and tables to the live database in the background on startup
-for (const db of cloudState.databases) {
-  void createDatabaseInRealBackend(db.databaseName);
-  for (const tbl of db.tables) {
-    void syncTableToRealDatabase(tbl, db.databaseName);
-  }
+function saveStateToDisk(state: CloudWorkspaceState): void {
+  writeStateFilesToDiskOnly(state);
+  void saveStateToPostgresMetadata(state);
 }
+
+async function persistWorkspaceState(state: CloudWorkspaceState): Promise<void> {
+  writeStateFilesToDiskOnly(state);
+  await saveStateToPostgresMetadata(state);
+}
+
+const cloudState: CloudWorkspaceState = loadOrCreateState();
+
+let pgHydrationPromise: Promise<void> | null = null;
+let pgHasHydrated = false;
+
+async function ensurePostgresHydrated(): Promise<void> {
+  if (pgHasHydrated) return;
+  if (pgHydrationPromise) return pgHydrationPromise;
+
+  pgHydrationPromise = (async () => {
+    const pool = getPgPool();
+    if (!pool) {
+      pgHasHydrated = true;
+      return;
+    }
+
+    try {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS "public"."__gridpulse_workspace_state" (
+          "workspace_id" TEXT PRIMARY KEY,
+          "state_json" TEXT NOT NULL,
+          "updated_at" TIMESTAMPTZ DEFAULT NOW()
+        )
+      `);
+
+      const metaRes = await pool
+        .query<{ state_json: string }>(
+          `SELECT "state_json" FROM "public"."__gridpulse_workspace_state" WHERE "workspace_id" = $1 LIMIT 1`,
+          ['ws_gridpulse_main']
+        )
+        .catch(() => ({ rows: [] as { state_json: string }[] }));
+
+      const isDiskFreshInit =
+        cloudState.activities?.length === 1 && cloudState.activities[0]?.id === 'act_init';
+
+      if (metaRes.rows.length > 0 && metaRes.rows[0].state_json) {
+        const pgState = parseAndHydrateWorkspaceState(metaRes.rows[0].state_json);
+        if (pgState) {
+          const pgTime = Date.parse(pgState.updatedAt || '') || 0;
+          const localTime = Date.parse(cloudState.updatedAt || '') || 0;
+
+          if (isDiskFreshInit || pgTime >= localTime) {
+            Object.assign(cloudState, pgState);
+            ensureDatabasesHierarchy(cloudState);
+            getTargetTable(
+              cloudState,
+              cloudState.activeTableName,
+              cloudState.activeDatabaseName
+            );
+            writeStateFilesToDiskOnly(cloudState);
+          }
+        }
+      }
+
+      // Single fast query to introspect all user schemas, tables, and columns in PostgreSQL
+      const allColsRes = await pool
+        .query<{
+          table_schema: string;
+          table_name: string;
+          column_name: string;
+          data_type: string;
+          is_nullable: string;
+          ordinal_position: number;
+        }>(`
+          SELECT table_schema, table_name, column_name, data_type, is_nullable, ordinal_position
+          FROM information_schema.columns
+          WHERE table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast', 'public', 'auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgbouncer', 'supabase_functions', 'supabase_migrations', '_realtime', 'net', 'pgsodium', 'pgsodium_masks')
+            AND table_schema NOT LIKE 'pg_%'
+            AND table_name NOT LIKE '__gridpulse%'
+          ORDER BY table_schema ASC, table_name ASC, ordinal_position ASC
+        `)
+        .catch(() => null);
+
+      const pgExistingTablesSet = new Set<string>();
+
+      if (allColsRes && allColsRes.rows.length > 0) {
+        const grouped = new Map<
+          string,
+          Map<
+            string,
+            {
+              column_name: string;
+              data_type: string;
+              is_nullable: string;
+              ordinal_position: number;
+            }[]
+          >
+        >();
+
+        for (const r of allColsRes.rows) {
+          if (!r.table_schema || !r.table_name) continue;
+          pgExistingTablesSet.add(
+            `${r.table_schema.toLowerCase()}::${r.table_name.toLowerCase()}`
+          );
+          let tblMap = grouped.get(r.table_schema);
+          if (!tblMap) {
+            tblMap = new Map();
+            grouped.set(r.table_schema, tblMap);
+          }
+          let colList = tblMap.get(r.table_name);
+          if (!colList) {
+            colList = [];
+            tblMap.set(r.table_name, colList);
+          }
+          colList.push(r);
+        }
+
+        for (const [schemaName, tblMap] of grouped.entries()) {
+          let dbEntry = cloudState.databases.find(
+            (d) => d.databaseName.toLowerCase() === schemaName.toLowerCase()
+          );
+          if (!dbEntry) {
+            const nowIso = new Date().toISOString();
+            dbEntry = {
+              databaseName: schemaName,
+              activeTableName: '',
+              tables: [],
+              createdAt: nowIso,
+              updatedAt: nowIso,
+            };
+            cloudState.databases.push(dbEntry);
+          }
+
+          for (const [tblName, colRows] of tblMap.entries()) {
+            const existingTbl = dbEntry.tables.find(
+              (t) => t.tableName.toLowerCase() === tblName.toLowerCase()
+            );
+
+            // Hydrate if table is not in cloudState OR if existingTbl only had a 1-column stub while PostgreSQL has more columns
+            if (!existingTbl || colRows.length > existingTbl.columns.length) {
+              const nowIso = new Date().toISOString();
+              const builtCols: ServerColumn[] = colRows.map((c, idx) => {
+                const prevCol = existingTbl?.columns.find(
+                  (ec) => ec.name.toLowerCase() === c.column_name.toLowerCase()
+                );
+                if (prevCol) {
+                  return { ...prevCol, orderIndex: idx };
+                }
+                const isPk = c.column_name.toLowerCase() === 'id' || idx === 0;
+                const dt = (c.data_type || '').toLowerCase();
+                let colType: ServerColumn['colType'] = 'text';
+                if (
+                  dt.includes('int') ||
+                  dt.includes('numeric') ||
+                  dt.includes('decimal') ||
+                  dt.includes('real') ||
+                  dt.includes('double')
+                ) {
+                  colType = 'number';
+                } else if (dt.includes('bool')) {
+                  colType = 'checkbox';
+                } else if (dt.includes('char')) {
+                  colType = 'varchar_max';
+                }
+                return {
+                  id: c.column_name,
+                  name: c.column_name,
+                  colType,
+                  orderIndex: idx,
+                  width: isPk ? 95 : 160,
+                  required: c.is_nullable === 'NO',
+                  isNullable: c.is_nullable !== 'NO',
+                  isPrimaryKey: isPk,
+                  isIdentity: isPk,
+                  identitySeed: 1,
+                  identityIncrement: 1,
+                  defaultValue: '',
+                  formula: '',
+                  optionsCsv: '',
+                };
+              });
+
+              const quotedSchemaTbl = `${quoteSqlIdent(schemaName)}.${quoteSqlIdent(tblName)}`;
+              const liveDataRes = await pool
+                .query<Record<string, unknown>>(`SELECT * FROM ${quotedSchemaTbl} ORDER BY 1 ASC LIMIT 5000`)
+                .catch(() => null);
+              const liveRows: ServerRow[] = (liveDataRes?.rows || []).map((r, rIdx) => {
+                const cells: Record<string, string | number | boolean> = {};
+                for (const col of builtCols) {
+                  const rawVal = r[col.name] ?? r[col.id];
+                  const norm: string | number | boolean =
+                    rawVal === null || rawVal === undefined
+                      ? col.colType === 'checkbox'
+                        ? false
+                        : ''
+                      : col.colType === 'number'
+                      ? Number(rawVal)
+                      : col.colType === 'checkbox'
+                      ? Boolean(rawVal)
+                      : String(rawVal);
+                  cells[col.name] = norm;
+                  cells[col.id] = norm;
+                }
+                const pkVal = cells['ID'] ?? cells['id'] ?? rIdx + 1;
+                return {
+                  id: `row_pg_${pkVal}_${rIdx}`,
+                  orderIndex: (rIdx + 1) * 10,
+                  cells,
+                  updatedBy: 'PostgreSQL',
+                  updatedAt: nowIso,
+                };
+              });
+
+              if (!existingTbl) {
+                const hydratedTbl = normalizeServerTable({
+                  tableName: tblName,
+                  columns: builtCols,
+                  rows: liveRows,
+                  identitySeed: 1,
+                  identityIncrement: 1,
+                  nextIdentityValue: computeNextIdentityValue(builtCols, liveRows),
+                  createdAt: nowIso,
+                  updatedAt: nowIso,
+                });
+                dbEntry.tables.push(hydratedTbl);
+                if (!dbEntry.activeTableName) {
+                  dbEntry.activeTableName = hydratedTbl.tableName;
+                }
+              } else {
+                existingTbl.columns = builtCols;
+                if (liveRows.length > 0 && existingTbl.rows.length === 0) {
+                  existingTbl.rows = sanitizeRowsAgainstSchema(builtCols, liveRows);
+                }
+                existingTbl.nextIdentityValue = computeNextIdentityValue(
+                  existingTbl.columns,
+                  existingTbl.rows
+                );
+              }
+            }
+          }
+        }
+      }
+
+      ensureDatabasesHierarchy(cloudState);
+      getTargetTable(cloudState, cloudState.activeTableName, cloudState.activeDatabaseName);
+      await persistWorkspaceState(cloudState);
+
+      // Sync any tables in cloudState that do not yet exist in PostgreSQL in the background
+      void (async () => {
+        for (const db of cloudState.databases) {
+          await createDatabaseInRealBackend(db.databaseName);
+          for (const tbl of db.tables) {
+            const key = `${db.databaseName.toLowerCase()}::${tbl.tableName.toLowerCase()}`;
+            if (!pgExistingTablesSet.has(key)) {
+              await syncTableToRealDatabase(tbl, db.databaseName);
+            }
+          }
+        }
+      })();
+    } catch {
+      // Ignore PostgreSQL hydration errors when offline
+    } finally {
+      pgHasHydrated = true;
+    }
+  })();
+
+  return pgHydrationPromise;
+}
+
+void ensurePostgresHydrated();
 
 // Connected SSE clients for real-time collaboration
 const sseClients = new Set<Response>();
@@ -1493,13 +2378,23 @@ app.get('/api/stream', (req: Request, res: Response) => {
 /**
  * GET /api/workspace — returns workspace metadata, databases tree, tables list, active table columns, versions summary, and initial 10 lazy-loaded rows from database
  */
-app.get('/api/workspace', (req: Request, res: Response) => {
+app.get('/api/workspace', async (req: Request, res: Response) => {
+  await ensurePostgresHydrated();
   const requestedDb =
     typeof req.query['databaseName'] === 'string' ? req.query['databaseName'] : undefined;
   const requestedTable =
     typeof req.query['tableName'] === 'string' ? req.query['tableName'] : undefined;
+  const prevDbName = cloudState.activeDatabaseName;
+  const prevTableName = cloudState.activeTableName;
   const targetDb = getTargetDatabase(cloudState, requestedDb);
   const targetTable = getTargetTable(cloudState, requestedTable, targetDb.databaseName);
+  if (
+    (requestedDb || requestedTable) &&
+    (cloudState.activeDatabaseName !== prevDbName || cloudState.activeTableName !== prevTableName)
+  ) {
+    cloudState.updatedAt = new Date().toISOString();
+    await persistWorkspaceState(cloudState);
+  }
   const sortedCols = targetTable
     ? [...targetTable.columns].sort((a, b) => a.orderIndex - b.orderIndex)
     : [];
@@ -1555,6 +2450,7 @@ app.get('/api/workspace', (req: Request, res: Response) => {
  */
 app.post('/api/workspace/databases', async (req: Request, res: Response) => {
   try {
+    await ensurePostgresHydrated();
     const body = (req.body || {}) as {
       databaseName?: string;
       createStarterTable?: boolean;
@@ -1636,11 +2532,11 @@ app.post('/api/workspace/databases', async (req: Request, res: Response) => {
       'Database Created',
       `Created database "${cleanDbName}" in backend${activeTableName ? ` with starter table "${activeTableName}"` : ' (0 tables)'}`
     );
-    saveStateToDisk(cloudState);
     await createDatabaseInRealBackend(cleanDbName);
     if (targetTable) {
       await syncTableToRealDatabase(targetTable, cleanDbName);
     }
+    await persistWorkspaceState(cloudState);
 
     const sortedCols = targetTable
       ? [...targetTable.columns].sort((a, b) => a.orderIndex - b.orderIndex)
@@ -1688,6 +2584,7 @@ app.post('/api/workspace/databases', async (req: Request, res: Response) => {
  * POST /api/workspace/databases/delete — drops a database from the backend
  */
 app.post('/api/workspace/databases/delete', async (req: Request, res: Response) => {
+  await ensurePostgresHydrated();
   const {
     databaseName = '',
     userName = 'Collaborator',
@@ -1736,7 +2633,7 @@ app.post('/api/workspace/databases/delete', async (req: Request, res: Response) 
     'Database Dropped',
     `Dropped database "${removed.databaseName}" from backend`
   );
-  saveStateToDisk(cloudState);
+  await persistWorkspaceState(cloudState);
 
   const sortedCols = targetTable
     ? [...targetTable.columns].sort((a, b) => a.orderIndex - b.orderIndex)
@@ -1778,6 +2675,7 @@ app.post('/api/workspace/databases/delete', async (req: Request, res: Response) 
  * POST /api/workspace/databases/rename — renames an existing database in the backend
  */
 app.post('/api/workspace/databases/rename', async (req: Request, res: Response) => {
+  await ensurePostgresHydrated();
   const {
     oldDatabaseName = '',
     newDatabaseName = '',
@@ -1828,14 +2726,17 @@ app.post('/api/workspace/databases/rename', async (req: Request, res: Response) 
   }
   cloudState.updatedAt = nowIso;
 
-  await createDatabaseInRealBackend(cleanNew);
+  await renameDatabaseInRealBackend(cleanOld, cleanNew);
+  for (const tbl of targetDb.tables) {
+    await syncTableToRealDatabase(tbl, cleanNew);
+  }
   recordActivity(
     userName,
     userColor,
     'Database Renamed',
     `Renamed database "${cleanOld}" to "${cleanNew}"`
   );
-  saveStateToDisk(cloudState);
+  await persistWorkspaceState(cloudState);
 
   const activeDb = getTargetDatabase(cloudState, cloudState.activeDatabaseName);
   const activeTable = getTargetTable(cloudState, activeDb.activeTableName, activeDb.databaseName);
@@ -1873,7 +2774,8 @@ app.post('/api/workspace/databases/rename', async (req: Request, res: Response) 
 /**
  * POST /api/workspace/query — executes search, filter, and multi-column sort on the active database table and returns paginated rows (10 at a time)
  */
-app.post('/api/workspace/query', (req: Request, res: Response) => {
+app.post('/api/workspace/query', async (req: Request, res: Response) => {
+  await ensurePostgresHydrated();
   const body = (req.body || {}) as {
     databaseName?: string;
     tableName?: string;
@@ -1922,6 +2824,7 @@ app.post('/api/workspace/query', (req: Request, res: Response) => {
  */
 app.post('/api/workspace/tables', async (req: Request, res: Response) => {
   try {
+    await ensurePostgresHydrated();
     const body = (req.body || {}) as {
       databaseName?: string;
       tableName?: string;
@@ -1992,6 +2895,80 @@ app.post('/api/workspace/tables', async (req: Request, res: Response) => {
       },
     ];
 
+    const seenColNames = new Set<string>([pkName.toLowerCase()]);
+    const allowedColTypes = new Set<ServerColumn['colType']>([
+      'text',
+      'varchar_max',
+      'number',
+      'date',
+      'dropdown',
+      'lookup',
+      'checkbox',
+      'formula',
+    ]);
+
+    if (Array.isArray(body.columns)) {
+      for (const rawCol of body.columns) {
+        const cleanColName = String(rawCol?.name || '').trim().slice(0, 80);
+        if (!cleanColName) continue;
+        const lowerColName = cleanColName.toLowerCase();
+        if (seenColNames.has(lowerColName)) {
+          res.status(200).json({
+            ok: false,
+            error: `Duplicate field name "${cleanColName}" in table "${cleanTableName}".`,
+          });
+          return;
+        }
+        seenColNames.add(lowerColName);
+
+        const colType: ServerColumn['colType'] =
+          rawCol?.colType && allowedColTypes.has(rawCol.colType) ? rawCol.colType : 'text';
+        const isFormula = colType === 'formula';
+        const isNullable = isFormula
+          ? true
+          : rawCol?.isNullable !== undefined
+          ? Boolean(rawCol.isNullable)
+          : true;
+        const rawDefault = String(
+          (rawCol as { defaultValue?: string; columnValue?: string })?.defaultValue ??
+            rawCol?.columnValue ??
+            ''
+        ).trim();
+        const rawFormula = String(rawCol?.formula || '').trim();
+        const normalizedFormula = isFormula
+          ? rawFormula.startsWith('=')
+            ? rawFormula
+            : `=${rawFormula}`
+          : colType === 'lookup'
+          ? rawFormula
+          : '';
+        const rawOptions =
+          colType === 'dropdown' || colType === 'lookup'
+            ? String(rawCol?.optionsCsv || '').trim()
+            : '';
+        const rawLookupTableName =
+          colType === 'lookup'
+            ? String(
+                (rawCol as { lookupTableName?: string })?.lookupTableName || cleanTableName
+              ).trim()
+            : '';
+
+        builtColumns.push({
+          id: cleanColName,
+          name: cleanColName,
+          colType,
+          orderIndex: builtColumns.length,
+          width: colType === 'varchar_max' ? 220 : colType === 'formula' || colType === 'lookup' ? 210 : 150,
+          required: isFormula ? false : !isNullable,
+          isNullable,
+          defaultValue: isFormula ? '' : rawDefault,
+          formula: normalizedFormula,
+          optionsCsv: rawOptions,
+          lookupTableName: rawLookupTableName || undefined,
+        });
+      }
+    }
+
     const nowIso = new Date().toISOString();
     const author = body.userName || 'Collaborator';
     const newTable: ServerTable = {
@@ -2010,6 +2987,8 @@ app.post('/api/workspace/tables', async (req: Request, res: Response) => {
     targetDb.activeTableName = cleanTableName;
     targetDb.updatedAt = nowIso;
 
+    syncAllLinkedLookupColumnsInState(cloudState);
+
     const currentActiveDbName = cloudState.activeDatabaseName || targetDb.databaseName;
     const isTargetActiveDb =
       targetDb.databaseName.toLowerCase() === currentActiveDbName.toLowerCase();
@@ -2025,8 +3004,8 @@ app.post('/api/workspace/tables', async (req: Request, res: Response) => {
       'Table Created',
       `Created table "${cleanTableName}" in database "${targetDb.databaseName}"`
     );
-    saveStateToDisk(cloudState);
     await syncTableToRealDatabase(newTable, targetDb.databaseName);
+    await persistWorkspaceState(cloudState);
 
     const activeDbObj =
       cloudState.databases.find(
@@ -2087,6 +3066,7 @@ app.post('/api/workspace/tables', async (req: Request, res: Response) => {
  * POST /api/workspace/tables/delete — deletes a database table and its sheet tab without changing activeDatabaseName if deleted from a non-active database
  */
 app.post('/api/workspace/tables/delete', async (req: Request, res: Response) => {
+  await ensurePostgresHydrated();
   const {
     databaseName,
     tableName = '',
@@ -2134,7 +3114,7 @@ app.post('/api/workspace/tables/delete', async (req: Request, res: Response) => 
     'Table Deleted',
     `Dropped table "${removed.tableName}" from database "${targetDb.databaseName}"`
   );
-  saveStateToDisk(cloudState);
+  await persistWorkspaceState(cloudState);
 
   const sortedCols = activeTable
     ? [...activeTable.columns].sort((a, b) => a.orderIndex - b.orderIndex)
@@ -2175,19 +3155,31 @@ app.post('/api/workspace/tables/delete', async (req: Request, res: Response) => 
 });
 
 /**
- * POST /api/workspace/tables/rename — renames an existing database table without mutating activeDatabaseName
+ * POST /api/workspace/tables/rename — renames an existing database table and/or updates its tabular columns schema
  */
 app.post('/api/workspace/tables/rename', async (req: Request, res: Response) => {
+  await ensurePostgresHydrated();
   const {
     databaseName,
     oldTableName = '',
     newTableName = '',
+    columns,
     userName = 'Collaborator',
     userColor = '#4285F4',
   } = (req.body || {}) as {
     databaseName?: string;
     oldTableName?: string;
     newTableName?: string;
+    columns?: {
+      originalName?: string;
+      name?: string;
+      colType?: ServerColumn['colType'];
+      isNullable?: boolean;
+      defaultValue?: string;
+      columnValue?: string;
+      formula?: string;
+      optionsCsv?: string;
+    }[];
     userName?: string;
     userColor?: string;
   };
@@ -2225,11 +3217,182 @@ app.post('/api/workspace/tables/rename', async (req: Request, res: Response) => 
     return;
   }
 
+  let tableRenamedColsList: { oldName: string; newName: string }[] = [];
+  let tableAddedColNames: string[] = [];
+  let tableDeletedColNames: string[] = [];
+
+  // If tabular columns were submitted from Edit Table popup, validate and apply schema changes
+  if (Array.isArray(columns)) {
+    const pkName = 'ID';
+    const existingPk = targetTable.columns.find((c) => c.isPrimaryKey || c.isIdentity);
+    const builtColumns: ServerColumn[] = [
+      existingPk
+        ? { ...existingPk, orderIndex: 0 }
+        : {
+            id: pkName,
+            name: pkName,
+            colType: 'number',
+            orderIndex: 0,
+            width: 95,
+            required: true,
+            isNullable: false,
+            isPrimaryKey: true,
+            isIdentity: true,
+            identitySeed: 1,
+            identityIncrement: 1,
+            defaultValue: '',
+            formula: '',
+            optionsCsv: '',
+          },
+    ];
+
+    const seenColNames = new Set<string>([builtColumns[0].name.toLowerCase()]);
+    const allowedColTypes = new Set<ServerColumn['colType']>([
+      'text',
+      'varchar_max',
+      'number',
+      'date',
+      'dropdown',
+      'lookup',
+      'checkbox',
+      'formula',
+    ]);
+    const renameMap = new Map<string, string>();
+    const existingColMap = new Map<string, ServerColumn>(
+      targetTable.columns.map((c) => [c.name.toLowerCase(), c])
+    );
+
+    for (const rawCol of columns) {
+      const cleanColName = String(rawCol?.name || '').trim().slice(0, 80);
+      if (!cleanColName) continue;
+      const lowerColName = cleanColName.toLowerCase();
+      if (seenColNames.has(lowerColName)) {
+        res.status(200).json({
+          ok: false,
+          error: `Duplicate field name "${cleanColName}" in table "${cleanNew}".`,
+        });
+        return;
+      }
+      seenColNames.add(lowerColName);
+
+      const origName = String(rawCol?.originalName || '').trim();
+      if (origName && origName !== cleanColName) {
+        renameMap.set(origName, cleanColName);
+      }
+
+      const prevCol = origName ? existingColMap.get(origName.toLowerCase()) : undefined;
+      const colType: ServerColumn['colType'] =
+        rawCol?.colType && allowedColTypes.has(rawCol.colType) ? rawCol.colType : 'text';
+      const isFormula = colType === 'formula';
+      const isNullable = isFormula
+        ? true
+        : rawCol?.isNullable !== undefined
+        ? Boolean(rawCol.isNullable)
+        : true;
+      const rawDefault = String(rawCol?.defaultValue ?? rawCol?.columnValue ?? '').trim();
+      const rawFormula = String(rawCol?.formula || prevCol?.formula || '').trim();
+      const normalizedFormula = isFormula
+        ? rawFormula.startsWith('=')
+          ? rawFormula
+          : `=${rawFormula}`
+        : colType === 'lookup'
+        ? rawFormula
+        : '';
+      const rawOptions =
+        colType === 'dropdown' || colType === 'lookup'
+          ? String(rawCol?.optionsCsv || '').trim()
+          : '';
+      const rawLookupTableName =
+        colType === 'lookup'
+          ? String(
+              (rawCol as { lookupTableName?: string })?.lookupTableName ||
+                prevCol?.lookupTableName ||
+                cleanNew
+            ).trim()
+          : '';
+
+      builtColumns.push({
+        id: cleanColName,
+        name: cleanColName,
+        colType,
+        orderIndex: builtColumns.length,
+        width:
+          prevCol?.width ||
+          (colType === 'varchar_max'
+            ? 220
+            : colType === 'formula' || colType === 'lookup'
+            ? 210
+            : 150),
+        required: isFormula ? false : !isNullable,
+        isNullable,
+        defaultValue: isFormula ? '' : rawDefault,
+        formula: normalizedFormula,
+        optionsCsv: rawOptions,
+        lookupTableName: rawLookupTableName || undefined,
+      });
+    }
+
+    tableRenamedColsList = Array.from(renameMap.entries()).map(([oldName, newName]) => ({
+      oldName,
+      newName,
+    }));
+    const oldNamesLower = new Set(targetTable.columns.map((c) => c.name.toLowerCase()));
+    const renamedNewLower = new Set(
+      Array.from(renameMap.values()).map((n) => n.toLowerCase())
+    );
+    const renamedOldLower = new Set(
+      Array.from(renameMap.keys()).map((n) => n.toLowerCase())
+    );
+    tableAddedColNames = builtColumns
+      .filter(
+        (c) =>
+          c.colType !== 'lookup' &&
+          !oldNamesLower.has(c.name.toLowerCase()) &&
+          !renamedNewLower.has(c.name.toLowerCase())
+      )
+      .map((c) => c.name);
+    const newNamesLower = new Set(builtColumns.map((c) => c.name.toLowerCase()));
+    tableDeletedColNames = targetTable.columns
+      .filter(
+        (c) =>
+          !newNamesLower.has(c.name.toLowerCase()) &&
+          !renamedOldLower.has(c.name.toLowerCase())
+      )
+      .map((c) => c.name);
+
+    if (renameMap.size > 0) {
+      for (const row of targetTable.rows) {
+        if (!row.cells) continue;
+        for (const [oldCol, newCol] of renameMap.entries()) {
+          if (row.cells[oldCol] !== undefined) {
+            row.cells[newCol] = row.cells[oldCol];
+            delete row.cells[oldCol];
+          }
+        }
+      }
+    }
+
+    targetTable.columns = builtColumns;
+    targetTable.rows = sanitizeRowsAgainstSchema(builtColumns, targetTable.rows);
+  }
+
   const nowIso = new Date().toISOString();
-  await dropTableFromRealDatabase(targetTable.tableName, targetDb.databaseName);
+  if (cleanNew.toLowerCase() !== cleanOld.toLowerCase()) {
+    await dropTableFromRealDatabase(targetTable.tableName, targetDb.databaseName);
+  }
   targetTable.tableName = cleanNew;
   targetTable.updatedAt = nowIso;
   targetDb.updatedAt = nowIso;
+
+  syncAllLinkedLookupColumnsInState(cloudState, {
+    databaseName: targetDb.databaseName,
+    oldTableName: cleanOld,
+    newTableName: cleanNew,
+    mutatedTableName: cleanNew,
+    renamedColumns: tableRenamedColsList,
+    addedColumnNames: tableAddedColNames,
+    deletedColumnNames: tableDeletedColNames,
+  });
 
   if ((targetDb.activeTableName || '').toLowerCase() === cleanOld.toLowerCase()) {
     targetDb.activeTableName = cleanNew;
@@ -2244,19 +3407,37 @@ app.post('/api/workspace/tables/rename', async (req: Request, res: Response) => 
   cloudState.updatedAt = nowIso;
 
   await syncTableToRealDatabase(targetTable, targetDb.databaseName);
+  for (const otherTbl of targetDb.tables) {
+    if (
+      otherTbl !== targetTable &&
+      otherTbl.columns.some(
+        (c) =>
+          c.colType === 'lookup' &&
+          (c.lookupTableName || '').toLowerCase() === targetTable.tableName.toLowerCase()
+      )
+    ) {
+      await syncTableToRealDatabase(otherTbl, targetDb.databaseName);
+    }
+  }
   recordActivity(
     userName,
     userColor,
-    'Table Renamed',
-    `Renamed table "${cleanOld}" to "${cleanNew}" in database "${targetDb.databaseName}"`
+    cleanNew !== cleanOld ? 'Table Renamed & Updated' : 'Table Schema Updated',
+    cleanNew !== cleanOld
+      ? `Renamed table "${cleanOld}" to "${cleanNew}" (${targetTable.columns.length} fields) in database "${targetDb.databaseName}"`
+      : `Updated schema for table "${cleanNew}" (${targetTable.columns.length} fields) in database "${targetDb.databaseName}"`
   );
-  saveStateToDisk(cloudState);
+  await persistWorkspaceState(cloudState);
 
   const activeDb = getTargetDatabase(cloudState, prevActiveDbName);
   const activeTbl = getTargetTable(cloudState, activeDb.activeTableName, activeDb.databaseName);
   const sortedCols = activeTbl
     ? [...activeTbl.columns].sort((a, b) => a.orderIndex - b.orderIndex)
     : [];
+  const queryResult = executeDatabaseQuery(sortedCols, activeTbl ? activeTbl.rows : [], {
+    offset: 0,
+    limit: 10,
+  });
 
   broadcastEvent('workspace_sync', {
     workspaceName: activeTbl ? activeTbl.tableName : activeDb.databaseName,
@@ -2278,6 +3459,12 @@ app.post('/api/workspace/tables/rename', async (req: Request, res: Response) => 
     databases: getDatabaseSummaries(cloudState),
     activeTableName: activeTbl ? activeTbl.tableName : '',
     tables: getTableSummaries(cloudState, activeDb),
+    columns: sortedCols,
+    rows: queryResult.rows,
+    totalRows: queryResult.totalRows,
+    filteredTotalRows: queryResult.filteredTotalRows,
+    hasMore: queryResult.hasMore,
+    uniqueValuesByColumn: queryResult.uniqueValuesByColumn,
     activities: cloudState.activities,
   });
 });
@@ -2285,7 +3472,8 @@ app.post('/api/workspace/tables/rename', async (req: Request, res: Response) => 
 /**
  * GET /api/workspace/lazy-rows — paginated chunk endpoint for lazy loading
  */
-app.get('/api/workspace/lazy-rows', (req: Request, res: Response) => {
+app.get('/api/workspace/lazy-rows', async (req: Request, res: Response) => {
+  await ensurePostgresHydrated();
   const requestedDb =
     typeof req.query['databaseName'] === 'string' ? req.query['databaseName'] : undefined;
   const requestedTable =
@@ -2570,7 +3758,8 @@ app.post('/api/workspace/versions', (req: Request, res: Response) => {
 /**
  * POST /api/workspace/versions/restore — restores the database to a committed version snapshot
  */
-app.post('/api/workspace/versions/restore', (req: Request, res: Response) => {
+app.post('/api/workspace/versions/restore', async (req: Request, res: Response) => {
+  await ensurePostgresHydrated();
   const {
     versionId = '',
     userName = 'Alex Rivera',
@@ -2587,12 +3776,29 @@ app.post('/api/workspace/versions/restore', (req: Request, res: Response) => {
     return;
   }
 
-  cloudState.columns = target.columnsSnapshot.map((c) => ({ ...c }));
-  cloudState.rows = sanitizeRowsAgainstSchema(
-    cloudState.columns,
+  const restoredCols = ensurePrimaryKeyIdentityColumn(
+    target.columnsSnapshot.map((c) => ({ ...c }))
+  );
+  const restoredRows = sanitizeRowsAgainstSchema(
+    restoredCols,
     target.rowsSnapshot.map((r) => ({ ...r, cells: { ...r.cells } }))
   );
-  cloudState.updatedAt = new Date().toISOString();
+  const nowIso = new Date().toISOString();
+
+  const activeDb = getTargetDatabase(cloudState, cloudState.activeDatabaseName);
+  const activeTbl = getTargetTable(cloudState, activeDb.activeTableName, activeDb.databaseName);
+  if (activeTbl) {
+    activeTbl.columns = restoredCols;
+    activeTbl.rows = restoredRows;
+    activeTbl.nextIdentityValue = computeNextIdentityValue(restoredCols, restoredRows);
+    activeTbl.updatedAt = nowIso;
+    activeDb.updatedAt = nowIso;
+    await syncTableToRealDatabase(activeTbl, activeDb.databaseName);
+  }
+
+  cloudState.columns = restoredCols;
+  cloudState.rows = restoredRows;
+  cloudState.updatedAt = nowIso;
 
   recordActivity(
     userName,
@@ -2600,7 +3806,7 @@ app.post('/api/workspace/versions/restore', (req: Request, res: Response) => {
     `Restored ${target.versionTag}`,
     `Rolled back database to "${target.title}" (${cloudState.rows.length} rows)`
   );
-  saveStateToDisk(cloudState);
+  await persistWorkspaceState(cloudState);
 
   const queryResult = executeDatabaseQuery(cloudState.columns, cloudState.rows, {
     offset: 0,
@@ -2609,6 +3815,10 @@ app.post('/api/workspace/versions/restore', (req: Request, res: Response) => {
 
   broadcastEvent('workspace_sync', {
     workspaceName: cloudState.workspaceName,
+    activeDatabaseName: activeDb.databaseName,
+    databases: getDatabaseSummaries(cloudState),
+    activeTableName: activeTbl ? activeTbl.tableName : '',
+    tables: getTableSummaries(cloudState, activeDb),
     updatedAt: cloudState.updatedAt,
     columns: cloudState.columns,
     rows: queryResult.rows,
@@ -2620,6 +3830,10 @@ app.post('/api/workspace/versions/restore', (req: Request, res: Response) => {
   res.status(200).json({
     ok: true,
     restoredVersion: target.versionTag,
+    activeDatabaseName: activeDb.databaseName,
+    databases: getDatabaseSummaries(cloudState),
+    activeTableName: activeTbl ? activeTbl.tableName : '',
+    tables: getTableSummaries(cloudState, activeDb),
     columns: cloudState.columns,
     rows: queryResult.rows,
     totalRows: queryResult.totalRows,
@@ -2676,7 +3890,11 @@ function collectProjectFiles(
     '.git',
     '.aistudio',
   ]);
-  const excludedFiles = new Set(['bun.lock', 'package-lock.json', '.github-auth-cache.json']);
+  const excludedFiles = new Set([
+    'bun.lock',
+    'package-lock.json',
+    '.github-auth-cache.json',
+  ]);
   const results: { path: string; content: string }[] = [];
 
   const currentDir = relDir ? join(baseDir, relDir) : baseDir;
@@ -3409,6 +4627,7 @@ app.post('/api/workspace/presence', (req: Request, res: Response) => {
  * POST /api/workspace/sync — applies authoritative workspace mutations and broadcasts to all collaborators
  */
 app.post('/api/workspace/sync', async (req: Request, res: Response) => {
+  await ensurePostgresHydrated();
   const {
     clientId,
     userName = 'Collaborator',
@@ -3423,6 +4642,7 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
     rows,
     deletedRowIds,
     defaultUpdatedColIds,
+    renamedColumns,
     replaceAllRows = false,
     appendSampleCount,
   } = req.body as {
@@ -3439,6 +4659,7 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
     rows?: ServerRow[];
     deletedRowIds?: string[];
     defaultUpdatedColIds?: string[];
+    renamedColumns?: { oldName: string; newName: string }[];
     replaceAllRows?: boolean;
     appendSampleCount?: number;
   };
@@ -3477,6 +4698,10 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
   }
 
   targetTable.updatedAt = nowIso;
+
+  let syncAddedColumnNames: string[] = [];
+  let syncDeletedColumnNames: string[] = [];
+  let syncRenamedCols: { oldName: string; newName: string }[] = [];
 
   if (actionType === 'generate_bulk_rows' && typeof appendSampleCount === 'number') {
     const countToAdd = Math.max(1, Math.min(2000, appendSampleCount));
@@ -3531,19 +4756,71 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
       cloudState.workspaceName = targetTable.tableName;
     }
 
+    const prevColumnsSnapshot = [...targetTable.columns];
     const prevColsById = new Map<string, ServerColumn>();
     for (const oldCol of targetTable.columns) {
       prevColsById.set(oldCol.id.toLowerCase(), oldCol);
       prevColsById.set(oldCol.name.toLowerCase(), oldCol);
     }
 
+    syncRenamedCols = Array.isArray(renamedColumns)
+      ? renamedColumns
+          .map((p) => ({
+            oldName: String(p?.oldName || '').trim(),
+            newName: String(p?.newName || '').trim(),
+          }))
+          .filter((p) => p.oldName && p.newName && p.oldName !== p.newName)
+      : [];
+
     const colsRequiringFullTableDefaultUpdate = new Set<string>(
       (defaultUpdatedColIds || []).map((id) => id.toLowerCase())
     );
 
+    if (syncRenamedCols.length > 0) {
+      for (const row of targetTable.rows) {
+        if (!row.cells) continue;
+        for (const pair of syncRenamedCols) {
+          const oldKey = pair.oldName;
+          const newKey = pair.newName;
+          if (row.cells[oldKey] !== undefined) {
+            row.cells[newKey] = row.cells[oldKey];
+            delete row.cells[oldKey];
+          }
+        }
+      }
+    }
+
     if (Array.isArray(columns)) {
       targetTable.allowEmptyColumns = false;
       targetTable.columns = ensurePrimaryKeyIdentityColumn(columns);
+
+      const oldColNamesLower = new Set(
+        prevColumnsSnapshot.map((c) => c.name.toLowerCase())
+      );
+      const renamedNewLower = new Set(
+        syncRenamedCols.map((r) => r.newName.toLowerCase())
+      );
+      const renamedOldLower = new Set(
+        syncRenamedCols.map((r) => r.oldName.toLowerCase())
+      );
+      syncAddedColumnNames = targetTable.columns
+        .filter(
+          (c) =>
+            c.colType !== 'lookup' &&
+            !oldColNamesLower.has(c.name.toLowerCase()) &&
+            !renamedNewLower.has(c.name.toLowerCase())
+        )
+        .map((c) => c.name);
+      const newColNamesLower = new Set(
+        targetTable.columns.map((c) => c.name.toLowerCase())
+      );
+      syncDeletedColumnNames = prevColumnsSnapshot
+        .filter(
+          (c) =>
+            !newColNamesLower.has(c.name.toLowerCase()) &&
+            !renamedOldLower.has(c.name.toLowerCase())
+        )
+        .map((c) => c.name);
 
       // Detect newly created columns or existing columns whose defaultValue was created/updated
       for (const col of targetTable.columns) {
@@ -3608,7 +4885,26 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
   }
 
   targetTable.nextIdentityValue = computeNextIdentityValue(targetTable.columns, targetTable.rows);
-  void syncTableToRealDatabase(targetTable, targetDb.databaseName);
+  syncAllLinkedLookupColumnsInState(cloudState, {
+    databaseName: targetDb.databaseName,
+    mutatedTableName: targetTable.tableName,
+    renamedColumns: syncRenamedCols,
+    addedColumnNames: syncAddedColumnNames,
+    deletedColumnNames: syncDeletedColumnNames,
+  });
+  await syncTableToRealDatabase(targetTable, targetDb.databaseName);
+  for (const otherTbl of targetDb.tables) {
+    if (
+      otherTbl !== targetTable &&
+      otherTbl.columns.some(
+        (c) =>
+          c.colType === 'lookup' &&
+          (c.lookupTableName || '').toLowerCase() === targetTable.tableName.toLowerCase()
+      )
+    ) {
+      await syncTableToRealDatabase(otherTbl, targetDb.databaseName);
+    }
+  }
 
   if (preserveActiveContext) {
     getTargetDatabase(cloudState, prevActiveDbName);
@@ -3618,13 +4914,16 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
     cloudState.rows = targetTable.rows;
   }
 
-  saveStateToDisk(cloudState);
+  await persistWorkspaceState(cloudState);
   const currentActiveDb = getTargetDatabase(cloudState, cloudState.activeDatabaseName);
   const currentActiveTbl = getTargetTable(
     cloudState,
     cloudState.activeTableName,
     currentActiveDb.databaseName
   );
+  const activeSortedCols = currentActiveTbl
+    ? [...currentActiveTbl.columns].sort((a, b) => a.orderIndex - b.orderIndex)
+    : [];
 
   broadcastEvent('workspace_sync', {
     clientId,
@@ -3634,17 +4933,20 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
     activeTableName: currentActiveTbl ? currentActiveTbl.tableName : '',
     tables: getTableSummaries(cloudState, currentActiveDb),
     updatedAt: cloudState.updatedAt,
-    columns: currentActiveTbl ? currentActiveTbl.columns : [],
+    columns: activeSortedCols,
     totalRows: currentActiveTbl ? currentActiveTbl.rows.length : 0,
     activities: cloudState.activities,
   });
 
+  const returnRowLimit = Math.max(50, Array.isArray(rows) ? rows.length : 50);
   res.json({
     ok: true,
     activeDatabaseName: currentActiveDb.databaseName,
     databases: getDatabaseSummaries(cloudState),
     activeTableName: currentActiveTbl ? currentActiveTbl.tableName : '',
     tables: getTableSummaries(cloudState, currentActiveDb),
+    columns: activeSortedCols,
+    rows: currentActiveTbl ? currentActiveTbl.rows.slice(0, returnRowLimit) : [],
     updatedAt: cloudState.updatedAt,
     totalRows: currentActiveTbl ? currentActiveTbl.rows.length : 0,
     activities: cloudState.activities,
@@ -3654,7 +4956,8 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
 /**
  * GET /api/workspace/tree — returns authoritative databases, tables, and columns schema directly from the backend database without changing activeDatabaseName
  */
-app.get('/api/workspace/tree', (_req: Request, res: Response) => {
+app.get('/api/workspace/tree', async (_req: Request, res: Response) => {
+  await ensurePostgresHydrated();
   ensureDatabasesHierarchy(cloudState);
   const activeDb = findDatabase(cloudState, cloudState.activeDatabaseName);
   res.json({

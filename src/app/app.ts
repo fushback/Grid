@@ -29,8 +29,12 @@ import {
   CellPrimitive,
   getDropdownOptions,
   getLookupOptions,
+  matchLookupItemFromRaw,
   validateCellValue,
   evaluateFormula,
+  extractLookupTemplateTokens,
+  formatLookupTemplateFromFieldNames,
+  resolveLookupTemplateAndColumns,
 } from './grid-models';
 import { OperationLoader } from './operation-loader';
 
@@ -179,6 +183,84 @@ export class App implements OnInit, OnDestroy {
   readonly workspaceName = signal<string>('');
   readonly databases = signal<DbDatabaseSummary[]>([]);
   readonly tables = signal<DbTableSummary[]>([]);
+  readonly tableLastUsedOrderByDb = signal<Record<string, string[]>>({});
+  readonly openTableTabsByDb = signal<Record<string, string[]>>({});
+  private readonly tableLastUsedStorageKey = 'gridario_table_last_used_order';
+  private readonly openTableTabsStorageKey = 'gridario_open_table_tabs_by_db';
+  public hasInitializedWorkspace = false;
+
+  readonly sortedTablesByLastUsed = computed<DbTableSummary[]>(() => {
+    const rawTables = this.tables();
+    if (rawTables.length <= 1) return rawTables;
+    const activeDb = (this.activeDatabaseName() || '').trim().toLowerCase();
+    const activeTbl = (this.activeTableName() || '').trim().toLowerCase();
+    const orderMap = this.tableLastUsedOrderByDb();
+
+    let dbHistory: string[] = [];
+    for (const [k, list] of Object.entries(orderMap)) {
+      if (k.trim().toLowerCase() === activeDb && Array.isArray(list)) {
+        dbHistory = list;
+        break;
+      }
+    }
+
+    const rankMap = new Map<string, number>();
+    let rank = 0;
+    if (activeTbl) {
+      rankMap.set(activeTbl, rank++);
+    }
+    for (const tblName of dbHistory) {
+      const lower = (tblName || '').trim().toLowerCase();
+      if (lower && !rankMap.has(lower)) {
+        rankMap.set(lower, rank++);
+      }
+    }
+
+    return [...rawTables].sort((a, b) => {
+      const aLower = a.tableName.trim().toLowerCase();
+      const bLower = b.tableName.trim().toLowerCase();
+      const aRank = rankMap.get(aLower);
+      const bRank = rankMap.get(bLower);
+
+      if (aRank !== undefined && bRank !== undefined) {
+        return aRank - bRank;
+      }
+      if (aRank !== undefined) return -1;
+      if (bRank !== undefined) return 1;
+
+      if (a.updatedAt && b.updatedAt && a.updatedAt !== b.updatedAt) {
+        return b.updatedAt.localeCompare(a.updatedAt);
+      }
+      return 0;
+    });
+  });
+
+  // Only tables that have been opened from the sidebar for the active database and not yet closed
+  readonly openTablesForActiveDatabase = computed<DbTableSummary[]>(() => {
+    const rawTables = this.tables();
+    const activeDb = (this.activeDatabaseName() || '').trim();
+    if (!activeDb || rawTables.length === 0) return [];
+    const openNames = this.getOpenTableNamesForDb(activeDb);
+    if (openNames.length === 0) return [];
+
+    const tableByLower = new Map<string, DbTableSummary>();
+    for (const t of rawTables) {
+      tableByLower.set(t.tableName.trim().toLowerCase(), t);
+    }
+
+    const result: DbTableSummary[] = [];
+    const seen = new Set<string>();
+    for (const openName of openNames) {
+      const lower = (openName || '').trim().toLowerCase();
+      if (!lower || seen.has(lower)) continue;
+      const match = tableByLower.get(lower);
+      if (match) {
+        seen.add(lower);
+        result.push(match);
+      }
+    }
+    return result;
+  });
 
   // SQL Server Management Studio (SSMS) / Browser-Style Database Connection Tabs
   // Each tab represents an active Database connection page, and inside each Database Tab
@@ -189,6 +271,9 @@ export class App implements OnInit, OnDestroy {
     const id = this.activeDatabaseTabId();
     const list = this.databaseTabs();
     return list.find((t) => t.tabId === id) || list[0] || null;
+  });
+  readonly hasActiveConnection = computed<boolean>(() => {
+    return this.databaseTabs().length > 0;
   });
   readonly isCurrentTabAwaitingDbSelection = computed<boolean>(() => {
     const tab = this.activeDatabaseTab();
@@ -292,8 +377,9 @@ export class App implements OnInit, OnDestroy {
     starterTableName: ['Table_1', [Validators.maxLength(80)]],
   });
 
-  // Create New Table & Sheet Tab Modal State
+  // Create / Edit Table & Tabular Field Designer Modal State
   readonly isCreatingTable = signal<boolean>(false);
+  readonly editingTableOriginalName = signal<string>('');
   readonly createTableErrorMessage = signal<string>('');
   readonly newTableForm = this.fb.nonNullable.group({
     databaseName: ['GridPulse_DB', [Validators.required, Validators.maxLength(80)]],
@@ -301,6 +387,17 @@ export class App implements OnInit, OnDestroy {
     pkColumnName: ['ID', [Validators.required, Validators.maxLength(60)]],
     includeDefaultPk: [true],
     initialRowCount: [3, [Validators.required, Validators.min(0), Validators.max(200)]],
+  });
+  readonly newTableTopDraft = signal<NewTableColumnDraft>({
+    id: '__top_draft__',
+    name: '',
+    colType: 'text',
+    isNullable: true,
+    columnValue: '',
+    formula: '',
+    optionsCsv: '',
+    isPrimaryKey: false,
+    isIdentity: false,
   });
   readonly newTableColumns = signal<NewTableColumnDraft[]>([]);
 
@@ -505,6 +602,7 @@ export class App implements OnInit, OnDestroy {
     width: [150, [Validators.required, Validators.min(70), Validators.max(800)]],
     required: [false],
     isNullable: [true],
+    lookupTableName: [''],
     optionsCsv: ['Option A, Option B, Option C'],
     formula: ['=[Units] * [Unit Cost]'],
     defaultValue: [''],
@@ -925,6 +1023,7 @@ export class App implements OnInit, OnDestroy {
       }
 
       this.restoreSidebarTreeStateFromStorage();
+      this.restoreTableLastUsedOrderFromStorage();
 
       const storedId = sessionStorage.getItem('gridpulse_client_id');
       const clientId =
@@ -1213,6 +1312,7 @@ export class App implements OnInit, OnDestroy {
         updatedAt: '',
       },
     ]);
+    this.openTableTabsByDb.set({ GridPulse_DB: ['Initiatives'] });
 
     const sampleRows: GridRow[] = [];
     const depts = ['Engineering', 'Product', 'Finance', 'Operations', 'Growth', 'Security'];
@@ -1498,6 +1598,266 @@ export class App implements OnInit, OnDestroy {
     }
   }
 
+  private restoreTableLastUsedOrderFromStorage(): void {
+    if (!this.isBrowser) return;
+    try {
+      const raw = localStorage.getItem(this.tableLastUsedStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as Record<string, string[]>;
+      if (parsed && typeof parsed === 'object') {
+        this.tableLastUsedOrderByDb.set(parsed);
+      }
+    } catch {
+      // Ignore malformed storage
+    }
+  }
+
+  private saveTableLastUsedOrderToStorage(): void {
+    if (!this.isBrowser) return;
+    try {
+      localStorage.setItem(
+        this.tableLastUsedStorageKey,
+        JSON.stringify(this.tableLastUsedOrderByDb())
+      );
+    } catch {
+      // Ignore storage quota errors
+    }
+  }
+
+  public recordTableUsed(databaseName: string, tableName: string): void {
+    const cleanDb = (databaseName || '').trim();
+    const cleanTbl = (tableName || '').trim();
+    if (!cleanDb || !cleanTbl) return;
+
+    this.tableLastUsedOrderByDb.update((prev) => {
+      const next: Record<string, string[]> = { ...prev };
+      let matchedKey = cleanDb;
+      for (const k of Object.keys(next)) {
+        if (k.trim().toLowerCase() === cleanDb.toLowerCase()) {
+          matchedKey = k;
+          break;
+        }
+      }
+      const existing = Array.isArray(next[matchedKey]) ? next[matchedKey] : [];
+      const filtered = existing.filter(
+        (t) => (t || '').trim().toLowerCase() !== cleanTbl.toLowerCase()
+      );
+      next[matchedKey] = [cleanTbl, ...filtered];
+      return next;
+    });
+    this.saveTableLastUsedOrderToStorage();
+  }
+
+  public getOpenTableNamesForDb(databaseName: string): string[] {
+    const cleanDb = (databaseName || '').trim().toLowerCase();
+    if (!cleanDb) return [];
+    const map = this.openTableTabsByDb();
+    for (const [k, list] of Object.entries(map)) {
+      if (k.trim().toLowerCase() === cleanDb && Array.isArray(list)) {
+        return list;
+      }
+    }
+    return [];
+  }
+
+  public openTableTab(databaseName: string, tableName: string): void {
+    const cleanDb = (databaseName || '').trim();
+    const cleanTbl = (tableName || '').trim();
+    if (!cleanDb || !cleanTbl) return;
+
+    this.openTableTabsByDb.update((prev) => {
+      const next: Record<string, string[]> = { ...prev };
+      let matchedKey = cleanDb;
+      for (const k of Object.keys(next)) {
+        if (k.trim().toLowerCase() === cleanDb.toLowerCase()) {
+          matchedKey = k;
+          break;
+        }
+      }
+      const existing = Array.isArray(next[matchedKey]) ? [...next[matchedKey]] : [];
+      if (!existing.some((t) => (t || '').trim().toLowerCase() === cleanTbl.toLowerCase())) {
+        existing.push(cleanTbl);
+      }
+      next[matchedKey] = existing;
+      return next;
+    });
+  }
+
+  public closeTableTab(tableName: string, event?: Event): void {
+    event?.stopPropagation();
+    this.closeAllMenus();
+    const cleanTbl = (tableName || '').trim();
+    const currentDb = (this.activeDatabaseName() || '').trim();
+    if (!cleanTbl || !currentDb) return;
+
+    if (this.editingCell()) {
+      this.commitInlineEdit();
+    }
+    this.flushAllDirtyRowsAutoSave();
+
+    this.openTableTabsByDb.update((prev) => {
+      const next: Record<string, string[]> = { ...prev };
+      for (const k of Object.keys(next)) {
+        if (k.trim().toLowerCase() === currentDb.toLowerCase()) {
+          next[k] = (next[k] || []).filter(
+            (t) => (t || '').trim().toLowerCase() !== cleanTbl.toLowerCase()
+          );
+        }
+      }
+      return next;
+    });
+
+    const isClosingActive =
+      this.activeTableName().trim().toLowerCase() === cleanTbl.toLowerCase();
+    if (!isClosingActive) {
+      return;
+    }
+
+    const remainingOpen = this.openTablesForActiveDatabase();
+    if (remainingOpen.length > 0) {
+      const nextTbl = remainingOpen[remainingOpen.length - 1].tableName;
+      this.switchTable(nextTbl);
+    } else {
+      this.activeTableName.set('');
+      this.workspaceName.set(currentDb);
+      this.workspaceNameControl.setValue(currentDb);
+      const activeTabId = this.activeDatabaseTabId();
+      this.databaseTabs.update((tabs) =>
+        tabs.map((t) =>
+          t.tabId === activeTabId || t.databaseName.toLowerCase() === currentDb.toLowerCase()
+            ? { ...t, activeTableName: '' }
+            : t
+        )
+      );
+      this.columns.set([]);
+      this.rows.set([]);
+      this.dbTotalRows.set(0);
+      this.dbFilteredTotalRows.set(0);
+      this.dbHasMoreRows.set(false);
+      this.selectedRowIds.set(new Set());
+      this.selectedColumnId.set(null);
+      this.activeCell.set(null);
+      this.editingCell.set(null);
+      this.cellValidationErrors.set({});
+      this.pendingUnsavedRowIds.set(new Set());
+      this.pendingUnsavedColIds.set(new Set());
+    }
+  }
+
+  public renameTableInLastUsedOrder(
+    databaseName: string,
+    oldTableName: string,
+    newTableName: string
+  ): void {
+    const cleanDb = (databaseName || '').trim();
+    const cleanOld = (oldTableName || '').trim();
+    const cleanNew = (newTableName || '').trim();
+    if (!cleanDb || !cleanOld || !cleanNew) return;
+
+    this.tableLastUsedOrderByDb.update((prev) => {
+      const next: Record<string, string[]> = { ...prev };
+      for (const k of Object.keys(next)) {
+        if (k.trim().toLowerCase() === cleanDb.toLowerCase()) {
+          const list = Array.isArray(next[k]) ? next[k] : [];
+          const replaced = list.map((t) =>
+            (t || '').trim().toLowerCase() === cleanOld.toLowerCase() ? cleanNew : t
+          );
+          if (!replaced.some((t) => t.trim().toLowerCase() === cleanNew.toLowerCase())) {
+            replaced.unshift(cleanNew);
+          }
+          next[k] = replaced;
+        }
+      }
+      return next;
+    });
+    this.openTableTabsByDb.update((prev) => {
+      const next: Record<string, string[]> = { ...prev };
+      for (const k of Object.keys(next)) {
+        if (k.trim().toLowerCase() === cleanDb.toLowerCase()) {
+          const list = Array.isArray(next[k]) ? next[k] : [];
+          next[k] = list.map((t) =>
+            (t || '').trim().toLowerCase() === cleanOld.toLowerCase() ? cleanNew : t
+          );
+        }
+      }
+      return next;
+    });
+    this.saveTableLastUsedOrderToStorage();
+  }
+
+  public removeTableFromLastUsedOrder(databaseName: string, tableName: string): void {
+    const cleanDb = (databaseName || '').trim();
+    const cleanTbl = (tableName || '').trim();
+    if (!cleanDb || !cleanTbl) return;
+
+    this.tableLastUsedOrderByDb.update((prev) => {
+      const next: Record<string, string[]> = { ...prev };
+      for (const k of Object.keys(next)) {
+        if (k.trim().toLowerCase() === cleanDb.toLowerCase()) {
+          next[k] = (next[k] || []).filter(
+            (t) => (t || '').trim().toLowerCase() !== cleanTbl.toLowerCase()
+          );
+        }
+      }
+      return next;
+    });
+    this.openTableTabsByDb.update((prev) => {
+      const next: Record<string, string[]> = { ...prev };
+      for (const k of Object.keys(next)) {
+        if (k.trim().toLowerCase() === cleanDb.toLowerCase()) {
+          next[k] = (next[k] || []).filter(
+            (t) => (t || '').trim().toLowerCase() !== cleanTbl.toLowerCase()
+          );
+        }
+      }
+      return next;
+    });
+    this.saveTableLastUsedOrderToStorage();
+  }
+
+  public getLastUsedTableForDatabase(databaseName: string): string {
+    const cleanDb = (databaseName || '').trim();
+    if (!cleanDb) return '';
+    const dbObj = this.databases().find(
+      (d) => d.databaseName.toLowerCase() === cleanDb.toLowerCase()
+    );
+    const availableTables = dbObj?.tables || [];
+    const openNames = this.getOpenTableNamesForDb(cleanDb);
+    if (openNames.length === 0) return '';
+
+    const orderMap = this.tableLastUsedOrderByDb();
+    for (const [k, list] of Object.entries(orderMap)) {
+      if (k.trim().toLowerCase() === cleanDb.toLowerCase() && Array.isArray(list)) {
+        for (const candidate of list) {
+          const candLower = (candidate || '').trim().toLowerCase();
+          const isOpen = openNames.some((o) => (o || '').trim().toLowerCase() === candLower);
+          if (!isOpen) continue;
+          const matched = availableTables.find(
+            (t) => t.tableName.toLowerCase() === candLower
+          );
+          if (matched) return matched.tableName;
+        }
+      }
+    }
+    const lastOpen = openNames[openNames.length - 1];
+    const matchedOpen = availableTables.find(
+      (t) => t.tableName.toLowerCase() === (lastOpen || '').trim().toLowerCase()
+    );
+    return matchedOpen ? matchedOpen.tableName : lastOpen || '';
+  }
+
+  /**
+   * Returns the display label for a top Database Tab:
+   * Displays the active Database Name e.g. [DatabaseName].
+   */
+  public getDatabaseTabDisplayTableName(dbTab: DatabaseWorkspaceTab): string {
+    const dbName = (
+      dbTab.databaseName ||
+      (dbTab.tabId === this.activeDatabaseTabId() ? this.activeDatabaseName() : '')
+    ).trim();
+    return dbName || 'No Active Connection';
+  }
+
   public isServerRootNodeExpanded(): boolean {
     if (this.manageTreeSearchQuery().trim().length > 0) return true;
     return this.isServerNodeExpanded();
@@ -1651,6 +2011,9 @@ export class App implements OnInit, OnDestroy {
     if (col.isPrimaryKey || col.isIdentity) {
       return `(PK, ${sqlType}, ${nullLabel})`;
     }
+    if (col.colType === 'lookup' && col.lookupTableName) {
+      return `(FK -> ${col.lookupTableName}, json, ${nullLabel})`;
+    }
     return `(${sqlType}, ${nullLabel})`;
   }
 
@@ -1670,7 +2033,7 @@ export class App implements OnInit, OnDestroy {
 
   /**
    * Right-click context menu action ("Select") on a table in Object Explorer:
-   * Loads and displays the selected table onto the screen.
+   * Opens the table tab in the bottom bar and displays the selected table onto the screen.
    */
   public selectTableFromContextMenu(dbName: string, tableName: string, event?: Event): void {
     event?.stopPropagation();
@@ -1679,7 +2042,12 @@ export class App implements OnInit, OnDestroy {
     const cleanTbl = (tableName || '').trim();
     if (!cleanDb || !cleanTbl) return;
 
-    if (cleanDb.toLowerCase() !== this.activeDatabaseName().toLowerCase()) {
+    this.openTableTab(cleanDb, cleanTbl);
+
+    if (
+      !this.hasActiveConnection() ||
+      cleanDb.toLowerCase() !== this.activeDatabaseName().toLowerCase()
+    ) {
       this.switchDatabase(cleanDb, cleanTbl, event, true);
       return;
     }
@@ -1860,6 +2228,11 @@ export class App implements OnInit, OnDestroy {
     event?.stopPropagation();
     this.closeAllMenus();
 
+    if (targetType === 'table') {
+      this.openEditTableModal(dbName, tableName, event);
+      return;
+    }
+
     if (targetType === 'field' && this.isProtectedIdColumn(col)) {
       this.showBanner(
         'info',
@@ -1875,12 +2248,7 @@ export class App implements OnInit, OnDestroy {
     this.renameSidebarErrorMessage.set('');
     this.isRenamingSidebarItem.set(false);
 
-    const initialName =
-      targetType === 'database'
-        ? dbName
-        : targetType === 'table'
-        ? tableName
-        : col?.name || '';
+    const initialName = targetType === 'database' ? dbName : col?.name || '';
     this.renameSidebarControl.setValue(initialName);
     this.activeModal.set('rename_sidebar_item');
   }
@@ -2026,6 +2394,7 @@ export class App implements OnInit, OnDestroy {
               this.workspaceName.set(nextTblName || this.activeDatabaseName());
               this.workspaceNameControl.setValue(nextTblName || this.activeDatabaseName());
             }
+            this.renameTableInLastUsedOrder(dbName, tableName, nextTblName);
             this.databaseTabs.update((tabs) =>
               tabs.map((t) =>
                 t.databaseName.toLowerCase() === dbName.toLowerCase() &&
@@ -2157,6 +2526,8 @@ export class App implements OnInit, OnDestroy {
             ok: boolean;
             databases?: DbDatabaseSummary[];
             tables?: DbTableSummary[];
+            columns?: GridColumn[];
+            rows?: GridRow[];
             activities?: ActivityLogItem[];
           }>('/api/workspace/sync', {
             clientId: this.currentClientId(),
@@ -2174,6 +2545,14 @@ export class App implements OnInit, OnDestroy {
               if (Array.isArray(res?.databases)) {
                 this.databases.set(res.databases);
                 this.syncTablesSignalForActiveDatabase(res.databases);
+              }
+              if (Array.isArray(res?.columns)) {
+                this.columns.set(res.columns);
+                if (Array.isArray(res?.rows)) {
+                  const sanitized = this.sanitizeClientRowsAgainstColumns(res.columns, res.rows);
+                  this.rows.set(sanitized);
+                  this.snapshotValidRows(sanitized);
+                }
               }
               if (Array.isArray(res?.activities)) {
                 this.activities.set(res.activities);
@@ -2312,7 +2691,19 @@ export class App implements OnInit, OnDestroy {
           }
 
           // Open or activate a dedicated SQL Server Database Tab for the newly created database
-          this.ensureDatabaseTabOpenedAndActive(createdDb, activeTbl, true);
+          if (activeTbl && raw.createStarterTable) {
+            this.openTableTab(createdDb, activeTbl);
+            this.recordTableUsed(createdDb, activeTbl);
+          } else {
+            this.activeTableName.set('');
+            this.columns.set([]);
+            this.rows.set([]);
+          }
+          this.ensureDatabaseTabOpenedAndActive(
+            createdDb,
+            raw.createStarterTable ? activeTbl : '',
+            true
+          );
 
           this.editingCell.set(null);
           this.activeCell.set(null);
@@ -2428,22 +2819,23 @@ export class App implements OnInit, OnDestroy {
     if (!cleanDb) return;
 
     if (alwaysCreateNewTab) {
-      const dbObj = this.databases().find(
-        (d) => d.databaseName.toLowerCase() === cleanDb.toLowerCase()
-      );
-      const defaultTbl = dbObj?.activeTableName || dbObj?.tables?.[0]?.tableName || '';
+      const openTbl = this.getLastUsedTableForDatabase(cleanDb);
       const newTabId = `db_tab_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
       this.databaseTabs.update((tabs) => [
         ...tabs,
         {
           tabId: newTabId,
           databaseName: cleanDb,
-          activeTableName: defaultTbl,
+          activeTableName: openTbl,
         },
       ]);
       this.activeDatabaseTabId.set(newTabId);
     } else {
-      this.ensureDatabaseTabOpenedAndActive(cleanDb, '', true);
+      this.ensureDatabaseTabOpenedAndActive(
+        cleanDb,
+        this.getLastUsedTableForDatabase(cleanDb),
+        true
+      );
     }
 
     this.switchDatabase(cleanDb, undefined, event, false);
@@ -2451,6 +2843,7 @@ export class App implements OnInit, OnDestroy {
 
   /**
    * Right-click sidebar action or Tab close button: Disconnect from `databaseName` and close its Database Tab.
+   * Even if there is only 1 tab, allows closing it and shows the blank "No Active Connection" screen.
    */
   public disconnectDatabaseFromSidebar(databaseName: string, event?: Event): void {
     event?.stopPropagation();
@@ -2458,55 +2851,53 @@ export class App implements OnInit, OnDestroy {
     const cleanDb = (databaseName || '').trim();
     if (!cleanDb) return;
 
-    const matchingTabs = this.databaseTabs().filter(
-      (t) => t.databaseName.toLowerCase() === cleanDb.toLowerCase()
+    if (this.editingCell()) {
+      this.commitInlineEdit();
+    }
+    this.flushAllDirtyRowsAutoSave();
+
+    const remaining = this.databaseTabs().filter(
+      (t) => t.databaseName.toLowerCase() !== cleanDb.toLowerCase()
     );
-    if (matchingTabs.length > 0) {
-      // Close the active tab for this database (or all tabs for this database)
-      const remaining = this.databaseTabs().filter(
-        (t) => t.databaseName.toLowerCase() !== cleanDb.toLowerCase()
-      );
-      if (remaining.length > 0) {
-        const nextTab = remaining[remaining.length - 1];
-        this.databaseTabs.set(remaining);
-        this.activeDatabaseTabId.set(nextTab.tabId);
-        if (nextTab.databaseName) {
-          this.switchDatabase(nextTab.databaseName, nextTab.activeTableName || undefined, undefined, false);
-        }
-        this.showBanner(
-          'info',
-          `Disconnected database "${cleanDb}" and switched to tab "${nextTab.databaseName || 'New Tab'}".`
+    if (remaining.length > 0) {
+      const nextTab = remaining[remaining.length - 1];
+      this.databaseTabs.set(remaining);
+      this.activeDatabaseTabId.set(nextTab.tabId);
+      if (nextTab.databaseName) {
+        this.switchDatabase(
+          nextTab.databaseName,
+          nextTab.activeTableName || undefined,
+          undefined,
+          false
         );
-        return;
       }
+      return;
     }
 
-    // If no other connected tabs remain, open a fresh "Select Database" tab (or switch to another database if available)
-    const otherDb = this.databases().find(
-      (d) => d.databaseName.toLowerCase() !== cleanDb.toLowerCase()
-    );
-    if (otherDb) {
-      const newTabId = `db_tab_${Date.now()}`;
-      const nextTbl = otherDb.activeTableName || otherDb.tables?.[0]?.tableName || '';
-      this.databaseTabs.set([
-        {
-          tabId: newTabId,
-          databaseName: otherDb.databaseName,
-          activeTableName: nextTbl,
-        },
-      ]);
-      this.activeDatabaseTabId.set(newTabId);
-      this.switchDatabase(otherDb.databaseName, nextTbl || undefined, undefined, false);
-      this.showBanner(
-        'info',
-        `Disconnected "${cleanDb}" and connected to "${otherDb.databaseName}".`
-      );
-    } else {
-      this.showBanner(
-        'info',
-        `At least one database tab must remain connected.`
-      );
-    }
+    // No active connection tabs remaining -> blank screen with "No Active Connection"
+    this.setNoActiveConnectionState();
+  }
+
+  private setNoActiveConnectionState(): void {
+    this.databaseTabs.set([]);
+    this.activeDatabaseTabId.set('');
+    this.activeDatabaseName.set('');
+    this.activeTableName.set('');
+    this.workspaceName.set('');
+    this.workspaceNameControl.setValue('');
+    this.tables.set([]);
+    this.columns.set([]);
+    this.rows.set([]);
+    this.dbTotalRows.set(0);
+    this.dbFilteredTotalRows.set(0);
+    this.dbHasMoreRows.set(false);
+    this.activeCell.set(null);
+    this.editingCell.set(null);
+    this.selectedRowIds.set(new Set());
+    this.selectedColumnId.set(null);
+    this.cellValidationErrors.set({});
+    this.pendingUnsavedRowIds.set(new Set());
+    this.pendingUnsavedColIds.set(new Set());
   }
 
   /**
@@ -2542,9 +2933,11 @@ export class App implements OnInit, OnDestroy {
     if (this.editingCell()) {
       this.commitInlineEdit();
     }
+    this.flushAllDirtyRowsAutoSave();
     this.activeDatabaseTabId.set(tab.tabId);
     if (tab.databaseName) {
-      this.switchDatabase(tab.databaseName, tab.activeTableName || undefined, undefined, false);
+      const openTbl = this.getLastUsedTableForDatabase(tab.databaseName);
+      this.switchDatabase(tab.databaseName, openTbl || undefined, undefined, false);
     }
   }
 
@@ -2555,10 +2948,7 @@ export class App implements OnInit, OnDestroy {
     event?.stopPropagation();
     const cleanDb = (databaseName || '').trim();
     if (!cleanDb) return;
-    const dbObj = this.databases().find(
-      (d) => d.databaseName.toLowerCase() === cleanDb.toLowerCase()
-    );
-    const defaultTbl = dbObj?.activeTableName || dbObj?.tables?.[0]?.tableName || '';
+    const defaultTbl = this.getLastUsedTableForDatabase(cleanDb);
     this.databaseTabs.update((tabs) =>
       tabs.map((t) =>
         t.tabId === tabId
@@ -2572,32 +2962,23 @@ export class App implements OnInit, OnDestroy {
 
   /**
    * Closes/disconnects a Database Tab from the top tab bar.
+   * Even when there is only 1 tab, allows closing it and leaves the table screen blank with "No Active Connection".
    */
   public closeDatabaseTab(tabId: string, event?: Event): void {
     event?.stopPropagation();
     this.closeAllMenus();
+    if (this.editingCell()) {
+      this.commitInlineEdit();
+    }
+    this.flushAllDirtyRowsAutoSave();
+
     const currentTabs = this.databaseTabs();
     const targetTab = currentTabs.find((t) => t.tabId === tabId);
     if (!targetTab) return;
 
     const remaining = currentTabs.filter((t) => t.tabId !== tabId);
     if (remaining.length === 0) {
-      const otherDb = this.databases().find(
-        (d) => d.databaseName.toLowerCase() !== targetTab.databaseName.toLowerCase()
-      );
-      if (otherDb) {
-        const nextTabId = `db_tab_${Date.now()}`;
-        const nextTbl = otherDb.activeTableName || otherDb.tables?.[0]?.tableName || '';
-        this.databaseTabs.set([
-          {
-            tabId: nextTabId,
-            databaseName: otherDb.databaseName,
-            activeTableName: nextTbl,
-          },
-        ]);
-        this.activeDatabaseTabId.set(nextTabId);
-        this.switchDatabase(otherDb.databaseName, nextTbl || undefined, undefined, false);
-      }
+      this.setNoActiveConnectionState();
       return;
     }
 
@@ -2606,7 +2987,8 @@ export class App implements OnInit, OnDestroy {
       const nextTab = remaining[remaining.length - 1];
       this.activeDatabaseTabId.set(nextTab.tabId);
       if (nextTab.databaseName) {
-        this.switchDatabase(nextTab.databaseName, nextTab.activeTableName || undefined, undefined, false);
+        const openTbl = this.getLastUsedTableForDatabase(nextTab.databaseName);
+        this.switchDatabase(nextTab.databaseName, openTbl || undefined, undefined, false);
       }
     }
   }
@@ -2623,14 +3005,31 @@ export class App implements OnInit, OnDestroy {
     if (this.editingCell()) {
       this.commitInlineEdit();
     }
+    this.flushAllDirtyRowsAutoSave();
     this.closeAllMenus();
 
+    if (requestedTableName) {
+      this.openTableTab(cleanDb, requestedTableName);
+    }
+    const resolvedRequestedTable =
+      requestedTableName || this.getLastUsedTableForDatabase(cleanDb) || '';
+
     if (ensureTab) {
-      this.ensureDatabaseTabOpenedAndActive(cleanDb, requestedTableName || '', true);
+      this.ensureDatabaseTabOpenedAndActive(cleanDb, resolvedRequestedTable, true);
     }
 
     this.activeDatabaseName.set(cleanDb);
     this.syncTablesSignalForActiveDatabase(this.databases(), cleanDb);
+    if (resolvedRequestedTable) {
+      this.recordTableUsed(cleanDb, resolvedRequestedTable);
+    } else {
+      this.activeTableName.set('');
+      this.columns.set([]);
+      this.rows.set([]);
+      this.dbTotalRows.set(0);
+      this.dbFilteredTotalRows.set(0);
+      this.dbHasMoreRows.set(false);
+    }
     this.selectedRowIds.set(new Set());
     this.selectedColumnId.set(null);
     this.activeCell.set(null);
@@ -2643,7 +3042,7 @@ export class App implements OnInit, OnDestroy {
     this.columnHeaderSearches.set({});
     this.globalSearchQuery.set('');
     this.searchInputControl.setValue('');
-    this.fetchWorkspaceFromServer(false, requestedTableName, cleanDb);
+    this.fetchWorkspaceFromServer(false, resolvedRequestedTable || undefined, cleanDb);
   }
 
   public deleteDatabase(databaseName: string, event?: Event): void {
@@ -2742,9 +3141,484 @@ export class App implements OnInit, OnDestroy {
   // MULTI-TABLE ENGINE: CREATE NEW TABLE & EXCEL SHEET TABS FOOTER BAR
   // =========================================================================
 
+  private buildBlankNewTableTopDraft(): NewTableColumnDraft {
+    return {
+      id: '__top_draft__',
+      name: '',
+      colType: 'text',
+      isNullable: true,
+      columnValue: '',
+      formula: '',
+      optionsCsv: '',
+      lookupTableName: '',
+      isPrimaryKey: false,
+      isIdentity: false,
+    };
+  }
+
+  public getAvailableLookupTables(
+    databaseName?: string,
+    includeCurrentTableName?: string
+  ): DbTableSummary[] {
+    const cleanDb = (databaseName || this.activeDatabaseName() || 'GridPulse_DB').trim();
+    const dbObj = this.databases().find(
+      (d) => d.databaseName.toLowerCase() === cleanDb.toLowerCase()
+    );
+    const baseTables = [...(dbObj?.tables || this.tables() || [])];
+    const extraTbl = (includeCurrentTableName || '').trim();
+    if (
+      extraTbl &&
+      !baseTables.some((t) => t.tableName.toLowerCase() === extraTbl.toLowerCase())
+    ) {
+      const draftCols = this.newTableColumns().filter((c) => c.name.trim().length > 0);
+      baseTables.unshift({
+        tableName: extraTbl,
+        rowCount: 0,
+        columnCount: draftCols.length + 1,
+        identitySeed: 1,
+        identityIncrement: 1,
+        nextIdentityValue: 1,
+        createdAt: '',
+        updatedAt: '',
+      });
+    }
+    return baseTables;
+  }
+
+  public getAvailableLookupTablesForSchemaModal(): DbTableSummary[] {
+    const dbName = this.targetColumnSchemaDbName() || this.activeDatabaseName();
+    const tblName = this.targetColumnSchemaTableName() || this.activeTableName();
+    return this.getAvailableLookupTables(dbName, tblName);
+  }
+
+  public getAvailableLookupTablesForCreateTableModal(): DbTableSummary[] {
+    const dbName =
+      this.newTableForm.controls.databaseName.value || this.activeDatabaseName();
+    const currentTbl =
+      this.newTableForm.controls.tableName.value ||
+      this.editingTableOriginalName() ||
+      this.activeTableName();
+    return this.getAvailableLookupTables(dbName, currentTbl);
+  }
+
+  public getTargetLookupTableColumns(
+    databaseName: string,
+    targetTableName: string,
+    excludeDraftIndex = -999
+  ): GridColumn[] {
+    const cleanDb = (databaseName || this.activeDatabaseName() || 'GridPulse_DB').trim();
+    const cleanTbl = (targetTableName || '').trim();
+    if (!cleanTbl) return [];
+
+    // Check if the target table is the table currently being created/edited in the Create/Edit Table modal
+    const modalTblName = (this.newTableForm.controls.tableName.value || '').trim();
+    const modalOrigName = (this.editingTableOriginalName() || '').trim();
+    if (
+      this.activeModal() === 'create_table' &&
+      (cleanTbl.toLowerCase() === modalTblName.toLowerCase() ||
+        (modalOrigName && cleanTbl.toLowerCase() === modalOrigName.toLowerCase()))
+    ) {
+      const synthCols: GridColumn[] = [
+        {
+          id: 'ID',
+          name: 'ID',
+          colType: 'number',
+          orderIndex: 0,
+          width: 90,
+          required: true,
+          isNullable: false,
+          isPrimaryKey: true,
+          isIdentity: true,
+          formula: '',
+          optionsCsv: '',
+        },
+      ];
+      const topName = (this.newTableTopDraft().name || '').trim();
+      if (excludeDraftIndex !== -1 && topName && topName.toLowerCase() !== 'id') {
+        synthCols.push({
+          id: topName,
+          name: topName,
+          colType: this.newTableTopDraft().colType,
+          orderIndex: synthCols.length,
+          width: 150,
+          required: !this.newTableTopDraft().isNullable,
+          isNullable: this.newTableTopDraft().isNullable,
+          defaultValue: this.newTableTopDraft().columnValue,
+          formula: this.newTableTopDraft().formula || '',
+          optionsCsv: this.newTableTopDraft().optionsCsv || '',
+          lookupTableName: this.newTableTopDraft().lookupTableName || '',
+        });
+      }
+      this.newTableColumns().forEach((draft, idx) => {
+        if (idx === excludeDraftIndex) return;
+        const dName = (draft.name || '').trim();
+        if (
+          dName &&
+          dName.toLowerCase() !== 'id' &&
+          !synthCols.some((c) => c.name.toLowerCase() === dName.toLowerCase())
+        ) {
+          synthCols.push({
+            id: dName,
+            name: dName,
+            colType: draft.colType,
+            orderIndex: synthCols.length,
+            width: 150,
+            required: !draft.isNullable,
+            isNullable: draft.isNullable,
+            defaultValue: draft.columnValue,
+            formula: draft.formula,
+            optionsCsv: draft.optionsCsv,
+            lookupTableName: draft.lookupTableName,
+          });
+        }
+      });
+      return synthCols;
+    }
+
+    const dbObj = this.databases().find(
+      (d) => d.databaseName.toLowerCase() === cleanDb.toLowerCase()
+    );
+    const tblObj = dbObj?.tables?.find(
+      (t) => t.tableName.toLowerCase() === cleanTbl.toLowerCase()
+    );
+    if (tblObj?.columns && tblObj.columns.length > 0) {
+      return [...tblObj.columns].sort((a, b) => a.orderIndex - b.orderIndex);
+    }
+    if (
+      cleanDb.toLowerCase() === this.activeDatabaseName().toLowerCase() &&
+      cleanTbl.toLowerCase() === this.activeTableName().toLowerCase()
+    ) {
+      return this.sortedColumns();
+    }
+    return [];
+  }
+
+  public getTargetLookupTableColumnNames(
+    databaseName: string,
+    targetTableName: string,
+    excludeDraftIndex = -999
+  ): string[] {
+    const cols = this.getTargetLookupTableColumns(
+      databaseName,
+      targetTableName,
+      excludeDraftIndex
+    );
+    const names: string[] = ['ID'];
+    for (const c of cols) {
+      const clean = (c.name || '').trim();
+      if (clean && !names.some((n) => n.toLowerCase() === clean.toLowerCase())) {
+        names.push(clean);
+      }
+    }
+    return names;
+  }
+
+  public getSchemaLookupTargetColumns(): string[] {
+    const dbName = this.targetColumnSchemaDbName() || this.activeDatabaseName();
+    const linkedTbl = (this.columnSchemaForm.controls.lookupTableName.value || '').trim();
+    if (!linkedTbl) return ['ID'];
+    const editingId = (this.editingSchemaColId() || '').trim().toLowerCase();
+    const targetTbl = (this.targetColumnSchemaTableName() || this.activeTableName()).trim();
+    const isSelfTable = linkedTbl.toLowerCase() === targetTbl.toLowerCase();
+    return this.getTargetLookupTableColumnNames(dbName, linkedTbl).filter(
+      (n) => !isSelfTable || n.toLowerCase() !== editingId
+    );
+  }
+
+  public isSchemaLookupFieldSelected(fieldName: string): boolean {
+    if (fieldName.trim().toLowerCase() === 'id') return true;
+    const rawTemplate = this.columnSchemaForm.controls.formula.value || '';
+    const tokens = extractLookupTemplateTokens(rawTemplate);
+    return tokens.some((t) => t.toLowerCase() === fieldName.trim().toLowerCase());
+  }
+
+  public toggleSchemaLookupFieldChip(fieldName: string): void {
+    const cleanField = fieldName.trim();
+    if (!cleanField || cleanField.toLowerCase() === 'id') return;
+    const dbName = this.targetColumnSchemaDbName() || this.activeDatabaseName();
+    const linkedTbl = (this.columnSchemaForm.controls.lookupTableName.value || '').trim();
+    const targetCols = this.getTargetLookupTableColumns(dbName, linkedTbl);
+    const currentRaw = this.columnSchemaForm.controls.formula.value || '';
+    const { selectedColumns } = resolveLookupTemplateAndColumns(currentRaw, targetCols);
+    const currentNames = selectedColumns
+      .map((c) => c.name)
+      .filter((n) => n.toLowerCase() !== 'id');
+
+    const exists = currentNames.some((n) => n.toLowerCase() === cleanField.toLowerCase());
+    let nextNames: string[];
+    if (exists) {
+      nextNames = currentNames.filter((n) => n.toLowerCase() !== cleanField.toLowerCase());
+    } else {
+      nextNames = [...currentNames, cleanField];
+    }
+    const nextTemplate = formatLookupTemplateFromFieldNames(['ID', ...nextNames]);
+    this.columnSchemaForm.controls.formula.setValue(nextTemplate);
+    this.onSchemaLookupTemplateInput();
+  }
+
+  public onSchemaLookupTemplateInput(): void {
+    const linkedTbl = (this.columnSchemaForm.controls.lookupTableName.value || '').trim();
+    if (!linkedTbl) return;
+    const dbName = this.targetColumnSchemaDbName() || this.activeDatabaseName();
+    const rawTemplate = this.columnSchemaForm.controls.formula.value || '';
+    const previewJson = this.buildClientLinkedLookupPreviewJson(
+      dbName,
+      linkedTbl,
+      rawTemplate
+    );
+    if (previewJson) {
+      this.columnSchemaForm.controls.optionsCsv.setValue(previewJson);
+    }
+    const items = this.getSchemaModalLookupItems();
+    if (items.length > 0) {
+      const currentDefault = (this.columnSchemaForm.controls.defaultValue.value || '').trim();
+      const matched = currentDefault ? matchLookupItemFromRaw(items, currentDefault) : undefined;
+      if (matched) {
+        this.columnSchemaForm.controls.defaultValue.setValue(matched.json);
+      } else {
+        const activeItem = items.find((i) => i.isActive !== false) || items[0];
+        this.columnSchemaForm.controls.defaultValue.setValue(activeItem.json);
+      }
+    }
+  }
+
+  public getDraftLookupTargetColumns(
+    lookupTableName: string,
+    excludeDraftIndex: number
+  ): string[] {
+    const dbName =
+      this.newTableForm.controls.databaseName.value || this.activeDatabaseName();
+    return this.getTargetLookupTableColumnNames(
+      dbName,
+      lookupTableName,
+      excludeDraftIndex
+    );
+  }
+
+  public isDraftLookupFieldSelected(
+    draft: NewTableColumnDraft,
+    fieldName: string,
+    excludeDraftIndex = -999
+  ): boolean {
+    if (fieldName.trim().toLowerCase() === 'id') return true;
+    const dbName =
+      this.newTableForm.controls.databaseName.value || this.activeDatabaseName();
+    const targetCols = this.getTargetLookupTableColumns(
+      dbName,
+      draft.lookupTableName || '',
+      excludeDraftIndex
+    );
+    const { selectedColumns } = resolveLookupTemplateAndColumns(
+      draft.formula || '',
+      targetCols
+    );
+    return selectedColumns.some(
+      (c) => c.name.trim().toLowerCase() === fieldName.trim().toLowerCase()
+    );
+  }
+
+  public toggleTopDraftLookupFieldChip(fieldName: string): void {
+    const cleanField = fieldName.trim();
+    if (!cleanField || cleanField.toLowerCase() === 'id') return;
+    const top = this.newTableTopDraft();
+    const dbName =
+      this.newTableForm.controls.databaseName.value || this.activeDatabaseName();
+    const targetCols = this.getTargetLookupTableColumns(
+      dbName,
+      top.lookupTableName || '',
+      -1
+    );
+    const { selectedColumns } = resolveLookupTemplateAndColumns(
+      top.formula || '',
+      targetCols
+    );
+    const currentNames = selectedColumns
+      .map((c) => c.name)
+      .filter((n) => n.toLowerCase() !== 'id');
+    const exists = currentNames.some((n) => n.toLowerCase() === cleanField.toLowerCase());
+    const nextNames = exists
+      ? currentNames.filter((n) => n.toLowerCase() !== cleanField.toLowerCase())
+      : [...currentNames, cleanField];
+    const nextTemplate = formatLookupTemplateFromFieldNames(['ID', ...nextNames]);
+    this.updateTopNewTableColumnDraft({ formula: nextTemplate });
+  }
+
+  public toggleRowDraftLookupFieldChip(index: number, fieldName: string): void {
+    const cleanField = fieldName.trim();
+    if (!cleanField || cleanField.toLowerCase() === 'id') return;
+    const draft = this.newTableColumns()[index];
+    if (!draft) return;
+    const dbName =
+      this.newTableForm.controls.databaseName.value || this.activeDatabaseName();
+    const targetCols = this.getTargetLookupTableColumns(
+      dbName,
+      draft.lookupTableName || '',
+      index
+    );
+    const { selectedColumns } = resolveLookupTemplateAndColumns(
+      draft.formula || '',
+      targetCols
+    );
+    const currentNames = selectedColumns
+      .map((c) => c.name)
+      .filter((n) => n.toLowerCase() !== 'id');
+    const exists = currentNames.some((n) => n.toLowerCase() === cleanField.toLowerCase());
+    const nextNames = exists
+      ? currentNames.filter((n) => n.toLowerCase() !== cleanField.toLowerCase())
+      : [...currentNames, cleanField];
+    const nextTemplate = formatLookupTemplateFromFieldNames(['ID', ...nextNames]);
+    this.updateNewTableColumnDraft(index, { formula: nextTemplate });
+  }
+
+  public buildClientLinkedLookupPreviewJson(
+    databaseName: string,
+    targetTableName: string,
+    rawTemplate?: string,
+    excludeDraftIndex = -999
+  ): string {
+    const cleanDb = (databaseName || this.activeDatabaseName() || 'GridPulse_DB').trim();
+    const cleanTbl = (targetTableName || '').trim();
+    if (!cleanTbl) return '';
+
+    const cols = this.getTargetLookupTableColumns(
+      cleanDb,
+      cleanTbl,
+      excludeDraftIndex
+    );
+    const { selectedColumns } = resolveLookupTemplateAndColumns(rawTemplate, cols);
+    const colsToProject = selectedColumns.length > 0 ? selectedColumns : cols;
+    const pkCol = cols.find((c) => c.isPrimaryKey || c.isIdentity || c.name.toLowerCase() === 'id');
+
+    // If the target table is currently loaded on screen, build directly from its live rows
+    if (
+      cleanDb.toLowerCase() === this.activeDatabaseName().toLowerCase() &&
+      cleanTbl.toLowerCase() === this.activeTableName().toLowerCase() &&
+      this.rows().length > 0
+    ) {
+      const records = this.rows().map((row, idx) => {
+        const obj: Record<string, string | number | boolean> = {};
+        const rawPk = pkCol
+          ? row.cells[pkCol.name] !== undefined
+            ? row.cells[pkCol.name]
+            : row.cells[pkCol.id]
+          : row.cells['ID'];
+        const numericId = Number(rawPk);
+        obj['ID'] = Number.isFinite(numericId) && numericId > 0 ? numericId : idx + 1;
+
+        for (const c of colsToProject) {
+          if (c.isPrimaryKey || c.isIdentity || c.name.toLowerCase() === 'id') continue;
+          if (c.colType === 'formula') {
+            obj[c.name] = evaluateFormula(c.formula, row, cols);
+          } else {
+            const raw = row.cells[c.name] !== undefined ? row.cells[c.name] : row.cells[c.id];
+            obj[c.name] = raw !== undefined && raw !== null ? raw : '';
+          }
+        }
+        return obj;
+      });
+      return JSON.stringify(records);
+    }
+
+    // Check if any existing column in the database already has a live synced optionsCsv for this lookupTableName
+    const dbObj = this.databases().find(
+      (d) => d.databaseName.toLowerCase() === cleanDb.toLowerCase()
+    );
+    if (dbObj?.tables) {
+      for (const t of dbObj.tables) {
+        for (const c of t.columns || []) {
+          if (
+            c.colType === 'lookup' &&
+            c.lookupTableName &&
+            c.lookupTableName.toLowerCase() === cleanTbl.toLowerCase() &&
+            c.optionsCsv &&
+            c.optionsCsv.trim().startsWith('[')
+          ) {
+            try {
+              const parsed = JSON.parse(c.optionsCsv.trim());
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                const projected = parsed.map((entry: Record<string, unknown>, idx: number) => {
+                  const obj: Record<string, string | number | boolean> = {
+                    ID: Number(entry['ID'] ?? entry['id'] ?? idx + 1),
+                  };
+                  for (const selCol of colsToProject) {
+                    if (
+                      selCol.isPrimaryKey ||
+                      selCol.isIdentity ||
+                      selCol.name.toLowerCase() === 'id'
+                    ) {
+                      continue;
+                    }
+                    const val = entry[selCol.name];
+                    obj[selCol.name] =
+                      typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean'
+                        ? val
+                        : selCol.defaultValue || `${cleanTbl}_${idx + 1}`;
+                  }
+                  return obj;
+                });
+                return JSON.stringify(projected);
+              }
+            } catch {
+              // ignore parse error
+            }
+          }
+        }
+      }
+    }
+
+    // Build schema-accurate preview records from the target table's selected columns (server will populate full table rows on save)
+    if (colsToProject.length > 0) {
+      const sampleRow: Record<string, string | number | boolean> = { ID: 1 };
+      for (const c of colsToProject) {
+        if (c.isPrimaryKey || c.isIdentity || c.name.toLowerCase() === 'id') {
+          continue;
+        } else if (c.colType === 'number' || c.colType === 'formula') {
+          sampleRow[c.name] = Number(c.defaultValue) || 1;
+        } else if (c.colType === 'checkbox') {
+          sampleRow[c.name] = true;
+        } else {
+          sampleRow[c.name] = c.defaultValue || `${cleanTbl}_1`;
+        }
+      }
+      return JSON.stringify([sampleRow]);
+    }
+
+    return '[{"ID":1,"Name":"Record 1"}]';
+  }
+
+  public getDraftLookupItems(draft: NewTableColumnDraft): LookupItem[] {
+    return getLookupOptions({
+      id: draft.id,
+      name: draft.name || 'Lookup',
+      colType: 'lookup',
+      orderIndex: 0,
+      width: 160,
+      required: !draft.isNullable,
+      formula: draft.formula || '',
+      optionsCsv: draft.optionsCsv || '',
+      lookupTableName: draft.lookupTableName || '',
+    });
+  }
+
+  public getSchemaModalLookupItems(): LookupItem[] {
+    const raw = this.columnSchemaForm.getRawValue();
+    return getLookupOptions({
+      id: 'schema_preview',
+      name: raw.name || 'Lookup',
+      colType: 'lookup',
+      orderIndex: 0,
+      width: 160,
+      required: Boolean(raw.required),
+      formula: raw.formula || '',
+      optionsCsv: raw.optionsCsv || '',
+      lookupTableName: raw.lookupTableName || '',
+    });
+  }
+
   public openCreateTableModal(event?: Event, targetDatabaseName?: string): void {
     event?.stopPropagation();
     this.closeAllMenus();
+    this.editingTableOriginalName.set('');
     this.createTableErrorMessage.set('');
     const dbName = targetDatabaseName || this.activeDatabaseName() || 'GridPulse_DB';
     const targetDbObj = this.databases().find(
@@ -2758,30 +3632,266 @@ export class App implements OnInit, OnDestroy {
       includeDefaultPk: true,
       initialRowCount: 0,
     });
+    this.newTableTopDraft.set(this.buildBlankNewTableTopDraft());
     this.newTableColumns.set([]);
     this.activeModal.set('create_table');
   }
 
+  public openEditTableModal(
+    databaseName: string,
+    tableName: string,
+    event?: Event
+  ): void {
+    event?.stopPropagation();
+    this.closeAllMenus();
+    const cleanDb = (databaseName || this.activeDatabaseName() || 'GridPulse_DB').trim();
+    const cleanTbl = (tableName || this.activeTableName()).trim();
+    if (!cleanTbl) return;
+
+    this.editingTableOriginalName.set(cleanTbl);
+    this.createTableErrorMessage.set('');
+    this.newTableForm.reset({
+      databaseName: cleanDb,
+      tableName: cleanTbl,
+      pkColumnName: 'ID',
+      includeDefaultPk: true,
+      initialRowCount: 0,
+    });
+    this.newTableTopDraft.set(this.buildBlankNewTableTopDraft());
+
+    const dbObj = this.databases().find(
+      (d) => d.databaseName.toLowerCase() === cleanDb.toLowerCase()
+    );
+    const tblObj = dbObj?.tables?.find(
+      (t) => t.tableName.toLowerCase() === cleanTbl.toLowerCase()
+    );
+    const sourceCols = tblObj
+      ? this.getColumnsForManageTable(cleanDb, tblObj)
+      : cleanDb.toLowerCase() === this.activeDatabaseName().toLowerCase() &&
+        cleanTbl.toLowerCase() === this.activeTableName().toLowerCase()
+      ? this.sortedColumns()
+      : [];
+
+    const existingDrafts: NewTableColumnDraft[] = sourceCols
+      .filter((c) => !this.isProtectedIdColumn(c))
+      .map((c) => {
+        let initialFormula = c.formula || '';
+        if (c.colType === 'lookup' && c.lookupTableName) {
+          const targetCols = this.getTargetLookupTableColumns(cleanDb, c.lookupTableName);
+          initialFormula = resolveLookupTemplateAndColumns(c.formula, targetCols).normalizedTemplate;
+        }
+        return {
+          id: c.name,
+          name: c.name,
+          colType: c.colType,
+          isNullable:
+            c.colType === 'formula'
+              ? true
+              : c.isNullable !== undefined
+              ? Boolean(c.isNullable)
+              : !c.required,
+          columnValue: c.defaultValue !== undefined ? String(c.defaultValue) : '',
+          formula: initialFormula,
+          optionsCsv: c.optionsCsv || '',
+          lookupTableName: c.lookupTableName || '',
+          isPrimaryKey: false,
+          isIdentity: false,
+        };
+      });
+
+    this.newTableColumns.set(existingDrafts);
+    this.activeModal.set('create_table');
+  }
+
   public clearAllNewTableDraftColumns(): void {
+    this.newTableTopDraft.set(this.buildBlankNewTableTopDraft());
     this.newTableColumns.set([]);
   }
 
-  public addNewTableColumnDraft(): void {
-    const idx = this.newTableColumns().length + 1;
+  public updateTopNewTableColumnDraft(patch: Partial<NewTableColumnDraft>): void {
+    const dbName =
+      this.newTableForm.controls.databaseName.value || this.activeDatabaseName();
+    this.newTableTopDraft.update((item) => {
+      const updated = { ...item, ...patch };
+      if (
+        patch.colType === 'lookup' ||
+        (updated.colType === 'lookup' &&
+          (patch.lookupTableName !== undefined || patch.formula !== undefined))
+      ) {
+        if (!updated.lookupTableName && patch.lookupTableName === undefined) {
+          const avail = this.getAvailableLookupTablesForCreateTableModal();
+          const preferred =
+            avail.find((t) => t.tableName.toLowerCase().includes('lookup')) || avail[0];
+          if (preferred) {
+            updated.lookupTableName = preferred.tableName;
+          }
+        }
+        if (updated.lookupTableName) {
+          const targetCols = this.getTargetLookupTableColumns(
+            dbName,
+            updated.lookupTableName,
+            -1
+          );
+          const { normalizedTemplate } = resolveLookupTemplateAndColumns(
+            patch.lookupTableName !== undefined && patch.formula === undefined
+              ? ''
+              : updated.formula,
+            targetCols
+          );
+          updated.formula = normalizedTemplate;
+          updated.optionsCsv = this.buildClientLinkedLookupPreviewJson(
+            dbName,
+            updated.lookupTableName,
+            updated.formula,
+            -1
+          );
+          const items = this.getDraftLookupItems(updated);
+          if (
+            items.length > 0 &&
+            (!updated.columnValue ||
+              patch.lookupTableName !== undefined ||
+              patch.formula !== undefined)
+          ) {
+            const matched = updated.columnValue
+              ? matchLookupItemFromRaw(items, updated.columnValue)
+              : undefined;
+            const activeItem =
+              matched || items.find((it) => it.isActive !== false) || items[0];
+            updated.columnValue = activeItem.json;
+          }
+        } else if (
+          !updated.optionsCsv ||
+          updated.optionsCsv === 'Option A, Option B' ||
+          updated.optionsCsv === 'High, Medium, Low'
+        ) {
+          if (!updated.formula || !updated.formula.includes('[')) {
+            updated.formula = '{[ID], [Name]}';
+          }
+          updated.optionsCsv = '[{"ID":1,"Name":"car"},{"ID":2,"Name":"bus"},{"ID":3,"Name":"truck"}]';
+        }
+      } else if (patch.colType === 'dropdown') {
+        updated.lookupTableName = '';
+        if (!updated.optionsCsv || updated.optionsCsv.trim().startsWith('[')) {
+          updated.optionsCsv = 'High, Medium, Low';
+        }
+      } else if (patch.colType === 'formula') {
+        updated.lookupTableName = '';
+        updated.isNullable = true;
+        if (!updated.formula || updated.formula.trim().startsWith('{')) {
+          const numCols = this.newTableColumns().filter(
+            (c) => c.colType === 'number' && c.name.trim().length > 0
+          );
+          if (numCols.length >= 2) {
+            updated.formula = `=[${numCols[0].name.trim()}] * [${numCols[1].name.trim()}]`;
+          } else if (numCols.length === 1) {
+            updated.formula = `=[${numCols[0].name.trim()}] * 2`;
+          } else {
+            updated.formula = '=[ID] * 10';
+          }
+        }
+      } else if (patch.colType) {
+        updated.lookupTableName = '';
+      }
+      return updated;
+    });
+  }
+
+  public appendColumnRefToTopNewTableFormula(refColName: string): void {
+    const top = this.newTableTopDraft();
+    const current = (top.formula || '').trim();
+    const prefix = current.startsWith('=') ? current : `=${current}`;
+    this.updateTopNewTableColumnDraft({
+      formula: `${prefix} [${refColName}]`.trim(),
+    });
+  }
+
+  public commitTopNewTableColumnDraft(focusTopNameAfter = true): boolean {
+    const top = this.newTableTopDraft();
+    const cleanName = top.name.trim();
+    if (!cleanName) {
+      this.createTableErrorMessage.set('Please enter a Field Name in the top row to add a field.');
+      if (this.isBrowser) {
+        setTimeout(() => {
+          document.getElementById('create-tbl-top-name')?.focus();
+        }, 10);
+      }
+      return false;
+    }
+    if (cleanName.toLowerCase() === 'id') {
+      this.createTableErrorMessage.set('Field name "ID" is reserved for the Primary Key.');
+      return false;
+    }
+    if (
+      this.newTableColumns().some(
+        (c) => c.name.trim().toLowerCase() === cleanName.toLowerCase()
+      )
+    ) {
+      this.createTableErrorMessage.set(`A field named "${cleanName}" is already in the table list.`);
+      return false;
+    }
+    if (top.colType === 'formula' && !top.formula.trim()) {
+      this.createTableErrorMessage.set(`Please enter a Formula Expression for "${cleanName}".`);
+      return false;
+    }
+    if (top.colType === 'dropdown' && !top.optionsCsv.trim()) {
+      this.createTableErrorMessage.set(`Please enter Dropdown options for "${cleanName}".`);
+      return false;
+    }
+    if (
+      top.colType === 'lookup' &&
+      !(top.lookupTableName || '').trim() &&
+      !top.optionsCsv.trim()
+    ) {
+      this.createTableErrorMessage.set(
+        `Please select a Foreign Key Linked Table or enter Lookup JSON for "${cleanName}".`
+      );
+      return false;
+    }
+
+    this.createTableErrorMessage.set('');
+    const newRow: NewTableColumnDraft = {
+      ...top,
+      id: `draft_col_${Date.now()}_${this.newTableColumns().length + 1}`,
+      name: cleanName,
+    };
+    this.newTableColumns.update((list) => [...list, newRow]);
+    this.newTableTopDraft.set(this.buildBlankNewTableTopDraft());
+
+    if (focusTopNameAfter && this.isBrowser) {
+      setTimeout(() => {
+        document.getElementById('create-tbl-top-name')?.focus();
+      }, 20);
+    }
+    return true;
+  }
+
+  public addNewTableColumnDraft(focusFirstCell = false): void {
+    if (this.newTableTopDraft().name.trim().length > 0) {
+      this.commitTopNewTableColumnDraft(focusFirstCell);
+      return;
+    }
+    const idx = this.newTableColumns().length;
     this.newTableColumns.update((list) => [
       ...list,
       {
-        id: `draft_col_${Date.now()}_${idx}`,
-        name: `Column_${idx}`,
+        id: `draft_col_${Date.now()}_${idx + 1}`,
+        name: '',
         colType: 'text',
-        isNullable: false,
+        isNullable: true,
         columnValue: '',
         formula: '',
-        optionsCsv: 'Option A, Option B',
+        optionsCsv: '',
+        lookupTableName: '',
         isPrimaryKey: false,
         isIdentity: false,
       },
     ]);
+    if (focusFirstCell && this.isBrowser) {
+      setTimeout(() => {
+        const el = document.getElementById(`create-tbl-name-${idx}`) as HTMLElement | null;
+        el?.focus();
+      }, 20);
+    }
   }
 
   public removeNewTableColumnDraft(index: number): void {
@@ -2792,23 +3902,111 @@ export class App implements OnInit, OnDestroy {
     index: number,
     patch: Partial<NewTableColumnDraft>
   ): void {
+    const dbName =
+      this.newTableForm.controls.databaseName.value || this.activeDatabaseName();
     this.newTableColumns.update((list) =>
       list.map((item, i) => {
         if (i !== index) return item;
         const updated = { ...item, ...patch };
-        if (patch.colType === 'formula' && !updated.formula) {
-          const numCols = list.filter((c, cIdx) => cIdx !== index && c.colType === 'number');
-          if (numCols.length >= 2) {
-            updated.formula = `=[${numCols[0].name}] * [${numCols[1].name}]`;
-          } else if (numCols.length === 1) {
-            updated.formula = `=[${numCols[0].name}] * 2`;
-          } else {
-            updated.formula = '=[ID] * 10';
+        if (
+          patch.colType === 'lookup' ||
+          (updated.colType === 'lookup' &&
+            (patch.lookupTableName !== undefined || patch.formula !== undefined))
+        ) {
+          if (!updated.lookupTableName && patch.lookupTableName === undefined) {
+            const avail = this.getAvailableLookupTablesForCreateTableModal();
+            const preferred =
+              avail.find((t) => t.tableName.toLowerCase().includes('lookup')) || avail[0];
+            if (preferred) {
+              updated.lookupTableName = preferred.tableName;
+            }
           }
+          if (updated.lookupTableName) {
+            const targetCols = this.getTargetLookupTableColumns(
+              dbName,
+              updated.lookupTableName,
+              index
+            );
+            const { normalizedTemplate } = resolveLookupTemplateAndColumns(
+              patch.lookupTableName !== undefined && patch.formula === undefined
+                ? ''
+                : updated.formula,
+              targetCols
+            );
+            updated.formula = normalizedTemplate;
+            updated.optionsCsv = this.buildClientLinkedLookupPreviewJson(
+              dbName,
+              updated.lookupTableName,
+              updated.formula,
+              index
+            );
+            const items = this.getDraftLookupItems(updated);
+            if (
+              items.length > 0 &&
+              (!updated.columnValue ||
+                patch.lookupTableName !== undefined ||
+                patch.formula !== undefined)
+            ) {
+              const matched = updated.columnValue
+                ? matchLookupItemFromRaw(items, updated.columnValue)
+                : undefined;
+              const activeItem =
+                matched || items.find((it) => it.isActive !== false) || items[0];
+              updated.columnValue = activeItem.json;
+            }
+          } else if (
+            !updated.optionsCsv ||
+            updated.optionsCsv === 'Option A, Option B' ||
+            updated.optionsCsv === 'High, Medium, Low'
+          ) {
+            if (!updated.formula || !updated.formula.includes('[')) {
+              updated.formula = '{[ID], [Name]}';
+            }
+            updated.optionsCsv = '[{"ID":1,"Name":"car"},{"ID":2,"Name":"bus"},{"ID":3,"Name":"truck"}]';
+          }
+        } else if (patch.colType === 'dropdown') {
+          updated.lookupTableName = '';
+          if (!updated.optionsCsv || updated.optionsCsv.trim().startsWith('[')) {
+            updated.optionsCsv = 'High, Medium, Low';
+          }
+        } else if (patch.colType === 'formula') {
+          updated.lookupTableName = '';
+          updated.isNullable = true;
+          if (!updated.formula || updated.formula.trim().startsWith('{')) {
+            const numCols = list.filter(
+              (c, cIdx) => cIdx !== index && c.colType === 'number' && c.name.trim().length > 0
+            );
+            if (numCols.length >= 2) {
+              updated.formula = `=[${numCols[0].name.trim()}] * [${numCols[1].name.trim()}]`;
+            } else if (numCols.length === 1) {
+              updated.formula = `=[${numCols[0].name.trim()}] * 2`;
+            } else {
+              updated.formula = '=[ID] * 10';
+            }
+          }
+        } else if (patch.colType) {
+          updated.lookupTableName = '';
         }
         return updated;
       })
     );
+  }
+
+  public getNewTableFormulaReferences(excludeIndex: number): string[] {
+    const refs: string[] = ['ID'];
+    const topName = (this.newTableTopDraft().name || '').trim();
+    if (excludeIndex !== -1 && topName && topName.toLowerCase() !== 'id') {
+      refs.push(topName);
+    }
+    const drafts = this.newTableColumns();
+    for (let i = 0; i < drafts.length; i++) {
+      if (i === excludeIndex) continue;
+      const clean = (drafts[i].name || '').trim();
+      if (clean && clean.toLowerCase() !== 'id' && !refs.includes(clean)) {
+        refs.push(clean);
+      }
+    }
+    return refs;
   }
 
   public appendColumnRefToNewTableFormula(colIndex: number, refColName: string): void {
@@ -2821,19 +4019,322 @@ export class App implements OnInit, OnDestroy {
     });
   }
 
+  /**
+   * Handles keyboard navigation (Tab, Shift+Tab, ArrowUp, ArrowDown, Enter) inside the
+   * Create / Edit Table tabular field designer (including the Top "Add Field" row at rowIndex = -1).
+   */
+  public onCreateTableCellKeydown(
+    event: KeyboardEvent,
+    rowIndex: number,
+    colKey: 'name' | 'type' | 'options' | 'default' | 'null',
+    isLastCellInRow = false
+  ): void {
+    // Pressing Enter inside the Top "Add Field" row commits that new field into the list
+    if (rowIndex === -1 && event.key === 'Enter') {
+      event.preventDefault();
+      this.commitTopNewTableColumnDraft(true);
+      return;
+    }
+
+    // Pressing Tab on the last cell of the Top Row:
+    // If the user entered a field name in the Top Row, commit it and keep focus ready for next field
+    if (rowIndex === -1 && event.key === 'Tab' && !event.shiftKey && isLastCellInRow) {
+      if (this.newTableTopDraft().name.trim().length > 0) {
+        event.preventDefault();
+        this.commitTopNewTableColumnDraft(true);
+        return;
+      }
+      return;
+    }
+
+    // Pressing Tab on the last cell of the last existing row appends a new field row
+    if (rowIndex >= 0 && event.key === 'Tab' && !event.shiftKey && isLastCellInRow) {
+      if (rowIndex === this.newTableColumns().length - 1) {
+        event.preventDefault();
+        this.addNewTableColumnDraft(true);
+      }
+      return;
+    }
+
+    if (
+      (event.key === 'ArrowDown' || event.key === 'ArrowUp') &&
+      colKey !== 'type' &&
+      colKey !== 'null'
+    ) {
+      const targetRow = event.key === 'ArrowDown' ? rowIndex + 1 : rowIndex - 1;
+      if (targetRow === -1) {
+        event.preventDefault();
+        const topEl =
+          (document.getElementById(`create-tbl-top-${colKey}`) as HTMLElement | null) ||
+          (document.getElementById('create-tbl-top-name') as HTMLElement | null);
+        topEl?.focus();
+        return;
+      }
+      if (targetRow >= 0 && targetRow < this.newTableColumns().length) {
+        event.preventDefault();
+        const targetEl = document.getElementById(
+          `create-tbl-${colKey}-${targetRow}`
+        ) as HTMLElement | null;
+        if (targetEl) {
+          targetEl.focus();
+        } else {
+          const fallbackEl = document.getElementById(
+            `create-tbl-name-${targetRow}`
+          ) as HTMLElement | null;
+          fallbackEl?.focus();
+        }
+      }
+    }
+  }
+
   public submitCreateTableModal(): void {
     if (this.isCreatingTable()) return;
     this.createTableErrorMessage.set('');
     const formVal = this.newTableForm.getRawValue();
     const databaseName = (formVal.databaseName || this.activeDatabaseName()).trim();
     const tableName = formVal.tableName.trim();
+    const editingOriginalTbl = this.editingTableOriginalName().trim();
 
     if (!tableName) {
       this.createTableErrorMessage.set('Please enter a table name.');
       return;
     }
 
+    // Collect existing/added rows + include the Top "Add Field" row if the user typed a field name in it
+    const combinedDrafts: NewTableColumnDraft[] = [...this.newTableColumns()];
+    const topDraft = this.newTableTopDraft();
+    if (
+      topDraft.name.trim().length > 0 ||
+      topDraft.columnValue.trim().length > 0 ||
+      (topDraft.colType === 'formula' && topDraft.formula.trim().length > 0)
+    ) {
+      combinedDrafts.push({
+        ...topDraft,
+        id: `draft_col_top_${Date.now()}`,
+      });
+    }
+
+    const activeDrafts = combinedDrafts.filter(
+      (c) =>
+        c.name.trim().length > 0 ||
+        c.columnValue.trim().length > 0 ||
+        (c.colType === 'formula' && c.formula.trim().length > 0)
+    );
+
+    const seenNames = new Set<string>(['id']);
+    const payloadColumns: {
+      originalName?: string;
+      name: string;
+      colType: ColumnType;
+      isNullable: boolean;
+      defaultValue: string;
+      columnValue: string;
+      formula: string;
+      optionsCsv: string;
+      lookupTableName?: string;
+    }[] = [];
+
+    for (let i = 0; i < activeDrafts.length; i++) {
+      const draft = activeDrafts[i];
+      const cleanName = draft.name.trim();
+      if (!cleanName) {
+        this.createTableErrorMessage.set(
+          `Please enter a Field Name for row #${i + 1}, or remove the row.`
+        );
+        return;
+      }
+      const lowerName = cleanName.toLowerCase();
+      if (lowerName === 'id') {
+        this.createTableErrorMessage.set(
+          'Field name "ID" is reserved for the auto-generated Primary Key.'
+        );
+        return;
+      }
+      if (seenNames.has(lowerName)) {
+        this.createTableErrorMessage.set(
+          `Duplicate field name "${cleanName}". Each field in the table must have a unique name.`
+        );
+        return;
+      }
+      seenNames.add(lowerName);
+
+      if (draft.colType === 'formula' && !draft.formula.trim()) {
+        this.createTableErrorMessage.set(
+          `Please enter a Formula Expression for field "${cleanName}".`
+        );
+        return;
+      }
+      if (draft.colType === 'dropdown' && !draft.optionsCsv.trim()) {
+        this.createTableErrorMessage.set(
+          `Please enter Dropdown options for field "${cleanName}".`
+        );
+        return;
+      }
+      if (
+        draft.colType === 'lookup' &&
+        !(draft.lookupTableName || '').trim() &&
+        !draft.optionsCsv.trim()
+      ) {
+        this.createTableErrorMessage.set(
+          `Please select a Foreign Key Linked Table or enter Lookup JSON for field "${cleanName}".`
+        );
+        return;
+      }
+
+      const isNewDraftRow =
+        draft.id.startsWith('draft_col_') || draft.id === '__top_draft__';
+
+      payloadColumns.push({
+        originalName: isNewDraftRow ? '' : draft.id,
+        name: cleanName,
+        colType: draft.colType,
+        isNullable: draft.colType === 'formula' ? true : Boolean(draft.isNullable),
+        defaultValue: draft.colType === 'formula' ? '' : draft.columnValue.trim(),
+        columnValue: draft.colType === 'formula' ? '' : draft.columnValue.trim(),
+        formula:
+          draft.colType === 'formula'
+            ? draft.formula.trim().startsWith('=')
+              ? draft.formula.trim()
+              : `=${draft.formula.trim()}`
+            : draft.colType === 'lookup'
+            ? draft.formula.trim() || '{[ID]}'
+            : '',
+        optionsCsv:
+          draft.colType === 'lookup' || draft.colType === 'dropdown'
+            ? draft.optionsCsv.trim()
+            : '',
+        lookupTableName:
+          draft.colType === 'lookup' ? (draft.lookupTableName || '').trim() : '',
+      });
+    }
+
     this.isCreatingTable.set(true);
+
+    // EDIT TABLE MODE: Update existing table name and tabular fields
+    if (editingOriginalTbl) {
+      this.http
+        .post<{
+          ok: boolean;
+          error?: string;
+          renamedDatabaseName?: string;
+          renamedTableName?: string;
+          activeDatabaseName?: string;
+          databases?: DbDatabaseSummary[];
+          activeTableName?: string;
+          tables?: DbTableSummary[];
+          columns?: GridColumn[];
+          rows?: GridRow[];
+          totalRows?: number;
+          filteredTotalRows?: number;
+          hasMore?: boolean;
+          uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
+          activities?: ActivityLogItem[];
+        }>('/api/workspace/tables/rename', {
+          databaseName,
+          oldTableName: editingOriginalTbl,
+          newTableName: tableName,
+          columns: payloadColumns,
+          userName: this.currentUserName(),
+          userColor: this.currentUserColor(),
+        })
+        .subscribe({
+          next: (res) => {
+            this.isCreatingTable.set(false);
+            if (!res?.ok) {
+              this.createTableErrorMessage.set(
+                res?.error || 'Could not save table changes.'
+              );
+              return;
+            }
+            const nextTblName = res.renamedTableName || tableName;
+            const isTargetActiveDb =
+              databaseName.toLowerCase() === this.activeDatabaseName().toLowerCase();
+            if (Array.isArray(res.databases)) {
+              this.databases.set(res.databases);
+            }
+            this.syncTablesSignalForActiveDatabase(this.databases());
+
+            if (
+              isTargetActiveDb &&
+              editingOriginalTbl.toLowerCase() === this.activeTableName().toLowerCase()
+            ) {
+              this.activeTableName.set(nextTblName);
+              this.workspaceName.set(nextTblName || this.activeDatabaseName());
+              this.workspaceNameControl.setValue(nextTblName || this.activeDatabaseName());
+              if (Array.isArray(res.columns)) {
+                this.columns.set(res.columns);
+                if (Array.isArray(res.rows)) {
+                  const sanitized = this.sanitizeClientRowsAgainstColumns(res.columns, res.rows);
+                  this.rows.set(sanitized);
+                  this.visibleRowLimit.set(Math.max(this.lazyBatchSize, sanitized.length));
+                  this.snapshotValidRows(sanitized);
+                }
+              }
+              if (res.totalRows !== undefined) {
+                this.dbTotalRows.set(res.totalRows);
+              }
+              if (res.filteredTotalRows !== undefined) {
+                this.dbFilteredTotalRows.set(res.filteredTotalRows);
+              }
+              if (res.hasMore !== undefined) {
+                this.dbHasMoreRows.set(Boolean(res.hasMore));
+              }
+              if (res.uniqueValuesByColumn) {
+                this.dbUniqueValuesByColumn.set(res.uniqueValuesByColumn);
+              }
+            } else if (
+              isTargetActiveDb &&
+              this.columns().some((c) => c.colType === 'lookup')
+            ) {
+              // Refresh active table immediately so any Lookup columns linked to the edited table update their JSON
+              this.fetchWorkspaceFromServer(
+                false,
+                this.activeTableName(),
+                this.activeDatabaseName()
+              );
+            }
+
+            this.renameTableInLastUsedOrder(databaseName, editingOriginalTbl, nextTblName);
+            this.databaseTabs.update((tabs) =>
+              tabs.map((t) =>
+                t.databaseName.toLowerCase() === databaseName.toLowerCase() &&
+                t.activeTableName.toLowerCase() === editingOriginalTbl.toLowerCase()
+                  ? { ...t, activeTableName: nextTblName }
+                  : t
+              )
+            );
+            if (Array.isArray(res.activities)) {
+              this.activities.set(res.activities);
+            }
+            if (editingOriginalTbl !== nextTblName) {
+              this.expandedTableNodes.update((prev) => {
+                const next = new Set(prev);
+                const oldKey = `${databaseName}::${editingOriginalTbl}`;
+                if (next.has(oldKey)) {
+                  next.delete(oldKey);
+                  next.add(`${databaseName}::${nextTblName}`);
+                }
+                return next;
+              });
+              this.saveSidebarTreeStateToStorage();
+            }
+
+            this.editingTableOriginalName.set('');
+            this.activeModal.set('none');
+            this.showBanner(
+              'success',
+              `Saved table "${nextTblName}" (${payloadColumns.length + 1} fields) in database "${databaseName}".`
+            );
+          },
+          error: () => {
+            this.isCreatingTable.set(false);
+            this.createTableErrorMessage.set('Server error while saving table changes.');
+          },
+        });
+      return;
+    }
+
+    // CREATE TABLE MODE
     this.http
       .post<{
         ok: boolean;
@@ -2856,7 +4357,7 @@ export class App implements OnInit, OnDestroy {
         tableName,
         pkColumnName: 'ID',
         includeDefaultPk: true,
-        columns: [],
+        columns: payloadColumns,
         initialRowCount: 0,
         userName: this.currentUserName(),
         userColor: this.currentUserColor(),
@@ -2883,7 +4384,16 @@ export class App implements OnInit, OnDestroy {
             this.activities.set(res.activities);
           }
 
-          if (isTargetActiveDb) {
+          this.openTableTab(targetDbName, createdTableName);
+          this.recordTableUsed(targetDbName, createdTableName);
+          if (!this.hasActiveConnection()) {
+            this.activeDatabaseName.set(targetDbName);
+            this.ensureDatabaseTabOpenedAndActive(targetDbName, createdTableName, true);
+          }
+          const isNowActiveDb =
+            targetDbName.toLowerCase() === this.activeDatabaseName().toLowerCase();
+
+          if (isNowActiveDb) {
             const sanitizedRows = this.sanitizeClientRowsAgainstColumns(res.columns, res.rows);
             this.activeTableName.set(createdTableName);
             this.workspaceName.set(createdTableName);
@@ -2918,12 +4428,16 @@ export class App implements OnInit, OnDestroy {
             this.searchInputControl.setValue('');
             this.snapshotValidRows(sanitizedRows);
             this.activeCell.set(null);
-            setTimeout(() => this.scrollTabsBar('right'), 60);
+            setTimeout(() => {
+              const el = document.getElementById('excel-sheet-tabs-scroll-container');
+              if (el) el.scrollTo({ left: 0, behavior: 'smooth' });
+            }, 60);
           } else {
             // Keep active database & its table list untouched
             this.syncTablesSignalForActiveDatabase(this.databases());
           }
 
+          this.editingTableOriginalName.set('');
           this.activeModal.set('none');
           this.showBanner(
             'success',
@@ -2943,11 +4457,14 @@ export class App implements OnInit, OnDestroy {
     if (this.editingCell()) {
       this.commitInlineEdit();
     }
+    this.flushAllDirtyRowsAutoSave();
     this.closeAllMenus();
+    const currentDb = this.activeDatabaseName();
+    this.openTableTab(currentDb, tableName);
+    this.recordTableUsed(currentDb, tableName);
     this.activeTableName.set(tableName);
     this.workspaceName.set(tableName);
     this.workspaceNameControl.setValue(tableName);
-    const currentDb = this.activeDatabaseName();
     const activeTabId = this.activeDatabaseTabId();
     this.databaseTabs.update((tabs) =>
       tabs.map((t) =>
@@ -2969,6 +4486,12 @@ export class App implements OnInit, OnDestroy {
     this.globalSearchQuery.set('');
     this.searchInputControl.setValue('');
     this.fetchWorkspaceFromServer(false, tableName, currentDb);
+    if (this.isBrowser) {
+      setTimeout(() => {
+        const el = document.getElementById('excel-sheet-tabs-scroll-container');
+        if (el) el.scrollTo({ left: 0, behavior: 'smooth' });
+      }, 40);
+    }
   }
 
   public deleteTable(tableName: string, event?: Event, targetDatabaseName?: string): void {
@@ -3016,9 +4539,9 @@ export class App implements OnInit, OnDestroy {
               }
               this.syncTablesSignalForActiveDatabase(this.databases());
 
+              this.removeTableFromLastUsedOrder(dbName, tableName);
               if (isTargetActiveDb) {
-                const nextActive = res.activeTableName ?? '';
-                const sanitizedRows = this.sanitizeClientRowsAgainstColumns(res.columns, res.rows);
+                const nextActive = this.getLastUsedTableForDatabase(dbName);
                 this.activeTableName.set(nextActive);
                 this.workspaceName.set(nextActive || this.activeDatabaseName());
                 this.workspaceNameControl.setValue(nextActive || this.activeDatabaseName());
@@ -3029,16 +4552,20 @@ export class App implements OnInit, OnDestroy {
                       : t
                   )
                 );
-                this.columns.set(res.columns);
-                this.rows.set(sanitizedRows);
-                this.visibleRowLimit.set(Math.max(this.lazyBatchSize, sanitizedRows.length));
-                this.dbTotalRows.set(res.totalRows ?? sanitizedRows.length);
-                this.dbFilteredTotalRows.set(res.filteredTotalRows ?? sanitizedRows.length);
-                this.dbHasMoreRows.set(Boolean(res.hasMore));
-                if (res.uniqueValuesByColumn) {
-                  this.dbUniqueValuesByColumn.set(res.uniqueValuesByColumn);
+                if (nextActive) {
+                  this.recordTableUsed(dbName, nextActive);
+                  this.fetchWorkspaceFromServer(false, nextActive, dbName);
+                } else {
+                  this.columns.set([]);
+                  this.rows.set([]);
+                  this.dbTotalRows.set(0);
+                  this.dbFilteredTotalRows.set(0);
+                  this.dbHasMoreRows.set(false);
+                  this.selectedRowIds.set(new Set());
+                  this.selectedColumnId.set(null);
+                  this.activeCell.set(null);
+                  this.editingCell.set(null);
                 }
-                this.snapshotValidRows(sanitizedRows);
               }
               if (Array.isArray(res.activities)) {
                 this.activities.set(res.activities);
@@ -3281,13 +4808,21 @@ export class App implements OnInit, OnDestroy {
   public refreshTableData(event?: Event): void {
     event?.stopPropagation();
     this.closeAllMenus();
+    if (!this.hasActiveConnection()) {
+      this.refreshObjectExplorerTreeFromDb();
+      return;
+    }
     this.editingCell.set(null);
     this.cellValidationErrors.set({});
     this.pendingUnsavedRowIds.set(new Set());
     this.pendingUnsavedColIds.set(new Set());
     this.invalidCellKey.set(null);
     this.cloudSyncStatus.set('syncing');
-    this.fetchWorkspaceFromServer(true, this.activeTableName(), this.activeDatabaseName());
+    this.fetchWorkspaceFromServer(
+      true,
+      this.activeTableName() || undefined,
+      this.activeDatabaseName()
+    );
   }
 
   private fetchWorkspaceFromServer(
@@ -3323,10 +4858,34 @@ export class App implements OnInit, OnDestroy {
       .subscribe({
         next: (res) => {
           if (res && Array.isArray(res.columns) && Array.isArray(res.rows)) {
-            const sanitizedRows = this.sanitizeClientRowsAgainstColumns(res.columns, res.rows);
             const activeDb =
               requestedDatabaseName || res.activeDatabaseName || this.activeDatabaseName() || 'GridPulse_DB';
-            const activeTbl = res.activeTableName ?? '';
+            let activeTbl = res.activeTableName ?? '';
+
+            if (!this.hasInitializedWorkspace) {
+              this.hasInitializedWorkspace = true;
+              if (activeDb && activeTbl) {
+                this.openTableTab(activeDb, activeTbl);
+              }
+            } else {
+              const openNames = this.getOpenTableNamesForDb(activeDb);
+              if (requestedTableName) {
+                this.openTableTab(activeDb, requestedTableName);
+              } else if (openNames.length === 0) {
+                activeTbl = '';
+              } else if (
+                activeTbl &&
+                !openNames.some((o) => o.trim().toLowerCase() === activeTbl.toLowerCase())
+              ) {
+                activeTbl = this.getLastUsedTableForDatabase(activeDb);
+              }
+            }
+
+            const sanitizedRows = activeTbl
+              ? this.sanitizeClientRowsAgainstColumns(res.columns, res.rows)
+              : [];
+            const effectiveCols = activeTbl ? res.columns : [];
+
             this.workspaceId.set(res.workspaceId || 'ws_gridpulse_main');
             this.activeDatabaseName.set(activeDb);
             if (Array.isArray(res.databases)) {
@@ -3336,6 +4895,9 @@ export class App implements OnInit, OnDestroy {
               this.tables.set(res.tables);
             }
             this.activeTableName.set(activeTbl);
+            if (activeTbl) {
+              this.recordTableUsed(activeDb, activeTbl);
+            }
             this.workspaceName.set(activeTbl || activeDb);
             this.workspaceNameControl.setValue(activeTbl || activeDb);
 
@@ -3352,23 +4914,26 @@ export class App implements OnInit, OnDestroy {
               this.activeDatabaseTabId.set(initTabId);
             } else {
               const currentTab = this.activeDatabaseTab();
-              if (currentTab && currentTab.databaseName.toLowerCase() === activeDb.toLowerCase()) {
-                this.databaseTabs.update((tabs) =>
-                  tabs.map((t) =>
-                    t.tabId === currentTab.tabId ? { ...t, activeTableName: activeTbl } : t
-                  )
-                );
-              }
+              this.databaseTabs.update((tabs) =>
+                tabs.map((t) =>
+                  (currentTab && t.tabId === currentTab.tabId) ||
+                  t.databaseName.toLowerCase() === activeDb.toLowerCase()
+                    ? { ...t, activeTableName: activeTbl }
+                    : t
+                )
+              );
             }
-            this.columns.set(res.columns);
+            this.columns.set(effectiveCols);
             this.rows.set(sanitizedRows);
             this.visibleRowLimit.set(Math.max(this.lazyBatchSize, sanitizedRows.length));
-            this.dbTotalRows.set(res.totalRows ?? sanitizedRows.length);
+            this.dbTotalRows.set(activeTbl ? (res.totalRows ?? sanitizedRows.length) : 0);
             this.dbFilteredTotalRows.set(
-              res.filteredTotalRows ?? res.totalRows ?? sanitizedRows.length
+              activeTbl
+                ? (res.filteredTotalRows ?? res.totalRows ?? sanitizedRows.length)
+                : 0
             );
-            this.dbHasMoreRows.set(Boolean(res.hasMore));
-            this.dbUniqueValuesByColumn.set(res.uniqueValuesByColumn || {});
+            this.dbHasMoreRows.set(activeTbl ? Boolean(res.hasMore) : false);
+            this.dbUniqueValuesByColumn.set(activeTbl ? (res.uniqueValuesByColumn || {}) : {});
             if (Array.isArray(res.versions)) {
               this.versions.set(res.versions);
             }
@@ -3380,7 +4945,7 @@ export class App implements OnInit, OnDestroy {
 
             const firstRow = sanitizedRows[0];
             if (firstRow && !this.activeCell()) {
-              const defaultCol = res.columns[1] || res.columns[0];
+              const defaultCol = effectiveCols[1] || effectiveCols[0];
               if (defaultCol) {
                 this.selectCell(firstRow.id, defaultCol.id);
               }
@@ -3391,7 +4956,7 @@ export class App implements OnInit, OnDestroy {
                 'success',
                 activeTbl
                   ? `Synced "${activeDb}.${activeTbl}" (${sanitizedRows.length} rows loaded, ${this.dbTotalRows()} total in database).`
-                  : `Synced database "${activeDb}" (0 tables created yet).`
+                  : `Synced database "${activeDb}".`
               );
             }
           }
@@ -3560,7 +5125,8 @@ export class App implements OnInit, OnDestroy {
     bulkRows?: GridRow[],
     bulkCols?: GridColumn[],
     deletedRowIds?: string[],
-    applyDefaultToAllRowsForColId?: string
+    applyDefaultToAllRowsForColId?: string,
+    renamedColumns?: { oldName: string; newName: string }[]
   ): void {
     if (!this.isBrowser) return;
 
@@ -3585,6 +5151,8 @@ export class App implements OnInit, OnDestroy {
       }
     }
 
+    const reqDbName = this.activeDatabaseName();
+    const reqTblName = this.activeTableName();
     this.cloudSyncStatus.set('syncing');
 
     this.http
@@ -3594,6 +5162,8 @@ export class App implements OnInit, OnDestroy {
         databases?: DbDatabaseSummary[];
         activeTableName?: string;
         tables?: DbTableSummary[];
+        columns?: GridColumn[];
+        rows?: GridRow[];
         updatedAt: string;
         totalRows?: number;
         activities: ActivityLogItem[];
@@ -3603,8 +5173,8 @@ export class App implements OnInit, OnDestroy {
         userColor: this.currentUserColor(),
         actionType,
         actionDetail,
-        databaseName: this.activeDatabaseName(),
-        tableName: this.activeTableName(),
+        databaseName: reqDbName,
+        tableName: reqTblName,
         workspaceName: this.workspaceName(),
         columns: this.columns(),
         rows: dbSafeRows,
@@ -3614,6 +5184,7 @@ export class App implements OnInit, OnDestroy {
         changedRowCount: bulkRows?.length,
         changedColCount: bulkCols?.length,
         applyDefaultToAllRowsForColId,
+        renamedColumns,
       })
       .subscribe({
         next: (res) => {
@@ -3623,7 +5194,33 @@ export class App implements OnInit, OnDestroy {
             this.databases.set(res.databases);
             this.syncTablesSignalForActiveDatabase(res.databases);
           }
-          if (typeof res.totalRows === 'number') {
+          const isStillSameTable =
+            this.activeDatabaseName().toLowerCase() === reqDbName.toLowerCase() &&
+            this.activeTableName().toLowerCase() === reqTblName.toLowerCase();
+
+          if (isStillSameTable && Array.isArray(res.columns)) {
+            this.columns.set(res.columns);
+            const shouldAcceptServerRows =
+              Boolean(applyDefaultToAllRowsForColId) ||
+              Boolean(renamedColumns && renamedColumns.length > 0);
+            if (shouldAcceptServerRows && Array.isArray(res.rows)) {
+              const sanitized = this.sanitizeClientRowsAgainstColumns(res.columns, res.rows);
+              const localInvalid = this.invalidRowIds();
+              const localMap = new Map<string, GridRow>(this.rows().map((r) => [r.id, r]));
+              const merged = sanitized.map((r) =>
+                (localInvalid.has(r.id) || this.dirtyRowIds.has(r.id)) && localMap.has(r.id)
+                  ? localMap.get(r.id)!
+                  : r
+              );
+              this.rows.set(merged);
+              this.snapshotValidRows(merged);
+            } else if (res.columns.some((c) => c.colType === 'lookup')) {
+              const resynced = this.sanitizeClientRowsAgainstColumns(res.columns, this.rows());
+              this.rows.set(resynced);
+              this.snapshotValidRows(resynced);
+            }
+          }
+          if (isStillSameTable && typeof res.totalRows === 'number') {
             this.dbTotalRows.set(res.totalRows);
             if (this.activeFilterCount() === 0 && !this.globalSearchQuery().trim()) {
               this.dbFilteredTotalRows.set(res.totalRows);
@@ -3965,6 +5562,18 @@ export class App implements OnInit, OnDestroy {
     if (val === undefined || val === null) {
       return col.colType === 'checkbox' ? false : '';
     }
+    if (col.colType === 'lookup') {
+      const rawStr = String(val).trim();
+      if (!rawStr) return '';
+      const items = getLookupOptions(col);
+      if (items.length > 0) {
+        const matched = matchLookupItemFromRaw(items, rawStr);
+        if (matched) {
+          return matched.json;
+        }
+      }
+      return rawStr;
+    }
     if (col.colType === 'number' && typeof val === 'boolean') {
       return val ? 1 : 0;
     }
@@ -3978,6 +5587,9 @@ export class App implements OnInit, OnDestroy {
     }
     if (col.isPrimaryKey || col.isIdentity) {
       return String(val);
+    }
+    if (col.colType === 'lookup') {
+      return String(val ?? '');
     }
     if (col.colType === 'number' || col.colType === 'formula') {
       const normalizedVal = typeof val === 'boolean' ? (val ? 1 : 0) : val;
@@ -4001,12 +5613,465 @@ export class App implements OnInit, OnDestroy {
     return String(val);
   }
 
+  // =========================================================================
+  // ALWAYS-CONTENTEDITABLE CELLS & ROW-EXIT AUTO-SAVE TO DATABASE
+  // =========================================================================
+
+  private readonly liveCellDraftMap = new Map<string, string>();
+  private readonly dirtyRowIds = new Set<string>();
+  readonly activeEditingRowId = signal<string | null>(null);
+  private readonly newRowLiveDraftMap = new Map<string, string>();
+  readonly hasNewRowLiveDraft = signal<boolean>(false);
+
+  public getRawCellString(row: GridRow, col: GridColumn): string {
+    const val = row.cells[col.name] !== undefined ? row.cells[col.name] : row.cells[col.id];
+    return val !== undefined && val !== null ? String(val) : '';
+  }
+
+  public getMatchedLookupCellJson(row: GridRow, col: GridColumn): string {
+    const raw = this.getRawCellString(row, col);
+    if (!raw) return '';
+    const items = getLookupOptions(col);
+    const matched = matchLookupItemFromRaw(items, raw);
+    return matched ? matched.json : raw;
+  }
+
+  public getEditableCellDomText(row: GridRow, col: GridColumn): string {
+    if (col.colType === 'lookup') {
+      return String(this.getDisplayCellValue(row, col) ?? '');
+    }
+    const val = row.cells[col.name] !== undefined ? row.cells[col.name] : row.cells[col.id];
+    return val !== undefined && val !== null ? String(val) : '';
+  }
+
+  public getNewRowEditableCellDomText(col: GridColumn): string {
+    const val = this.getNewRowCellDisplayValue(col);
+    if (val === undefined || val === null || val === false) return '';
+    return String(val);
+  }
+
+  public getNewRowMatchedLookupCellJson(col: GridColumn): string {
+    const raw = this.getNewRowEditableCellDomText(col);
+    if (!raw) return '';
+    const items = getLookupOptions(col);
+    const matched = matchLookupItemFromRaw(items, raw);
+    return matched ? matched.json : raw;
+  }
+
+  public onDataRowFocusIn(rowId: string): void {
+    const prevRowId = this.activeEditingRowId();
+    if (prevRowId && prevRowId !== rowId) {
+      if (prevRowId === this.newRowSentinelId) {
+        this.commitAllNewRowLiveDrafts();
+        if (this.hasNewRowDraftValues()) {
+          this.commitFirstRowAddRow();
+        }
+      } else {
+        this.flushRowAutoSave(prevRowId);
+      }
+    }
+    this.activeEditingRowId.set(rowId);
+  }
+
+  public onDataRowFocusOut(rowId: string, event: FocusEvent): void {
+    const nextTarget = event.relatedTarget as HTMLElement | null;
+    const rowEl = event.currentTarget as HTMLElement | null;
+    if (nextTarget && rowEl && rowEl.contains(nextTarget)) {
+      return;
+    }
+    if (this.isBrowser) {
+      setTimeout(() => {
+        if (this.contextMenu().visible) return;
+        const activeEl = document.activeElement as HTMLElement | null;
+        if (activeEl && rowEl && rowEl.contains(activeEl)) {
+          return;
+        }
+        this.flushRowAutoSave(rowId);
+      }, 15);
+    } else {
+      this.flushRowAutoSave(rowId);
+    }
+  }
+
+  public onFirstRowFocusOut(event: FocusEvent): void {
+    const nextTarget = event.relatedTarget as HTMLElement | null;
+    const rowEl = event.currentTarget as HTMLElement | null;
+    const targetEl = event.target as HTMLElement | null;
+    if (nextTarget && rowEl && rowEl.contains(nextTarget)) {
+      return;
+    }
+    if (nextTarget?.closest('[data-first-row-reset="true"]')) {
+      return;
+    }
+    if (this.isBrowser) {
+      setTimeout(() => {
+        if (this.contextMenu().visible) return;
+        const activeEl = document.activeElement as HTMLElement | null;
+        if (activeEl && rowEl && rowEl.contains(activeEl)) {
+          return;
+        }
+        // When opening a native <select> popup inside the First Row, some browsers temporarily
+        // set document.activeElement to body with relatedTarget === null; do not prematurely commit
+        if (
+          targetEl?.tagName === 'SELECT' &&
+          !nextTarget &&
+          (!activeEl || activeEl === document.body || activeEl === document.documentElement)
+        ) {
+          return;
+        }
+        if (activeEl?.closest('[data-first-row-reset="true"]')) {
+          return;
+        }
+        this.commitAllNewRowLiveDrafts();
+        if (this.hasNewRowDraftValues()) {
+          this.commitFirstRowAddRow();
+        }
+      }, 15);
+    } else {
+      this.commitAllNewRowLiveDrafts();
+      if (this.hasNewRowDraftValues()) {
+        this.commitFirstRowAddRow();
+      }
+    }
+  }
+
+  public onCellFocus(rowId: string, colId: string, event?: Event): void {
+    event?.stopPropagation();
+    this.onDataRowFocusIn(rowId);
+    this.activeCell.set({ rowId, colId });
+    this.selectedColumnId.set(colId);
+
+    const row = this.rows().find((r) => r.id === rowId);
+    const col = this.columns().find((c) => c.id === colId);
+    if (row && col) {
+      if (col.colType === 'formula') {
+        this.formulaBarControl.setValue(col.formula, { emitEvent: false });
+      } else {
+        const draftKey = `${rowId}:${colId}`;
+        if (this.liveCellDraftMap.has(draftKey)) {
+          this.formulaBarControl.setValue(this.liveCellDraftMap.get(draftKey) || '', {
+            emitEvent: false,
+          });
+        } else {
+          const displayVal = this.getDisplayCellValue(row, col);
+          this.formulaBarControl.setValue(
+            displayVal !== undefined && displayVal !== null ? String(displayVal) : '',
+            { emitEvent: false }
+          );
+        }
+      }
+    }
+    this.broadcastPresence();
+  }
+
+  public onContentEditableCellInput(rowId: string, colId: string, event: Event): void {
+    const el = event.target as HTMLElement | null;
+    if (!el) return;
+    const rawText = (el.innerText ?? el.textContent ?? '').replace(/\r?\n/g, ' ');
+    this.liveCellDraftMap.set(`${rowId}:${colId}`, rawText);
+    this.dirtyRowIds.add(rowId);
+    this.formulaBarControl.setValue(rawText, { emitEvent: false });
+  }
+
+  public onEditableCellBlur(rowId: string, colId: string, event?: FocusEvent): void {
+    const el = (event?.target as HTMLElement | null) ?? null;
+    this.commitLiveCellDraft(rowId, colId, el);
+  }
+
+  public commitLiveCellDraft(
+    rowId: string,
+    colId: string,
+    el?: HTMLElement | null
+  ): void {
+    const draftKey = `${rowId}:${colId}`;
+    if (!this.liveCellDraftMap.has(draftKey)) return;
+    const rawText = this.liveCellDraftMap.get(draftKey) ?? '';
+    this.liveCellDraftMap.delete(draftKey);
+    this.stageCellEditInRow(rowId, colId, rawText, el);
+  }
+
+  public onSelectCellChange(rowId: string, colId: string, newValue: string): void {
+    this.onDataRowFocusIn(rowId);
+    this.activeCell.set({ rowId, colId });
+    this.selectedColumnId.set(colId);
+    this.stageCellEditInRow(rowId, colId, newValue);
+    this.flushRowAutoSave(rowId);
+  }
+
+  public onCheckboxCellChange(
+    rowId: string,
+    colId: string,
+    checked: boolean,
+    event?: Event
+  ): void {
+    event?.stopPropagation();
+    this.onCellFocus(rowId, colId, event);
+    this.stageCellEditInRow(rowId, colId, checked);
+    this.flushRowAutoSave(rowId);
+  }
+
+  private stageCellEditInRow(
+    rowId: string,
+    colId: string,
+    rawInput: unknown,
+    domEl?: HTMLElement | null
+  ): void {
+    const col = this.columns().find((c) => c.id === colId);
+    const row = this.rows().find((r) => r.id === rowId);
+    if (!col || !row || col.isPrimaryKey || col.isIdentity || col.colType === 'formula') {
+      return;
+    }
+
+    const validation = validateCellValue(col, rawInput);
+    const prevVal = row.cells[col.name] !== undefined ? row.cells[col.name] : row.cells[col.id];
+    const wasCellAlreadyInvalid = this.isCellInvalid(rowId, colId);
+
+    if (prevVal === validation.normalizedValue && validation.valid && !wasCellAlreadyInvalid) {
+      if (domEl && domEl.isContentEditable) {
+        const cleanDom =
+          col.colType === 'lookup'
+            ? String(this.getDisplayCellValue(row, col) ?? '')
+            : String(validation.normalizedValue ?? '');
+        if (domEl.textContent !== cleanDom) {
+          domEl.textContent = cleanDom;
+        }
+      }
+      return;
+    }
+
+    const nowIso = new Date().toISOString();
+    const updatedRows = this.rows().map((r) => {
+      if (r.id === rowId) {
+        return {
+          ...r,
+          cells: {
+            ...r.cells,
+            [col.name]: validation.normalizedValue,
+            [col.id]: validation.normalizedValue,
+          },
+          updatedBy: this.currentUserName(),
+          updatedAt: nowIso,
+        };
+      }
+      return r;
+    });
+
+    this.rows.set(updatedRows);
+    this.dirtyRowIds.add(rowId);
+    this.formulaBarControl.setValue(String(validation.normalizedValue ?? ''), {
+      emitEvent: false,
+    });
+
+    if (domEl && domEl.isContentEditable) {
+      const updatedRow = updatedRows.find((r) => r.id === rowId);
+      const cleanDom =
+        col.colType === 'lookup' && updatedRow
+          ? String(this.getDisplayCellValue(updatedRow, col) ?? '')
+          : String(validation.normalizedValue ?? '');
+      if (domEl.textContent !== cleanDom) {
+        domEl.textContent = cleanDom;
+      }
+    }
+  }
+
+  public flushRowAutoSave(rowId: string): void {
+    if (!rowId || rowId === this.newRowSentinelId) return;
+
+    // Commit any remaining live drafts belonging to this row first
+    const prefix = `${rowId}:`;
+    for (const key of Array.from(this.liveCellDraftMap.keys())) {
+      if (key.startsWith(prefix)) {
+        const colId = key.slice(prefix.length);
+        const domEl = this.isBrowser
+          ? document.getElementById(`grid-cell-${rowId}-${colId}`)
+          : null;
+        this.commitLiveCellDraft(rowId, colId, domEl);
+      }
+    }
+
+    if (!this.dirtyRowIds.has(rowId)) {
+      return;
+    }
+
+    this.dirtyRowIds.delete(rowId);
+    const row = this.rows().find((r) => r.id === rowId);
+    if (!row) return;
+
+    this.recordHistorySnapshot(`Auto-Save Row in "${this.activeTableName()}"`);
+    this.validateAndSyncRows(
+      [rowId],
+      [],
+      'Row Auto-Saved',
+      `Auto-saved row changes in table "${this.activeTableName()}"`
+    );
+  }
+
+  public flushAllDirtyRowsAutoSave(): void {
+    for (const key of Array.from(this.liveCellDraftMap.keys())) {
+      const sepIdx = key.indexOf(':');
+      if (sepIdx > 0) {
+        const rId = key.slice(0, sepIdx);
+        const cId = key.slice(sepIdx + 1);
+        this.commitLiveCellDraft(rId, cId);
+      }
+    }
+    const dirtyIds = Array.from(this.dirtyRowIds);
+    if (dirtyIds.length > 0) {
+      this.dirtyRowIds.clear();
+      this.recordHistorySnapshot(`Auto-Save ${dirtyIds.length} Row(s)`);
+      this.validateAndSyncRows(
+        dirtyIds,
+        [],
+        'Row Auto-Saved',
+        `Auto-saved ${dirtyIds.length} row(s) in table "${this.activeTableName()}"`
+      );
+    }
+    this.commitAllNewRowLiveDrafts();
+    if (this.hasNewRowDraftValues()) {
+      this.commitFirstRowAddRow();
+    }
+  }
+
+  public onAlwaysEditableCellKeydown(
+    event: KeyboardEvent,
+    rowId: string,
+    colId: string
+  ): void {
+    const targetEl = event.target as HTMLElement | null;
+
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.commitLiveCellDraft(rowId, colId, targetEl);
+      this.flushRowAutoSave(rowId);
+      this.focusGridCellByOffset(rowId, colId, 1, 0);
+      return;
+    }
+
+    if (event.key === 'Tab') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.commitLiveCellDraft(rowId, colId, targetEl);
+      this.focusGridCellByOffset(rowId, colId, 0, event.shiftKey ? -1 : 1, true);
+      return;
+    }
+
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      if (targetEl?.tagName === 'SELECT') {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      this.commitLiveCellDraft(rowId, colId, targetEl);
+      this.flushRowAutoSave(rowId);
+      this.focusGridCellByOffset(
+        rowId,
+        colId,
+        event.key === 'ArrowDown' ? 1 : -1,
+        0
+      );
+      return;
+    }
+
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      const draftKey = `${rowId}:${colId}`;
+      this.liveCellDraftMap.delete(draftKey);
+      const row = this.rows().find((r) => r.id === rowId);
+      const col = this.columns().find((c) => c.id === colId);
+      if (row && col && targetEl && targetEl.isContentEditable) {
+        targetEl.textContent = this.getEditableCellDomText(row, col);
+      }
+      targetEl?.blur();
+    }
+  }
+
+  private focusGridCellByOffset(
+    currentRowId: string,
+    currentColId: string,
+    rowDelta: number,
+    colDelta: number,
+    wrapRowOnTab = false
+  ): void {
+    const visRows = this.visibleRows();
+    const editableCols = this.sortedColumns().filter(
+      (c) => !this.isProtectedIdColumn(c) && c.colType !== 'formula'
+    );
+    const allCols = this.sortedColumns();
+    const colsPool = wrapRowOnTab && editableCols.length > 0 ? editableCols : allCols;
+
+    let rIdx = visRows.findIndex((r) => r.id === currentRowId);
+    let cIdx = colsPool.findIndex((c) => c.id === currentColId);
+    if (rIdx < 0 || cIdx < 0) return;
+
+    let nextRIdx = rIdx + rowDelta;
+    let nextCIdx = cIdx + colDelta;
+
+    if (wrapRowOnTab) {
+      if (nextCIdx >= colsPool.length) {
+        nextCIdx = 0;
+        nextRIdx += 1;
+        this.flushRowAutoSave(currentRowId);
+      } else if (nextCIdx < 0) {
+        nextCIdx = colsPool.length - 1;
+        nextRIdx -= 1;
+        this.flushRowAutoSave(currentRowId);
+      }
+    } else {
+      nextCIdx = Math.max(0, Math.min(colsPool.length - 1, nextCIdx));
+    }
+
+    if (nextRIdx < 0) {
+      // Move up into First Row (Add Row)
+      const targetCol = colsPool[nextCIdx] || allCols[0];
+      if (targetCol) {
+        this.focusFirstRowCellDom(targetCol.id);
+      }
+      return;
+    }
+
+    if (nextRIdx >= visRows.length) {
+      return;
+    }
+
+    const nextRow = visRows[nextRIdx];
+    const nextCol = colsPool[nextCIdx];
+    if (!nextRow || !nextCol) return;
+
+    this.selectCell(nextRow.id, nextCol.id);
+    if (this.isBrowser) {
+      setTimeout(() => {
+        const el = document.getElementById(`grid-cell-${nextRow.id}-${nextCol.id}`);
+        if (el) {
+          el.focus();
+          this.placeCaretAtEndOfElement(el);
+        }
+      }, 10);
+    }
+  }
+
+  private placeCaretAtEndOfElement(el: HTMLElement): void {
+    if (!this.isBrowser || !el.isContentEditable) return;
+    try {
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.collapse(false);
+      const sel = window.getSelection();
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+    } catch {
+      // Ignore selection range errors on non-text elements
+    }
+  }
+
   public selectCell(rowId: string, colId: string): void {
     const currentEdit = this.editingCell();
     if (currentEdit && (currentEdit.rowId !== rowId || currentEdit.colId !== colId)) {
       this.commitInlineEdit();
     }
 
+    this.onDataRowFocusIn(rowId);
     this.activeCell.set({ rowId, colId });
     this.selectedColumnId.set(colId);
 
@@ -4016,8 +6081,10 @@ export class App implements OnInit, OnDestroy {
       if (col.colType === 'formula') {
         this.formulaBarControl.setValue(col.formula);
       } else {
-        const raw = row.cells[col.name] !== undefined ? row.cells[col.name] : row.cells[col.id];
-        this.formulaBarControl.setValue(raw !== undefined && raw !== null ? String(raw) : '');
+        const displayVal = this.getDisplayCellValue(row, col);
+        this.formulaBarControl.setValue(
+          displayVal !== undefined && displayVal !== null ? String(displayVal) : ''
+        );
       }
     }
     this.broadcastPresence();
@@ -4048,12 +6115,16 @@ export class App implements OnInit, OnDestroy {
       return;
     }
 
-    this.activeCell.set({ rowId, colId });
-    this.editingCell.set({ rowId, colId });
-    const currentVal = row.cells[col.name] !== undefined ? row.cells[col.name] : row.cells[col.id];
-    this.cellEditControl.setValue(
-      currentVal !== undefined && currentVal !== null ? String(currentVal) : ''
-    );
+    this.selectCell(rowId, colId);
+    if (this.isBrowser) {
+      setTimeout(() => {
+        const el = document.getElementById(`grid-cell-${rowId}-${colId}`);
+        if (el) {
+          el.focus();
+          this.placeCaretAtEndOfElement(el);
+        }
+      }, 10);
+    }
   }
 
   public onInlineInputBlur(): void {
@@ -4082,6 +6153,9 @@ export class App implements OnInit, OnDestroy {
   // =========================================================================
 
   public hasNewRowDraftValues(): boolean {
+    if (this.hasNewRowLiveDraft()) {
+      return true;
+    }
     const draft = this.newRowDraftCells();
     for (const val of Object.values(draft)) {
       if (val !== '' && val !== null && val !== undefined && val !== false) {
@@ -4101,15 +6175,123 @@ export class App implements OnInit, OnDestroy {
     return col.colType === 'checkbox' ? false : '';
   }
 
+  public onNewRowCellFocus(colId: string, event?: Event): void {
+    event?.stopPropagation();
+    this.onDataRowFocusIn(this.newRowSentinelId);
+    this.activeCell.set({ rowId: this.newRowSentinelId, colId });
+    this.selectedColumnId.set(colId);
+    const col = this.columns().find((c) => c.id === colId);
+    if (col) {
+      const liveVal = this.newRowLiveDraftMap.get(colId);
+      const val = liveVal !== undefined ? liveVal : this.getNewRowCellDisplayValue(col);
+      this.formulaBarControl.setValue(val !== undefined && val !== null ? String(val) : '', {
+        emitEvent: false,
+      });
+    }
+  }
+
+  public onNewRowContentEditableInput(colId: string, event: Event): void {
+    const el = event.target as HTMLElement | null;
+    if (!el) return;
+    const rawText = (el.innerText ?? el.textContent ?? '').replace(/\r?\n/g, ' ');
+    if (rawText.trim().length > 0) {
+      this.newRowLiveDraftMap.set(colId, rawText);
+    } else {
+      this.newRowLiveDraftMap.set(colId, '');
+    }
+    const anyLive = Array.from(this.newRowLiveDraftMap.values()).some(
+      (v) => v.trim().length > 0
+    );
+    this.hasNewRowLiveDraft.set(anyLive);
+    this.formulaBarControl.setValue(rawText, { emitEvent: false });
+  }
+
+  public onNewRowEditableCellBlur(colId: string, event?: FocusEvent): void {
+    const el = (event?.target as HTMLElement | null) ?? null;
+    this.commitNewRowLiveCellDraft(colId, el);
+  }
+
+  public onNewRowSelectChange(colId: string, newValue: string): void {
+    this.onDataRowFocusIn(this.newRowSentinelId);
+    this.newRowLiveDraftMap.set(colId, newValue);
+    this.commitNewRowLiveCellDraft(colId);
+  }
+
+  public commitNewRowLiveCellDraft(colId: string, domEl?: HTMLElement | null): void {
+    if (!this.newRowLiveDraftMap.has(colId)) return;
+    const rawVal = this.newRowLiveDraftMap.get(colId) ?? '';
+    this.newRowLiveDraftMap.delete(colId);
+    const anyLive = Array.from(this.newRowLiveDraftMap.values()).some(
+      (v) => v.trim().length > 0
+    );
+    this.hasNewRowLiveDraft.set(anyLive);
+
+    const col = this.columns().find((c) => c.id === colId);
+    if (col && !this.isProtectedIdColumn(col) && col.colType !== 'formula') {
+      const trimmed = String(rawVal ?? '').trim();
+      this.newRowDraftCells.update((prev) => {
+        const next = { ...prev };
+        if (trimmed === '') {
+          delete next[col.id];
+          delete next[col.name];
+        } else {
+          next[col.id] = trimmed;
+          next[col.name] = trimmed;
+        }
+        return next;
+      });
+      this.newRowValidationErrors.update((prev) => {
+        const next = { ...prev };
+        delete next[col.id];
+        return next;
+      });
+      if (domEl && domEl.isContentEditable && domEl.textContent !== trimmed) {
+        domEl.textContent = trimmed;
+      }
+    }
+  }
+
+  private commitAllNewRowLiveDrafts(): void {
+    for (const colId of Array.from(this.newRowLiveDraftMap.keys())) {
+      const domEl = this.isBrowser
+        ? document.getElementById(`new-row-inline-input-${colId}`)
+        : null;
+      this.commitNewRowLiveCellDraft(colId, domEl);
+    }
+  }
+
+  private clearNewRowDomElements(): void {
+    if (!this.isBrowser) return;
+    for (const col of this.columns()) {
+      const el = document.getElementById(`new-row-inline-input-${col.id}`);
+      if (!el) continue;
+      if (el.isContentEditable) {
+        el.textContent = '';
+      } else if (el instanceof HTMLSelectElement || el instanceof HTMLInputElement) {
+        el.value = '';
+      }
+    }
+  }
+
+  private focusFirstRowCellDom(colId: string): void {
+    this.selectNewRowCell(colId);
+    if (this.isBrowser) {
+      setTimeout(() => {
+        const el = document.getElementById(`new-row-inline-input-${colId}`);
+        if (el) {
+          el.focus();
+          this.placeCaretAtEndOfElement(el);
+        }
+      }, 10);
+    }
+  }
+
   public selectNewRowCell(colId: string, event?: Event): void {
     event?.stopPropagation();
     if (this.editingCell()) {
       this.commitInlineEdit();
     }
-    const currNewEdit = this.editingNewRowColId();
-    if (currNewEdit && currNewEdit !== colId) {
-      this.commitNewRowCellEdit(false);
-    }
+    this.onDataRowFocusIn(this.newRowSentinelId);
     this.activeCell.set({ rowId: this.newRowSentinelId, colId });
     this.selectedColumnId.set(colId);
     const col = this.columns().find((c) => c.id === colId);
@@ -4131,83 +6313,86 @@ export class App implements OnInit, OnDestroy {
       this.toggleNewRowCheckbox(colId, event);
       return;
     }
-    const currNewEdit = this.editingNewRowColId();
-    if (currNewEdit && currNewEdit !== colId) {
-      this.commitNewRowCellEdit(false);
-    }
-    this.activeCell.set({ rowId: this.newRowSentinelId, colId });
-    this.selectedColumnId.set(colId);
-    const currVal = this.getNewRowCellDisplayValue(col);
-    this.newRowCellEditControl.setValue(
-      currVal !== undefined && currVal !== null ? String(currVal) : ''
-    );
-    this.editingNewRowColId.set(colId);
-
-    if (this.isBrowser) {
-      setTimeout(() => {
-        const el = document.getElementById(`new-row-inline-input-${colId}`) as
-          | HTMLInputElement
-          | HTMLSelectElement
-          | null;
-        el?.focus();
-      }, 15);
-    }
+    this.focusFirstRowCellDom(colId);
   }
 
   public commitNewRowCellEdit(insertRowAfter = false): void {
+    this.commitAllNewRowLiveDrafts();
     const colId = this.editingNewRowColId();
-    if (!colId) {
-      if (insertRowAfter && this.hasNewRowDraftValues()) {
-        this.commitFirstRowAddRow();
+    if (colId) {
+      const col = this.columns().find((c) => c.id === colId);
+      const rawVal = this.newRowCellEditControl.value;
+      this.editingNewRowColId.set(null);
+
+      if (col && !this.isProtectedIdColumn(col) && col.colType !== 'formula') {
+        const trimmed = String(rawVal ?? '').trim();
+        this.newRowDraftCells.update((prev) => {
+          const next = { ...prev };
+          if (trimmed === '') {
+            delete next[col.id];
+            delete next[col.name];
+          } else {
+            next[col.id] = trimmed;
+            next[col.name] = trimmed;
+          }
+          return next;
+        });
       }
-      return;
-    }
-    const col = this.columns().find((c) => c.id === colId);
-    const rawVal = this.newRowCellEditControl.value;
-    this.editingNewRowColId.set(null);
-
-    if (col && !this.isProtectedIdColumn(col) && col.colType !== 'formula') {
-      const trimmed = String(rawVal ?? '').trim();
-      this.newRowDraftCells.update((prev) => {
-        const next = { ...prev };
-        if (trimmed === '') {
-          delete next[col.id];
-          delete next[col.name];
-        } else {
-          next[col.id] = trimmed;
-          next[col.name] = trimmed;
-        }
-        return next;
-      });
-      this.newRowValidationErrors.update((prev) => {
-        const next = { ...prev };
-        delete next[col.id];
-        return next;
-      });
     }
 
-    if (insertRowAfter) {
+    if (insertRowAfter && this.hasNewRowDraftValues()) {
       this.commitFirstRowAddRow();
     }
   }
 
   public onNewRowCellKeydown(event: KeyboardEvent, colId: string): void {
-    if (event.key === 'Enter') {
+    const targetEl = event.target as HTMLElement | null;
+    if (event.key === 'Enter' && !event.shiftKey) {
       event.preventDefault();
       event.stopPropagation();
-      this.commitNewRowCellEdit(true);
+      this.commitNewRowLiveCellDraft(colId, targetEl);
+      if (this.hasNewRowDraftValues()) {
+        this.commitFirstRowAddRow();
+      }
       return;
     }
     if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
-      this.editingNewRowColId.set(null);
+      this.newRowLiveDraftMap.delete(colId);
+      const col = this.columns().find((c) => c.id === colId);
+      if (col && targetEl && targetEl.isContentEditable) {
+        targetEl.textContent = this.getNewRowEditableCellDomText(col);
+      }
+      targetEl?.blur();
+      return;
+    }
+    if (event.key === 'ArrowDown' && targetEl?.tagName !== 'SELECT') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.commitNewRowLiveCellDraft(colId, targetEl);
+      if (this.hasNewRowDraftValues()) {
+        this.commitFirstRowAddRow();
+      }
+      const firstRow = this.visibleRows()[0];
+      if (firstRow) {
+        this.selectCell(firstRow.id, colId);
+        if (this.isBrowser) {
+          setTimeout(() => {
+            const el = document.getElementById(`grid-cell-${firstRow.id}-${colId}`);
+            if (el) {
+              el.focus();
+              this.placeCaretAtEndOfElement(el);
+            }
+          }, 15);
+        }
+      }
       return;
     }
     if (event.key === 'Tab') {
       event.preventDefault();
       event.stopPropagation();
-      this.commitNewRowCellEdit(false);
+      this.commitNewRowLiveCellDraft(colId, targetEl);
       const editableCols = this.sortedColumns().filter(
         (c) => !this.isProtectedIdColumn(c) && c.colType !== 'formula'
       );
@@ -4215,9 +6400,12 @@ export class App implements OnInit, OnDestroy {
       if (currIdx >= 0) {
         const nextIdx = event.shiftKey ? currIdx - 1 : currIdx + 1;
         if (nextIdx >= 0 && nextIdx < editableCols.length) {
-          this.startNewRowCellEdit(editableCols[nextIdx].id);
+          this.focusFirstRowCellDom(editableCols[nextIdx].id);
         } else if (!event.shiftKey && this.hasNewRowDraftValues()) {
           this.commitFirstRowAddRow();
+          if (editableCols[0]) {
+            this.focusFirstRowCellDom(editableCols[0].id);
+          }
         }
       }
     }
@@ -4227,6 +6415,7 @@ export class App implements OnInit, OnDestroy {
     event?.stopPropagation();
     const col = this.columns().find((c) => c.id === colId);
     if (!col || this.isProtectedIdColumn(col)) return;
+    this.onDataRowFocusIn(this.newRowSentinelId);
     const curr = this.getNewRowCellDisplayValue(col) === true;
     const nextVal = !curr;
     this.newRowDraftCells.update((prev) => ({
@@ -4240,8 +6429,11 @@ export class App implements OnInit, OnDestroy {
     event?.stopPropagation();
     this.editingNewRowColId.set(null);
     this.newRowCellEditControl.setValue('');
+    this.newRowLiveDraftMap.clear();
+    this.hasNewRowLiveDraft.set(false);
     this.newRowDraftCells.set({});
     this.newRowValidationErrors.set({});
+    this.clearNewRowDomElements();
   }
 
   public resetFirstRowFieldsFromMenu(event?: Event): void {
@@ -4289,6 +6481,7 @@ export class App implements OnInit, OnDestroy {
 
   public commitFirstRowAddRow(event?: Event): void {
     event?.stopPropagation();
+    this.commitAllNewRowLiveDrafts();
     if (this.editingNewRowColId()) {
       this.commitNewRowCellEdit(false);
     }
@@ -4298,8 +6491,10 @@ export class App implements OnInit, OnDestroy {
     const nowIso = new Date().toISOString();
     const currentRows = [...this.rows()].sort((a, b) => a.orderIndex - b.orderIndex);
     const nextIdentity = this.computeNextIdentityValue(currentRows);
-    const maxOrder =
-      currentRows.reduce((max, r) => Math.max(max, r.orderIndex), 0) || 0;
+    const maxOrder = Math.max(
+      currentRows.reduce((max, r) => Math.max(max, r.orderIndex), 0) || 0,
+      this.dbTotalRows() * 10
+    );
 
     const cells: Record<string, CellPrimitive> = {};
     const fieldErrors: Record<string, string> = {};
@@ -4347,10 +6542,13 @@ export class App implements OnInit, OnDestroy {
     };
 
     // Reset the First Row immediately back to empty so it is always ready for the next row
+    this.newRowLiveDraftMap.clear();
+    this.hasNewRowLiveDraft.set(false);
     this.newRowDraftCells.set({});
     this.newRowValidationErrors.set({});
     this.editingNewRowColId.set(null);
     this.newRowCellEditControl.setValue('');
+    this.clearNewRowDomElements();
 
     this.recordHistorySnapshot('Add Row from First Row');
     this.rows.update((list) => [...list, createdRow]);
@@ -4447,8 +6645,10 @@ export class App implements OnInit, OnDestroy {
       const nowIso = new Date().toISOString();
       const currentRows = [...this.rows()].sort((a, b) => a.orderIndex - b.orderIndex);
       const nextIdentity = this.computeNextIdentityValue(currentRows);
-      const maxOrder =
-        currentRows.reduce((max, r) => Math.max(max, r.orderIndex), 0) || 0;
+      const maxOrder = Math.max(
+        currentRows.reduce((max, r) => Math.max(max, r.orderIndex), 0) || 0,
+        (this.dbTotalRows() + rIdx) * 10
+      );
 
       const cells: Record<string, CellPrimitive> = {};
       for (const col of workingCols) {
@@ -4616,7 +6816,8 @@ export class App implements OnInit, OnDestroy {
     mutatedCols: GridColumn[],
     actionType: string,
     actionDetail: string,
-    applyDefaultToAllRowsForColId?: string
+    applyDefaultToAllRowsForColId?: string,
+    renamedColumns?: { oldName: string; newName: string }[]
   ): void {
     const cols = this.sortedColumns();
     const nextErrors: Record<string, string> = { ...this.cellValidationErrors() };
@@ -4715,7 +6916,8 @@ export class App implements OnInit, OnDestroy {
           [],
           colsToSync,
           undefined,
-          applyDefaultToAllRowsForColId
+          applyDefaultToAllRowsForColId,
+          renamedColumns
         );
       }
       this.invalidCellKey.set(Object.keys(nextErrors)[0] || null);
@@ -4740,7 +6942,8 @@ export class App implements OnInit, OnDestroy {
         newlyValidatedRows,
         colsToSync,
         undefined,
-        applyDefaultToAllRowsForColId
+        applyDefaultToAllRowsForColId,
+        renamedColumns
       );
 
       if (totalErrorCells === 0) {
@@ -4766,7 +6969,8 @@ export class App implements OnInit, OnDestroy {
     const pkCol = this.columns().find((c) => c.isPrimaryKey || c.isIdentity);
     const seed = pkCol?.identitySeed ?? 1;
     const increment = pkCol?.identityIncrement ?? 1;
-    if (!pkCol || existingRows.length === 0) return seed;
+    const totalInDb = this.dbTotalRows();
+    if (!pkCol || (existingRows.length === 0 && totalInDb === 0)) return seed;
 
     let maxVal = seed - increment;
     for (const r of existingRows) {
@@ -4776,7 +6980,8 @@ export class App implements OnInit, OnDestroy {
         maxVal = num;
       }
     }
-    return maxVal + increment;
+    const dbFloor = totalInDb > existingRows.length ? seed + (totalInDb - 1) * increment : maxVal;
+    return Math.max(maxVal, dbFloor) + increment;
   }
 
   public toggleSelectAllFiltered(): void {
@@ -4893,7 +7098,7 @@ export class App implements OnInit, OnDestroy {
           } else if (col.colType === 'lookup') {
             const items = getLookupOptions(col);
             const activeItem = items.find((i) => i.isActive !== false) || items[0];
-            cellVal = activeItem ? activeItem.name : '';
+            cellVal = activeItem ? activeItem.json : '';
           } else {
             cellVal = col.required ? 'New Record' : '';
           }
@@ -4961,7 +7166,7 @@ export class App implements OnInit, OnDestroy {
       } else if (col.colType === 'lookup') {
         const items = getLookupOptions(col);
         const activeItem = items.find((i) => i.isActive !== false) || items[0];
-        defaults[col.id] = activeItem ? activeItem.name : '';
+        defaults[col.id] = activeItem ? activeItem.json : '';
       } else {
         defaults[col.id] = '';
       }
@@ -5552,7 +7757,10 @@ export class App implements OnInit, OnDestroy {
         cells: {
           ...r.cells,
           ...(clip.columnCellsSnapshot[r.id] !== undefined
-            ? { [copyName]: clip.columnCellsSnapshot[r.id] }
+            ? {
+                [copyName]: clip.columnCellsSnapshot[r.id],
+                [newCol.id]: clip.columnCellsSnapshot[r.id],
+              }
             : {}),
         },
         updatedAt: nowIso,
@@ -5600,6 +7808,7 @@ export class App implements OnInit, OnDestroy {
       width: 150,
       required: false,
       isNullable: true,
+      lookupTableName: '',
       optionsCsv: 'High, Medium, Low',
       formula: '=[Units] * [Unit Cost]',
       defaultValue: '',
@@ -5637,14 +7846,23 @@ export class App implements OnInit, OnDestroy {
     this.targetColumnSchemaDbName.set(targetDbName || this.activeDatabaseName());
     this.targetColumnSchemaTableName.set(targetTableName || this.activeTableName());
     const isNullAllowed = col.isNullable !== undefined ? col.isNullable : !col.required;
+    const targetDb = targetDbName || this.activeDatabaseName();
+    let initialFormula = col.formula || '=[Units] * [Unit Cost]';
+    if (col.colType === 'lookup') {
+      const targetCols = col.lookupTableName
+        ? this.getTargetLookupTableColumns(targetDb, col.lookupTableName)
+        : [];
+      initialFormula = resolveLookupTemplateAndColumns(col.formula, targetCols).normalizedTemplate;
+    }
     this.columnSchemaForm.reset({
       name: col.name,
       colType: col.colType,
       width: col.width,
       required: !isNullAllowed,
       isNullable: isNullAllowed,
+      lookupTableName: col.lookupTableName || '',
       optionsCsv: col.optionsCsv || 'Option A, Option B',
-      formula: col.formula || '=[Units] * [Unit Cost]',
+      formula: initialFormula,
       defaultValue: col.defaultValue !== undefined ? String(col.defaultValue) : '',
     });
     this.activeModal.set('column_schema');
@@ -5655,19 +7873,84 @@ export class App implements OnInit, OnDestroy {
     this.schemaModalColType.set(selectedType);
     const currentOpts = (this.columnSchemaForm.controls.optionsCsv.value || '').trim();
     if (selectedType === 'lookup') {
-      if (
+      const currentLinked = (this.columnSchemaForm.controls.lookupTableName.value || '').trim();
+      const avail = this.getAvailableLookupTablesForSchemaModal();
+      const preferred =
+        avail.find((t) => t.tableName.toLowerCase() === currentLinked.toLowerCase()) ||
+        avail.find((t) => t.tableName.toLowerCase().includes('lookup')) ||
+        avail[0];
+      if (preferred && !currentLinked) {
+        this.columnSchemaForm.controls.lookupTableName.setValue(preferred.tableName);
+      }
+      const resolvedTable =
+        this.columnSchemaForm.controls.lookupTableName.value || preferred?.tableName || '';
+      if (resolvedTable) {
+        const dbName = this.targetColumnSchemaDbName() || this.activeDatabaseName();
+        const targetCols = this.getTargetLookupTableColumns(dbName, resolvedTable);
+        const currentFormula = this.columnSchemaForm.controls.formula.value || '';
+        const { normalizedTemplate } = resolveLookupTemplateAndColumns(
+          currentFormula.startsWith('=') ? '' : currentFormula,
+          targetCols
+        );
+        this.columnSchemaForm.controls.formula.setValue(normalizedTemplate);
+        const previewJson = this.buildClientLinkedLookupPreviewJson(
+          dbName,
+          resolvedTable,
+          normalizedTemplate
+        );
+        if (previewJson) {
+          this.columnSchemaForm.controls.optionsCsv.setValue(previewJson);
+        }
+        const items = this.getSchemaModalLookupItems();
+        if (items.length > 0 && !this.columnSchemaForm.controls.defaultValue.value) {
+          const activeItem = items.find((i) => i.isActive !== false) || items[0];
+          this.columnSchemaForm.controls.defaultValue.setValue(activeItem.json);
+        }
+      } else if (
         !currentOpts ||
         currentOpts === 'High, Medium, Low' ||
         currentOpts === 'Option A, Option B'
       ) {
+        this.columnSchemaForm.controls.formula.setValue('{[ID], [Name]}');
         this.columnSchemaForm.controls.optionsCsv.setValue(
-          '[{id: 1, name: car}, {id: 2, name: bus}, {id: 3, name: truck}]'
+          '[{"ID":1,"Name":"car"},{"ID":2,"Name":"bus"},{"ID":3,"Name":"truck"}]'
         );
       }
     } else if (selectedType === 'dropdown') {
+      this.columnSchemaForm.controls.lookupTableName.setValue('');
       if (!currentOpts || currentOpts.startsWith('[')) {
         this.columnSchemaForm.controls.optionsCsv.setValue('High, Medium, Low');
       }
+    } else if (selectedType === 'formula') {
+      this.columnSchemaForm.controls.lookupTableName.setValue('');
+      const currentFormula = (this.columnSchemaForm.controls.formula.value || '').trim();
+      if (!currentFormula || currentFormula.startsWith('{')) {
+        this.columnSchemaForm.controls.formula.setValue('=[Units] * [Unit Cost]');
+      }
+    } else {
+      this.columnSchemaForm.controls.lookupTableName.setValue('');
+    }
+  }
+
+  public onSchemaLookupTableChange(): void {
+    const selectedTable = (this.columnSchemaForm.controls.lookupTableName.value || '').trim();
+    if (!selectedTable) return;
+    const dbName = this.targetColumnSchemaDbName() || this.activeDatabaseName();
+    const targetCols = this.getTargetLookupTableColumns(dbName, selectedTable);
+    const { normalizedTemplate } = resolveLookupTemplateAndColumns('', targetCols);
+    this.columnSchemaForm.controls.formula.setValue(normalizedTemplate);
+    const previewJson = this.buildClientLinkedLookupPreviewJson(
+      dbName,
+      selectedTable,
+      normalizedTemplate
+    );
+    if (previewJson) {
+      this.columnSchemaForm.controls.optionsCsv.setValue(previewJson);
+    }
+    const items = this.getSchemaModalLookupItems();
+    if (items.length > 0) {
+      const activeItem = items.find((i) => i.isActive !== false) || items[0];
+      this.columnSchemaForm.controls.defaultValue.setValue(activeItem.json);
     }
   }
 
@@ -5714,18 +7997,17 @@ export class App implements OnInit, OnDestroy {
       return matched || opts[0] || '';
     }
     if (col.colType === 'lookup') {
-      if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
-        return trimmed;
-      }
       const items = getLookupOptions(col);
-      const matched = items.find(
-        (i) =>
-          String(i.id).toLowerCase() === trimmed.toLowerCase() ||
-          i.name.toLowerCase() === trimmed.toLowerCase()
-      );
-      if (matched) return matched.name;
-      const activeDefault = items.find((i) => i.isActive !== false) || items[0];
-      return trimmed || (col.required && activeDefault ? activeDefault.name : '');
+      if (items.length > 0) {
+        const matched = matchLookupItemFromRaw(items, trimmed);
+        if (matched) return matched.json;
+        const activeDefault = items.find((i) => i.isActive !== false) || items[0];
+        if (!trimmed) {
+          return col.required && activeDefault ? activeDefault.json : '';
+        }
+        return activeDefault ? activeDefault.json : trimmed;
+      }
+      return trimmed;
     }
     if (col.colType === 'text' || col.colType === 'varchar_max') {
       return trimmed.slice(0, 2000) || (col.required ? 'TBD' : '');
@@ -5765,6 +8047,11 @@ export class App implements OnInit, OnDestroy {
         return;
       }
 
+      const renamedColumnsPayload =
+        prevCol && prevCol.name !== cleanName
+          ? [{ oldName: prevCol.name, newName: cleanName }]
+          : undefined;
+
       if (!isTargetActiveTable) {
         const hasExplicitDefault = String(val.defaultValue ?? '').trim().length > 0;
         const updatedCols = existingTargetCols.map((c) => {
@@ -5779,6 +8066,8 @@ export class App implements OnInit, OnDestroy {
             required: isPk ? true : isRequired,
             isNullable: isPk ? false : isNullAllowed,
             defaultValue: String(val.defaultValue ?? '').trim(),
+            lookupTableName:
+              val.colType === 'lookup' ? (val.lookupTableName || '').trim() : '',
             optionsCsv:
               val.colType === 'dropdown' || val.colType === 'lookup'
                 ? val.optionsCsv.trim()
@@ -5788,6 +8077,8 @@ export class App implements OnInit, OnDestroy {
                 ? val.formula.trim().startsWith('=')
                   ? val.formula.trim()
                   : `=${val.formula.trim()}`
+                : val.colType === 'lookup'
+                ? val.formula.trim() || '{[ID]}'
                 : '',
           };
         });
@@ -5821,6 +8112,8 @@ export class App implements OnInit, OnDestroy {
             ok: boolean;
             databases?: DbDatabaseSummary[];
             tables?: DbTableSummary[];
+            columns?: GridColumn[];
+            rows?: GridRow[];
             activities?: ActivityLogItem[];
           }>('/api/workspace/sync', {
             clientId: this.currentClientId(),
@@ -5832,6 +8125,7 @@ export class App implements OnInit, OnDestroy {
             tableName: targetTableName,
             preserveActiveContext: true,
             columns: updatedCols,
+            renamedColumns: renamedColumnsPayload,
             applyDefaultToAllRowsForColId: hasExplicitDefault ? cleanName : undefined,
           })
           .subscribe({
@@ -5839,6 +8133,14 @@ export class App implements OnInit, OnDestroy {
               if (Array.isArray(res?.databases)) {
                 this.databases.set(res.databases);
                 this.syncTablesSignalForActiveDatabase(res.databases);
+              }
+              if (Array.isArray(res?.columns)) {
+                this.columns.set(res.columns);
+                if (Array.isArray(res?.rows)) {
+                  const sanitized = this.sanitizeClientRowsAgainstColumns(res.columns, res.rows);
+                  this.rows.set(sanitized);
+                  this.snapshotValidRows(sanitized);
+                }
               }
               if (Array.isArray(res?.activities)) {
                 this.activities.set(res.activities);
@@ -5867,6 +8169,8 @@ export class App implements OnInit, OnDestroy {
               required: isPk ? true : isRequired,
               isNullable: isPk ? false : isNullAllowed,
               defaultValue: String(val.defaultValue ?? '').trim(),
+              lookupTableName:
+                val.colType === 'lookup' ? (val.lookupTableName || '').trim() : '',
               optionsCsv:
                 val.colType === 'dropdown' || val.colType === 'lookup'
                   ? val.optionsCsv.trim()
@@ -5876,6 +8180,8 @@ export class App implements OnInit, OnDestroy {
                   ? val.formula.trim().startsWith('=')
                     ? val.formula.trim()
                     : `=${val.formula.trim()}`
+                  : val.colType === 'lookup'
+                  ? val.formula.trim() || '{[ID]}'
                   : '',
             };
             return updatedColRef;
@@ -5947,7 +8253,8 @@ export class App implements OnInit, OnDestroy {
           [updatedColRef],
           'Field Schema Updated',
           `Updated field "${cleanName}" (${val.colType})`,
-          hasExplicitDefault ? updatedColRef.id : undefined
+          hasExplicitDefault ? updatedColRef.id : undefined,
+          renamedColumnsPayload
         );
       }
     } else {
@@ -5968,6 +8275,8 @@ export class App implements OnInit, OnDestroy {
         required: isRequired,
         isNullable: isNullAllowed,
         defaultValue: String(val.defaultValue ?? '').trim(),
+        lookupTableName:
+          val.colType === 'lookup' ? (val.lookupTableName || '').trim() : '',
         optionsCsv:
           val.colType === 'dropdown' || val.colType === 'lookup'
             ? val.optionsCsv.trim()
@@ -5977,6 +8286,8 @@ export class App implements OnInit, OnDestroy {
             ? val.formula.trim().startsWith('=')
               ? val.formula.trim()
               : `=${val.formula.trim()}`
+            : val.colType === 'lookup'
+            ? val.formula.trim() || '{[ID]}'
             : '',
       };
 
@@ -6011,6 +8322,8 @@ export class App implements OnInit, OnDestroy {
             ok: boolean;
             databases?: DbDatabaseSummary[];
             tables?: DbTableSummary[];
+            columns?: GridColumn[];
+            rows?: GridRow[];
             activities?: ActivityLogItem[];
           }>('/api/workspace/sync', {
             clientId: this.currentClientId(),
@@ -6029,6 +8342,14 @@ export class App implements OnInit, OnDestroy {
               if (Array.isArray(res?.databases)) {
                 this.databases.set(res.databases);
                 this.syncTablesSignalForActiveDatabase(res.databases);
+              }
+              if (Array.isArray(res?.columns)) {
+                this.columns.set(res.columns);
+                if (Array.isArray(res?.rows)) {
+                  const sanitized = this.sanitizeClientRowsAgainstColumns(res.columns, res.rows);
+                  this.rows.set(sanitized);
+                  this.snapshotValidRows(sanitized);
+                }
               }
               if (Array.isArray(res?.activities)) {
                 this.activities.set(res.activities);
@@ -6525,11 +8846,35 @@ export class App implements OnInit, OnDestroy {
   // AUTOMATIC SCROLL-BASED LAZY LOADING (10 ROWS AT A TIME FROM DATABASE)
   // =========================================================================
 
+  public onTheadWheel(event: WheelEvent): void {
+    const theadEl = event.currentTarget as HTMLElement | null;
+    const tbodyEl = theadEl?.closest('table')?.querySelector('tbody') as HTMLElement | null;
+    if (!tbodyEl) return;
+    if (event.deltaX !== 0) {
+      tbodyEl.scrollLeft += event.deltaX;
+      if (theadEl) {
+        theadEl.scrollLeft = tbodyEl.scrollLeft;
+      }
+    }
+    if (event.deltaY !== 0) {
+      tbodyEl.scrollTop += event.deltaY;
+    }
+  }
+
   public onTableScroll(event: Event): void {
     const el = (event.currentTarget || event.target) as HTMLElement | null;
     if (!el) return;
+    const tableEl = el.closest('table');
+    const theadEl = tableEl?.querySelector('thead') as HTMLElement | null;
+    if (theadEl && theadEl.scrollLeft !== el.scrollLeft) {
+      theadEl.scrollLeft = el.scrollLeft;
+    }
     const remainingBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (remainingBottom <= 180 && this.hasMoreLazyRows() && !this.isLazyLoadingMore()) {
+    if (
+      (remainingBottom <= 440 && el.scrollTop > 10) &&
+      this.hasMoreLazyRows() &&
+      !this.isLazyLoadingMore()
+    ) {
       this.loadNextLazyBatch();
     }
   }
@@ -6539,7 +8884,7 @@ export class App implements OnInit, OnDestroy {
     const el = event.currentTarget as HTMLElement | null;
     if (!el) return;
     const remainingBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (remainingBottom <= 200 && this.hasMoreLazyRows() && !this.isLazyLoadingMore()) {
+    if (remainingBottom <= 460 && this.hasMoreLazyRows() && !this.isLazyLoadingMore()) {
       this.loadNextLazyBatch();
     }
   }
@@ -6548,7 +8893,7 @@ export class App implements OnInit, OnDestroy {
     const el = event.currentTarget as HTMLElement | null;
     if (!el) return;
     const remainingBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    if (remainingBottom <= 200 && this.hasMoreLazyRows() && !this.isLazyLoadingMore()) {
+    if (remainingBottom <= 460 && this.hasMoreLazyRows() && !this.isLazyLoadingMore()) {
       this.loadNextLazyBatch();
     }
   }
@@ -6690,6 +9035,11 @@ export class App implements OnInit, OnDestroy {
       return JSON.stringify(old) !== JSON.stringify(c);
     });
 
+    const restoredRowIdSet = new Set(restoredRows.map((r) => r.id));
+    const deletedRowIds = prevRows
+      .filter((r) => !restoredRowIdSet.has(r.id))
+      .map((r) => r.id);
+
     this.editingCell.set(null);
     this.workspaceName.set(snap.workspaceName);
     this.columns.set(restoredCols);
@@ -6710,7 +9060,8 @@ export class App implements OnInit, OnDestroy {
       changedOrAddedRows[0],
       changedOrAddedCols[0],
       changedOrAddedRows,
-      changedOrAddedCols
+      changedOrAddedCols,
+      deletedRowIds.length > 0 ? deletedRowIds : undefined
     );
 
     const errCount = Object.keys(snap.cellValidationErrors).length;
@@ -6882,9 +9233,12 @@ export class App implements OnInit, OnDestroy {
         this.pasteRowsIntoFirstRowOneByOne(rawText, startCol);
         return;
       }
-      // If the user is in inline cell edit mode and pastes a multi-cell / multi-row / multi-column block from Excel,
+      // If the user is in a grid cell (contenteditable or inline input) and pastes a multi-cell / multi-row / multi-column block from Excel,
       // intercept it and apply it across the spreadsheet grid!
-      if (this.editingCell() && (rawText.includes('\t') || rawText.includes('\n'))) {
+      if (
+        (this.editingCell() || this.activeCell()) &&
+        (rawText.includes('\t') || rawText.includes('\n'))
+      ) {
         const matrix = this.parseExcelClipboardMatrix(rawText);
         if (matrix.length > 1 || (matrix[0] && matrix[0].length > 1)) {
           event.preventDefault();
@@ -6892,6 +9246,15 @@ export class App implements OnInit, OnDestroy {
           this.applyExcelPasteText(rawText, 'overlay');
           return;
         }
+      }
+      // If pasting plain text into a contenteditable cell, strip rich HTML formatting
+      if (target?.isContentEditable && rawText.length > 0) {
+        event.preventDefault();
+        const singleLine = rawText.replace(/\r?\n/g, ' ').trim();
+        target.textContent = singleLine;
+        target.dispatchEvent(new Event('input', { bubbles: true }));
+        this.placeCaretAtEndOfElement(target);
+        return;
       }
       // Otherwise let normal input paste happen (e.g. pasting part of a cell while inline editing)
       return;
@@ -7129,7 +9492,11 @@ export class App implements OnInit, OnDestroy {
           if (!rowIdSet.has(r.id)) return r;
           return {
             ...r,
-            cells: { ...r.cells, [targetCol.id]: norm.value },
+            cells: {
+              ...r.cells,
+              [targetCol.id]: norm.value,
+              [targetCol.name]: norm.value,
+            },
             updatedBy: this.currentUserName(),
             updatedAt: nowIso,
           };
@@ -7154,8 +9521,10 @@ export class App implements OnInit, OnDestroy {
           const nextCells = { ...r.cells };
           for (let cIdx = 0; cIdx < Math.min(rowCells.length, workingCols.length); cIdx++) {
             const col = workingCols[cIdx];
-            if (col.colType === 'formula') continue;
-            nextCells[col.id] = this.normalizeExcelValueForColumn(col, rowCells[cIdx]).value;
+            if (col.colType === 'formula' || this.isProtectedIdColumn(col)) continue;
+            const normVal = this.normalizeExcelValueForColumn(col, rowCells[cIdx]).value;
+            nextCells[col.id] = normVal;
+            nextCells[col.name] = normVal;
           }
           return {
             ...r,
@@ -7235,7 +9604,11 @@ export class App implements OnInit, OnDestroy {
           if (!targetRowIds.has(r.id)) return r;
           return {
             ...r,
-            cells: { ...r.cells, [targetCol.id]: norm.value },
+            cells: {
+              ...r.cells,
+              [targetCol.id]: norm.value,
+              [targetCol.name]: norm.value,
+            },
             updatedBy: this.currentUserName(),
             updatedAt: nowIso,
           };
@@ -7273,6 +9646,7 @@ export class App implements OnInit, OnDestroy {
           cells: {
             ...targetViewRow.cells,
             [targetCol.id]: norm.value,
+            [targetCol.name]: norm.value,
           },
           updatedBy: this.currentUserName(),
           updatedAt: nowIso,
@@ -7430,6 +9804,7 @@ export class App implements OnInit, OnDestroy {
           cells: {
             ...r.cells,
             [targetCol.id]: norm.value,
+            [targetCol.name]: norm.value,
           },
           updatedBy: this.currentUserName(),
           updatedAt: nowIso,
@@ -7547,12 +9922,14 @@ export class App implements OnInit, OnDestroy {
       const cells: Record<string, CellPrimitive> = {};
       for (const col of workingCols) {
         if (col.colType === 'formula') continue;
-        if (col.id === 'col_code') cells[col.id] = `GP-${seqNum}`;
-        else if (col.colType === 'number') cells[col.id] = 0;
-        else if (col.colType === 'checkbox') cells[col.id] = false;
-        else if (col.colType === 'date') cells[col.id] = nowIso.slice(0, 10);
-        else if (col.colType === 'dropdown') cells[col.id] = getDropdownOptions(col)[0] || '';
-        else cells[col.id] = '';
+        let defVal: CellPrimitive = '';
+        if (col.id === 'col_code') defVal = `GP-${seqNum}`;
+        else if (col.colType === 'number') defVal = 0;
+        else if (col.colType === 'checkbox') defVal = false;
+        else if (col.colType === 'date') defVal = nowIso.slice(0, 10);
+        else if (col.colType === 'dropdown') defVal = getDropdownOptions(col)[0] || '';
+        cells[col.id] = defVal;
+        cells[col.name] = defVal;
       }
       return cells;
     };
@@ -7591,9 +9968,11 @@ export class App implements OnInit, OnDestroy {
         }
 
         const col = workingCols[targetColIdx];
+        if (col.colType === 'formula') continue;
         const rawCellStr = pastedRowCells[cOffset];
         const norm = this.normalizeExcelValueForColumn(col, rawCellStr);
         baseCells[col.id] = norm.value;
+        baseCells[col.name] = norm.value;
       }
 
       if (targetViewRow) {
@@ -7728,10 +10107,7 @@ export class App implements OnInit, OnDestroy {
   }
 
   public formatLookupOptionLabel(item: LookupItem): string {
-    if (item.isActive !== undefined) {
-      return `${item.id}: ${item.name} (isactive: ${item.isActive ? 1 : 0})`;
-    }
-    return `${item.id}: ${item.name}`;
+    return item.json || `{"ID":${JSON.stringify(item.id)},"Name":${JSON.stringify(item.name)}}`;
   }
 
   public getColumnNameById(colId: string): string {
@@ -8259,6 +10635,15 @@ export class App implements OnInit, OnDestroy {
     const onUp = () => {
       this.resizingColId.set(null);
       this.syncLocalActiveTableIntoDatabasesTree();
+      const updatedCol = this.columns().find((c) => c.id === col.id);
+      if (updatedCol && updatedCol.width !== startWidth) {
+        this.persistToCloud(
+          'Column Resized',
+          `Resized column "${updatedCol.name}" to ${updatedCol.width}px`,
+          undefined,
+          updatedCol
+        );
+      }
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       window.removeEventListener('touchmove', onMove);
@@ -8289,10 +10674,25 @@ export class App implements OnInit, OnDestroy {
     }
     const idealWidth = Math.max(54, Math.min(480, Math.round(maxCharLen * 7.5 + 38)));
     const nextWidth = Math.abs((col.width || 140) - idealWidth) <= 6 ? 64 : idealWidth;
+    let updatedCol: GridColumn | undefined;
     this.columns.update((cols) =>
-      cols.map((c) => (c.id === col.id ? { ...c, width: nextWidth } : c))
+      cols.map((c) => {
+        if (c.id === col.id) {
+          updatedCol = { ...c, width: nextWidth };
+          return updatedCol;
+        }
+        return c;
+      })
     );
     this.syncLocalActiveTableIntoDatabasesTree();
+    if (updatedCol) {
+      this.persistToCloud(
+        'Column Auto-Fit',
+        `Auto-fit column "${updatedCol.name}" width to ${nextWidth}px`,
+        undefined,
+        updatedCol
+      );
+    }
   }
 
   // =========================================================================

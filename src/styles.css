@@ -485,7 +485,9 @@ mat-icon.text-purple-700 {
   flex: 1 1 0%;
   min-height: 0;
   max-height: none;
-  overflow: auto;
+  overflow: hidden !important;
+  display: flex;
+  flex-direction: column;
   position: relative;
   background: #FFFFFF;
   border: 1px solid #cbd5e1;
@@ -576,17 +578,45 @@ mat-icon.text-purple-700 {
 
 
 .gridpulse-table {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0%;
+  min-height: 0;
+  height: 100%;
+  width: 100%;
+  min-width: 100%;
   border-collapse: separate;
   border-spacing: 0;
+  margin-bottom: 0 !important;
+  overflow: hidden;
+}
+
+.gridpulse-table thead {
+  display: block;
+  flex: 0 0 auto;
+  width: 100%;
+  overflow: hidden !important;
+  background-color: #f8fafc;
+  z-index: 25;
+}
+
+.gridpulse-table thead tr {
+  display: flex;
   width: max-content;
   min-width: 100%;
-  margin-bottom: 0 !important;
+  align-items: stretch;
+}
+
+.gridpulse-table thead tr::after {
+  content: '';
+  flex: 0 0 6px;
+  width: 6px;
+  background-color: #f8fafc;
+  border-bottom: 2px solid #000000;
 }
 
 .gridpulse-table thead th {
-  position: sticky;
-  top: 0;
-  z-index: 20;
+  flex: 0 0 auto;
   background-color: #f8fafc;
   border-bottom: 2px solid #000000;
   border-right: 1px solid #cbd5e1;
@@ -598,33 +628,159 @@ mat-icon.text-purple-700 {
   user-select: none;
 }
 
+.gridpulse-table tbody {
+  display: block;
+  flex: 1 1 0%;
+  min-height: 0;
+  width: 100%;
+  overflow-y: auto !important;
+  overflow-x: auto !important;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
 .gridpulse-table tbody tr {
+  display: flex;
+  width: max-content;
+  min-width: 100%;
+  align-items: stretch;
   transition:
     background-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
     box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
+.gridpulse-table tbody tr.gridpulse-lazy-sentinel-row {
+  display: flex;
+  width: 100%;
+  min-width: 100%;
+}
+
+.gridpulse-table tbody tr.gridpulse-lazy-sentinel-row td {
+  flex: 1 1 100%;
+  width: 100%;
+}
+
 .gridpulse-table tbody td {
-  border-bottom: 1px solid #e2e8f0;
-  border-right: 1px solid #e2e8f0;
-  padding: 0;
-  height: 38px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid #cbd5e1;
+  border-right: 1px solid #cbd5e1;
+  padding: 0 !important;
+  margin: 0 !important;
+  height: 30px;
   vertical-align: middle;
-  font-size: 0.825rem;
+  font-size: 0.8125rem;
   background-color: #FFFFFF;
   color: #000000;
   transition:
-    background-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
-    border-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
-    box-shadow 180ms cubic-bezier(0.22, 1, 0.36, 1),
-    color 180ms cubic-bezier(0.22, 1, 0.36, 1);
+    background-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    box-shadow 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 140ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .gridpulse-table tbody td > div {
+  margin: 0 !important;
   transition:
-    background-color 180ms cubic-bezier(0.22, 1, 0.36, 1),
-    color 180ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+    background-color 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    color 140ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Seamless Excel Cell Contenteditable, Inputs & Selects (zero margin, zero inner border, 100% cell fill) */
+.excel-cell-editable,
+.excel-cell-readonly {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 29px;
+  line-height: 21px;
+  padding: 4px 6px !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent;
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: text;
+}
+
+.excel-cell-readonly {
+  cursor: default;
+  user-select: text;
+}
+
+.excel-cell-editable:focus {
+  outline: none !important;
+  box-shadow: none !important;
+  text-overflow: clip;
+}
+
+.excel-cell-editable:empty::before {
+  content: attr(data-placeholder);
+  color: #94a3b8;
+  font-style: italic;
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.excel-cell-select,
+.excel-cell-input {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  min-height: 29px;
+  margin: 0 !important;
+  padding: 2px 6px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background-color: transparent !important;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.excel-cell-select:focus,
+.excel-cell-input:focus {
+  border: 0 !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* Excel Schema Table (Create / Edit Table Modal) seamless cell inputs */
+.excel-schema-table tbody td {
+  padding: 0 !important;
+  margin: 0 !important;
+  vertical-align: middle;
+  border-color: #cbd5e1;
+}
+
+.excel-schema-table tbody td:focus-within {
+  box-shadow: inset 0 0 0 2px #34A853 !important;
+  position: relative;
+  z-index: 5;
+}
+
+.excel-schema-table tbody td .form-control,
+.excel-schema-table tbody td .form-select,
+.excel-schema-table tbody td input:not([type='checkbox']):not([type='radio']),
+.excel-schema-table tbody td select {
+  width: 100% !important;
+  margin: 0 !important;
+  padding: 4px 6px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  outline: none !important;
+  min-height: 28px;
+  background-color: transparent !important;
+}
+
+.excel-schema-table tbody td .excel-subcell-stack > * + * {
+  border-top: 1px solid #cbd5e1 !important;
 }
 
 .gridpulse-table tbody tr:hover td {
@@ -653,6 +809,7 @@ mat-icon.text-purple-700 {
   position: sticky !important;
   left: 0;
   z-index: 15;
+  flex: 0 0 42px !important;
   width: 42px;
   min-width: 42px;
   max-width: 42px;
@@ -668,6 +825,7 @@ mat-icon.text-purple-700 {
   position: sticky !important;
   left: 42px;
   z-index: 15;
+  flex: 0 0 56px !important;
   width: 56px;
   min-width: 56px;
   max-width: 56px;
@@ -711,9 +869,10 @@ mat-icon.text-purple-700 {
   color: #000000 !important;
 }
 
-/* Active cell focus ring (#4285F4) */
-.cell-focused {
-  box-shadow: inset 0 0 0 2px #4285F4 !important;
+/* Active cell focus ring (Excel Green #34A853 / #4285F4) directly on the cell border */
+.cell-focused,
+.gridpulse-table tbody td:focus-within:not(.sticky-col-check):not(.sticky-col-index):not(.cell-invalid) {
+  box-shadow: inset 0 0 0 2px #34A853 !important;
   background-color: #FFFFFF !important;
   color: #000000 !important;
   z-index: 10;
@@ -1358,10 +1517,12 @@ mat-icon.text-purple-700 {
   border-color: #27272a !important;
 }
 
-[data-theme='classic-dark'] .gridpulse-table tbody td.cell-focused {
+[data-theme='classic-dark'] .gridpulse-table tbody td.cell-focused,
+[data-theme='classic-dark'] .gridpulse-table tbody td:focus-within:not(.sticky-col-check):not(.sticky-col-index):not(.cell-invalid),
+[data-theme='classic-dark'] .excel-schema-table tbody td:focus-within {
   background: #000000 !important;
   background-color: #000000 !important;
-  box-shadow: inset 0 0 0 2px #4285F4 !important;
+  box-shadow: inset 0 0 0 2px #34A853 !important;
   color: #FFFFFF !important;
 }
 
@@ -1512,16 +1673,38 @@ mat-icon.text-purple-700 {
   box-shadow: none !important;
 }
 
-[data-theme='classic-dark'] .excel-sheet-tab {
+/* Top & Footer Excel Sheet Tabs — Green lines clearly identify the selected tab */
+.excel-sheet-tab,
+.excel-top-tab {
+  border-top: 2px solid transparent;
+  border-bottom: 3px solid transparent;
+}
+
+.excel-sheet-tab.excel-sheet-tab-active,
+.excel-top-tab.excel-top-tab-active {
+  background-color: #FFFFFF !important;
+  color: #065f46 !important;
+  font-weight: 700 !important;
+  border-top: 2px solid #34A853 !important;
+  border-bottom: 3px solid #059669 !important;
+}
+
+[data-theme='classic-dark'] .excel-sheet-tab,
+[data-theme='classic-dark'] .excel-top-tab {
   background-color: #000000 !important;
   color: #9ca3af !important;
   border-color: #27272a !important;
+  border-top: 2px solid transparent !important;
+  border-bottom: 3px solid transparent !important;
 }
 
-[data-theme='classic-dark'] .excel-sheet-tab.excel-sheet-tab-active {
+[data-theme='classic-dark'] .excel-sheet-tab.excel-sheet-tab-active,
+[data-theme='classic-dark'] .excel-top-tab.excel-top-tab-active {
   background-color: #000000 !important;
   color: #FFFFFF !important;
+  font-weight: 700 !important;
   border-top: 2px solid #34A853 !important;
+  border-bottom: 3px solid #34A853 !important;
 }
 
 [data-theme='classic-dark'] .gridario-loader-overlay {
@@ -1625,32 +1808,79 @@ mat-icon.text-purple-700 {
 }
 
 /* ------------------------------------------------------------------------- */
-/* SMOOTH, THIN & PROFESSIONAL SCROLLBARS FOR CLASSIC LIGHT & CLASSIC DARK   */
+/* WINDOWS 11 STYLE THIN SCROLLBARS ACROSS UI (CLASSIC LIGHT & CLASSIC DARK) */
 /* ------------------------------------------------------------------------- */
+[data-theme='classic-dark'] .gridpulse-table thead tr::after {
+  background-color: #000000 !important;
+  border-bottom-color: #27272a !important;
+}
+
 *,
 *::before,
 *::after {
-  scrollbar-width: none !important;
-  -ms-overflow-style: none !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.48) transparent;
 }
 
 [data-theme='classic-dark'],
 [data-theme='classic-dark'] * {
-  scrollbar-width: none !important;
-  -ms-overflow-style: none !important;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(161, 161, 170, 0.48) transparent;
 }
 
 ::-webkit-scrollbar,
 *::-webkit-scrollbar {
-  width: 0px !important;
-  height: 0px !important;
-  display: none !important;
+  width: 6px !important;
+  height: 6px !important;
+  display: block !important;
   background: transparent !important;
 }
 
 ::-webkit-scrollbar-track,
+*::-webkit-scrollbar-track {
+  display: block !important;
+  background: transparent !important;
+  border-radius: 9999px;
+  margin: 2px;
+}
+
 ::-webkit-scrollbar-corner,
-::-webkit-scrollbar-thumb {
-  display: none !important;
+*::-webkit-scrollbar-corner {
   background: transparent !important;
 }
+
+::-webkit-scrollbar-thumb,
+*::-webkit-scrollbar-thumb {
+  display: block !important;
+  background-color: rgba(100, 116, 139, 0.48) !important;
+  border-radius: 9999px !important;
+  border: 1px solid transparent;
+  background-clip: padding-box;
+  transition: background-color 150ms ease;
+}
+
+::-webkit-scrollbar-thumb:hover,
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(71, 85, 105, 0.82) !important;
+}
+
+::-webkit-scrollbar-thumb:active,
+*::-webkit-scrollbar-thumb:active {
+  background-color: #4285F4 !important;
+}
+
+[data-theme='classic-dark'] ::-webkit-scrollbar-thumb,
+[data-theme='classic-dark'] *::-webkit-scrollbar-thumb {
+  background-color: rgba(161, 161, 170, 0.48) !important;
+}
+
+[data-theme='classic-dark'] ::-webkit-scrollbar-thumb:hover,
+[data-theme='classic-dark'] *::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(228, 228, 231, 0.82) !important;
+}
+
+[data-theme='classic-dark'] ::-webkit-scrollbar-thumb:active,
+[data-theme='classic-dark'] *::-webkit-scrollbar-thumb:active {
+  background-color: #4285F4 !important;
+}
+
