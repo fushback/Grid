@@ -108,9 +108,31 @@ export class OperationLoader {
 function resolveHttpOperationLabel(url: string, body: unknown): string {
   const payload = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>;
 
+  if (url.includes('/api/realtime/crud')) {
+    const crudAction = typeof payload['crudAction'] === 'string' ? payload['crudAction'] : '';
+    const inner = (payload['payload'] && typeof payload['payload'] === 'object'
+      ? payload['payload']
+      : {}) as Record<string, unknown>;
+    if (crudAction === 'get_workspace') {
+      const tbl = typeof inner['tableName'] === 'string' ? inner['tableName'] : '';
+      return tbl ? `Loading table "${tbl}"...` : 'Loading workspace data...';
+    }
+    if (crudAction === 'query_rows') {
+      if (inner['selectAll'] === true) {
+        return 'Selecting all rows...';
+      }
+      return 'Filtering & sorting table rows...';
+    }
+    if (crudAction === 'restore_version') {
+      return 'Restoring database version snapshot...';
+    }
+  }
   if (url.includes('/api/workspace/databases/delete')) {
     const db = typeof payload['databaseName'] === 'string' ? payload['databaseName'] : '';
     return db ? `Dropping database "${db}"...` : 'Dropping database...';
+  }
+  if (url.includes('/api/workspace/databases/rename')) {
+    return 'Renaming database...';
   }
   if (url.includes('/api/workspace/databases')) {
     const db = typeof payload['databaseName'] === 'string' ? payload['databaseName'] : '';
@@ -119,6 +141,10 @@ function resolveHttpOperationLabel(url: string, body: unknown): string {
   if (url.includes('/api/workspace/tables/delete')) {
     const tbl = typeof payload['tableName'] === 'string' ? payload['tableName'] : '';
     return tbl ? `Dropping table "${tbl}"...` : 'Dropping table...';
+  }
+  if (url.includes('/api/workspace/tables/rename')) {
+    const tbl = typeof payload['newTableName'] === 'string' ? payload['newTableName'] : '';
+    return tbl ? `Saving table "${tbl}" schema...` : 'Saving table schema...';
   }
   if (url.includes('/api/workspace/tables')) {
     const tbl = typeof payload['tableName'] === 'string' ? payload['tableName'] : '';
@@ -161,9 +187,38 @@ function resolveHttpOperationLabel(url: string, body: unknown): string {
 }
 
 export const operationLoaderInterceptor: HttpInterceptorFn = (req, next) => {
-  // Skip background cursor presence heartbeats so collaborator cursor polling does not trigger the loader
-  if (req.url.includes('/api/workspace/presence')) {
+  // Skip background cursor presence heartbeats, sidebar tree API fetches, and real-time cell delta streams
+  if (
+    req.url.includes('/api/workspace/presence') ||
+    req.url.includes('/api/workspace/tree') ||
+    req.url.includes('/api/realtime/delta') ||
+    req.url.includes('/api/realtime/flush') ||
+    req.url.includes('/api/auth/me') ||
+    req.url.includes('/api/github/status')
+  ) {
     return next(req);
+  }
+
+  // Handle multiplexed /api/realtime/crud requests: skip background presence, tree, row syncs, and scroll lazy-loads
+  if (req.url.includes('/api/realtime/crud')) {
+    const payload = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+    const crudAction = typeof payload['crudAction'] === 'string' ? payload['crudAction'] : '';
+    if (
+      crudAction === 'presence' ||
+      crudAction === 'get_tree' ||
+      crudAction === 'workspace_sync'
+    ) {
+      return next(req);
+    }
+    if (crudAction === 'query_rows') {
+      const inner = (payload['payload'] && typeof payload['payload'] === 'object'
+        ? payload['payload']
+        : {}) as Record<string, unknown>;
+      const offset = typeof inner['offset'] === 'number' ? inner['offset'] : 0;
+      if (offset > 0) {
+        return next(req);
+      }
+    }
   }
 
   // Skip table scroll lazy loading (offset > 0) so scrolling the table does not trigger the full-screen loader
@@ -185,3 +240,4 @@ export const operationLoaderInterceptor: HttpInterceptorFn = (req, next) => {
     })
   );
 };
+

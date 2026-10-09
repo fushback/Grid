@@ -2722,6 +2722,22 @@ app.get('/api/workspace', async (req: Request, res: Response) => {
 });
 
 /**
+ * GET /api/workspace/tree — normal REST API endpoint for Sidebar Object Explorer tree
+ * (Fetches database list, table list, field list, and nodes without using Redis or realtime streams)
+ */
+app.get('/api/workspace/tree', async (_req: Request, res: Response) => {
+  await ensurePostgresHydrated();
+  const targetDb = findDatabase(cloudState, cloudState.activeDatabaseName);
+  res.status(200).json({
+    ok: true,
+    activeDatabaseName: targetDb.databaseName,
+    activeTableName: cloudState.activeTableName || targetDb.activeTableName || '',
+    databases: getDatabaseSummaries(cloudState),
+    tables: getTableSummaries(cloudState, targetDb),
+  });
+});
+
+/**
  * POST /api/workspace/databases — creates a new database in the backend
  * (can be empty so its node in Manage Object Explorer is empty until tables are created, or optionally seeded with a starter table)
  */
@@ -2809,11 +2825,11 @@ app.post('/api/workspace/databases', async (req: Request, res: Response) => {
       'Database Created',
       `Created database "${cleanDbName}" in backend${activeTableName ? ` with starter table "${activeTableName}"` : ' (0 tables)'}`
     );
-    await createDatabaseInRealBackend(cleanDbName);
+    await createDatabaseInRealBackend(cleanDbName, true);
     if (targetTable) {
-      await syncTableToRealDatabase(targetTable, cleanDbName);
+      await syncTableToRealDatabase(targetTable, cleanDbName, true);
     }
-    await persistWorkspaceState(cloudState);
+    await persistWorkspaceState(cloudState, true);
 
     const sortedCols = targetTable
       ? [...targetTable.columns].sort((a, b) => a.orderIndex - b.orderIndex)
@@ -2891,9 +2907,9 @@ app.post('/api/workspace/databases/delete', async (req: Request, res: Response) 
   }
 
   const removed = cloudState.databases.splice(idx, 1)[0];
-  await dropDatabaseFromRealBackend(removed.databaseName);
+  await dropDatabaseFromRealBackend(removed.databaseName, true);
   for (const tbl of removed.tables) {
-    await dropTableFromRealDatabase(tbl.tableName, removed.databaseName);
+    await dropTableFromRealDatabase(tbl.tableName, removed.databaseName, true);
   }
 
   const nextDb = cloudState.databases[Math.max(0, idx - 1)] || cloudState.databases[0];
@@ -2910,7 +2926,7 @@ app.post('/api/workspace/databases/delete', async (req: Request, res: Response) 
     'Database Dropped',
     `Dropped database "${removed.databaseName}" from backend`
   );
-  await persistWorkspaceState(cloudState);
+  await persistWorkspaceState(cloudState, true);
 
   const sortedCols = targetTable
     ? [...targetTable.columns].sort((a, b) => a.orderIndex - b.orderIndex)
@@ -3003,9 +3019,9 @@ app.post('/api/workspace/databases/rename', async (req: Request, res: Response) 
   }
   cloudState.updatedAt = nowIso;
 
-  await renameDatabaseInRealBackend(cleanOld, cleanNew);
+  await renameDatabaseInRealBackend(cleanOld, cleanNew, true);
   for (const tbl of targetDb.tables) {
-    await syncTableToRealDatabase(tbl, cleanNew);
+    await syncTableToRealDatabase(tbl, cleanNew, true);
   }
   recordActivity(
     userName,
@@ -3013,7 +3029,7 @@ app.post('/api/workspace/databases/rename', async (req: Request, res: Response) 
     'Database Renamed',
     `Renamed database "${cleanOld}" to "${cleanNew}"`
   );
-  await persistWorkspaceState(cloudState);
+  await persistWorkspaceState(cloudState, true);
 
   const activeDb = getTargetDatabase(cloudState, cloudState.activeDatabaseName);
   const activeTable = getTargetTable(cloudState, activeDb.activeTableName, activeDb.databaseName);
@@ -3281,8 +3297,8 @@ app.post('/api/workspace/tables', async (req: Request, res: Response) => {
       'Table Created',
       `Created table "${cleanTableName}" in database "${targetDb.databaseName}"`
     );
-    await syncTableToRealDatabase(newTable, targetDb.databaseName);
-    await persistWorkspaceState(cloudState);
+    await syncTableToRealDatabase(newTable, targetDb.databaseName, true);
+    await persistWorkspaceState(cloudState, true);
 
     const activeDbObj =
       cloudState.databases.find(
@@ -3369,7 +3385,7 @@ app.post('/api/workspace/tables/delete', async (req: Request, res: Response) => 
   }
 
   const removed = targetDb.tables.splice(idx, 1)[0];
-  await dropTableFromRealDatabase(removed.tableName, targetDb.databaseName);
+  await dropTableFromRealDatabase(removed.tableName, targetDb.databaseName, true);
 
   const nextActiveInTargetDb = targetDb.tables[Math.max(0, idx - 1)] || targetDb.tables[0] || null;
   targetDb.activeTableName = nextActiveInTargetDb ? nextActiveInTargetDb.tableName : '';
@@ -3391,7 +3407,7 @@ app.post('/api/workspace/tables/delete', async (req: Request, res: Response) => 
     'Table Deleted',
     `Dropped table "${removed.tableName}" from database "${targetDb.databaseName}"`
   );
-  await persistWorkspaceState(cloudState);
+  await persistWorkspaceState(cloudState, true);
 
   const sortedCols = activeTable
     ? [...activeTable.columns].sort((a, b) => a.orderIndex - b.orderIndex)
@@ -3655,7 +3671,7 @@ app.post('/api/workspace/tables/rename', async (req: Request, res: Response) => 
 
   const nowIso = new Date().toISOString();
   if (cleanNew.toLowerCase() !== cleanOld.toLowerCase()) {
-    await dropTableFromRealDatabase(targetTable.tableName, targetDb.databaseName);
+    await dropTableFromRealDatabase(targetTable.tableName, targetDb.databaseName, true);
   }
   targetTable.tableName = cleanNew;
   targetTable.updatedAt = nowIso;
@@ -3683,7 +3699,7 @@ app.post('/api/workspace/tables/rename', async (req: Request, res: Response) => 
   }
   cloudState.updatedAt = nowIso;
 
-  await syncTableToRealDatabase(targetTable, targetDb.databaseName);
+  await syncTableToRealDatabase(targetTable, targetDb.databaseName, true);
   for (const otherTbl of targetDb.tables) {
     if (
       otherTbl !== targetTable &&
@@ -3693,7 +3709,7 @@ app.post('/api/workspace/tables/rename', async (req: Request, res: Response) => 
           (c.lookupTableName || '').toLowerCase() === targetTable.tableName.toLowerCase()
       )
     ) {
-      await syncTableToRealDatabase(otherTbl, targetDb.databaseName);
+      await syncTableToRealDatabase(otherTbl, targetDb.databaseName, true);
     }
   }
   recordActivity(
@@ -3704,7 +3720,7 @@ app.post('/api/workspace/tables/rename', async (req: Request, res: Response) => 
       ? `Renamed table "${cleanOld}" to "${cleanNew}" (${targetTable.columns.length} fields) in database "${targetDb.databaseName}"`
       : `Updated schema for table "${cleanNew}" (${targetTable.columns.length} fields) in database "${targetDb.databaseName}"`
   );
-  await persistWorkspaceState(cloudState);
+  await persistWorkspaceState(cloudState, true);
 
   const activeDb = getTargetDatabase(cloudState, prevActiveDbName);
   const activeTbl = getTargetTable(cloudState, activeDb.activeTableName, activeDb.databaseName);

@@ -1547,7 +1547,11 @@ export class App implements OnInit, OnDestroy {
 
   public toggleManageSidebar(event?: Event): void {
     event?.stopPropagation();
-    this.isManageSidebarOpen.update((v) => !v);
+    const nextOpen = !this.isManageSidebarOpen();
+    this.isManageSidebarOpen.set(nextOpen);
+    if (nextOpen) {
+      this.refreshObjectExplorerTreeFromDb();
+    }
   }
 
   public onManageTreeSearchInput(): void {
@@ -1576,14 +1580,14 @@ export class App implements OnInit, OnDestroy {
 
   public refreshObjectExplorerTreeFromDb(): void {
     if (!this.isBrowser) return;
-    this.realtimeSync
-      .executeCrud<{
+    this.http
+      .get<{
         ok: boolean;
         activeDatabaseName?: string;
         activeTableName?: string;
         databases?: DbDatabaseSummary[];
         tables?: DbTableSummary[];
-      }>('get_tree', {})
+      }>('/api/workspace/tree')
       .subscribe({
         next: (res) => {
           if (res?.ok && Array.isArray(res.databases)) {
@@ -2332,8 +2336,8 @@ export class App implements OnInit, OnDestroy {
         return;
       }
       this.isRenamingSidebarItem.set(true);
-      this.realtimeSync
-        .executeCrud<{
+      this.http
+        .post<{
           ok: boolean;
           error?: string;
           renamedDatabaseName?: string;
@@ -2342,7 +2346,7 @@ export class App implements OnInit, OnDestroy {
           activeTableName?: string;
           tables?: DbTableSummary[];
           activities?: ActivityLogItem[];
-        }>('rename_database', {
+        }>('/api/workspace/databases/rename', {
           oldDatabaseName: dbName,
           newDatabaseName: cleanNewName,
           userName: this.currentUserName(),
@@ -2415,8 +2419,8 @@ export class App implements OnInit, OnDestroy {
         return;
       }
       this.isRenamingSidebarItem.set(true);
-      this.realtimeSync
-        .executeCrud<{
+      this.http
+        .post<{
           ok: boolean;
           error?: string;
           renamedTableName?: string;
@@ -2425,7 +2429,7 @@ export class App implements OnInit, OnDestroy {
           activeTableName?: string;
           tables?: DbTableSummary[];
           activities?: ActivityLogItem[];
-        }>('rename_or_edit_table', {
+        }>('/api/workspace/tables/rename', {
           databaseName: dbName,
           oldTableName: tableName,
           newTableName: cleanNewName,
@@ -2581,15 +2585,15 @@ export class App implements OnInit, OnDestroy {
           );
         }
 
-        this.realtimeSync
-          .executeCrud<{
+        this.http
+          .post<{
             ok: boolean;
             databases?: DbDatabaseSummary[];
             tables?: DbTableSummary[];
             columns?: GridColumn[];
             rows?: GridRow[];
             activities?: ActivityLogItem[];
-          }>('workspace_sync', {
+          }>('/api/workspace/sync', {
             clientId: this.currentClientId(),
             userName: this.currentUserName(),
             userColor: this.currentUserColor(),
@@ -2728,8 +2732,8 @@ export class App implements OnInit, OnDestroy {
     }
 
     this.isCreatingDatabase.set(true);
-    this.realtimeSync
-      .executeCrud<{
+    this.http
+      .post<{
         ok: boolean;
         error?: string;
         activeDatabaseName?: string;
@@ -2743,7 +2747,7 @@ export class App implements OnInit, OnDestroy {
         hasMore?: boolean;
         uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
         activities?: ActivityLogItem[];
-      }>('create_database', {
+      }>('/api/workspace/databases', {
         databaseName,
         createStarterTable: raw.createStarterTable,
         starterTableName: raw.starterTableName.trim() || 'Table_1',
@@ -3154,8 +3158,8 @@ export class App implements OnInit, OnDestroy {
       `Drop "${databaseName}"`,
       'danger',
       () => {
-        this.realtimeSync
-          .executeCrud<{
+        this.http
+          .post<{
             ok: boolean;
             error?: string;
             activeDatabaseName?: string;
@@ -3169,7 +3173,7 @@ export class App implements OnInit, OnDestroy {
             hasMore?: boolean;
             uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
             activities?: ActivityLogItem[];
-          }>('delete_database', {
+          }>('/api/workspace/databases/delete', {
             databaseName,
             userName: this.currentUserName(),
             userColor: this.currentUserColor(),
@@ -4356,8 +4360,8 @@ export class App implements OnInit, OnDestroy {
 
     // EDIT TABLE MODE: Update existing table name and tabular fields
     if (editingOriginalTbl) {
-      this.realtimeSync
-        .executeCrud<{
+      this.http
+        .post<{
           ok: boolean;
           error?: string;
           renamedDatabaseName?: string;
@@ -4373,7 +4377,7 @@ export class App implements OnInit, OnDestroy {
           hasMore?: boolean;
           uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
           activities?: ActivityLogItem[];
-        }>('rename_or_edit_table', {
+        }>('/api/workspace/tables/rename', {
           databaseName,
           oldTableName: editingOriginalTbl,
           newTableName: tableName,
@@ -4479,8 +4483,8 @@ export class App implements OnInit, OnDestroy {
     }
 
     // CREATE TABLE MODE
-    this.realtimeSync
-      .executeCrud<{
+    this.http
+      .post<{
         ok: boolean;
         error?: string;
         createdInDatabaseName?: string;
@@ -4496,7 +4500,7 @@ export class App implements OnInit, OnDestroy {
         hasMore?: boolean;
         uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
         activities?: ActivityLogItem[];
-      }>('create_table', {
+      }>('/api/workspace/tables', {
         databaseName,
         tableName,
         pkColumnName: 'ID',
@@ -4649,8 +4653,8 @@ export class App implements OnInit, OnDestroy {
       `Drop "${tableName}"`,
       'danger',
       () => {
-        this.realtimeSync
-          .executeCrud<{
+        this.http
+          .post<{
             ok: boolean;
             error?: string;
             activeDatabaseName?: string;
@@ -4664,7 +4668,7 @@ export class App implements OnInit, OnDestroy {
             hasMore?: boolean;
             uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
             activities?: ActivityLogItem[];
-          }>('delete_table', {
+          }>('/api/workspace/tables/delete', {
             databaseName: dbName,
             tableName,
             userName: this.currentUserName(),
@@ -6248,24 +6252,58 @@ export class App implements OnInit, OnDestroy {
         }
       }
     }
-    this.broadcastPresence();
+    // Clicking/focusing a cell or row is a pure UI selection — do NOT call broadcastPresence() or trigger any Redis/DB call!
   }
 
   public onContentEditableCellInput(rowId: string, colId: string, event: Event): void {
     const el = event.target as HTMLElement | null;
     if (!el) return;
     const rawText = (el.innerText ?? el.textContent ?? '').replace(/\r?\n/g, ' ');
-    this.liveCellDraftMap.set(`${rowId}:${colId}`, rawText);
-    this.dirtyRowIds.add(rowId);
+    const row = this.rows().find((r) => r.id === rowId);
+    const col = this.columns().find((c) => c.id === colId);
+    const currentDomText = row && col ? this.getEditableCellDomText(row, col) : '';
+
+    if (rawText === currentDomText) {
+      this.liveCellDraftMap.delete(`${rowId}:${colId}`);
+      this.recomputeRowDirtyFlag(rowId);
+    } else {
+      this.liveCellDraftMap.set(`${rowId}:${colId}`, rawText);
+      this.dirtyRowIds.add(rowId);
+    }
     this.formulaBarControl.setValue(rawText, { emitEvent: false });
+  }
+
+  private recomputeRowDirtyFlag(rowId: string): void {
+    const prefix = `${rowId}:`;
+    for (const key of this.liveCellDraftMap.keys()) {
+      if (key.startsWith(prefix)) {
+        this.dirtyRowIds.add(rowId);
+        return;
+      }
+    }
+    const row = this.rows().find((r) => r.id === rowId);
+    const snap = this.lastValidRowSnapshots.get(rowId);
+    if (!row || !snap) {
+      this.dirtyRowIds.delete(rowId);
+      return;
+    }
+    const editableCols = this.sortedColumns().filter(
+      (c) => !c.isPrimaryKey && !c.isIdentity && c.colType !== 'formula'
+    );
+    for (const col of editableCols) {
+      const currVal = row.cells[col.name] !== undefined ? row.cells[col.name] : row.cells[col.id];
+      const snapVal = snap.cells[col.name] !== undefined ? snap.cells[col.name] : snap.cells[col.id];
+      if (String(currVal ?? '') !== String(snapVal ?? '')) {
+        this.dirtyRowIds.add(rowId);
+        return;
+      }
+    }
+    this.dirtyRowIds.delete(rowId);
   }
 
   public onEditableCellBlur(rowId: string, colId: string, event?: FocusEvent): void {
     const el = (event?.target as HTMLElement | null) ?? null;
     if (el instanceof HTMLSelectElement) {
-      if (this.dirtyRowIds.has(rowId)) {
-        this.flushRowAutoSave(rowId);
-      }
       return;
     }
     this.commitLiveCellDraft(rowId, colId, el);
@@ -6291,8 +6329,8 @@ export class App implements OnInit, OnDestroy {
     const selectEl = this.isBrowser
       ? (document.getElementById(`grid-cell-${rowId}-${colId}`) as HTMLElement | null)
       : null;
+    // Stage the change in the row only; Redis will save when the user exits the row
     this.stageCellEditInRow(rowId, colId, newValue, selectEl);
-    this.flushRowAutoSave(rowId);
   }
 
   public onCheckboxCellChange(
@@ -6303,8 +6341,8 @@ export class App implements OnInit, OnDestroy {
   ): void {
     event?.stopPropagation();
     this.onCellFocus(rowId, colId, event);
+    // Stage the change in the row only; Redis will save when the user exits the row
     this.stageCellEditInRow(rowId, colId, checked);
-    this.flushRowAutoSave(rowId);
   }
 
   private stageCellEditInRow(
@@ -6344,6 +6382,7 @@ export class App implements OnInit, OnDestroy {
           domEl.value = cleanSelectVal;
         }
       }
+      this.recomputeRowDirtyFlag(rowId);
       return;
     }
 
@@ -6365,7 +6404,7 @@ export class App implements OnInit, OnDestroy {
     });
 
     this.rows.set(updatedRows);
-    this.dirtyRowIds.add(rowId);
+    this.recomputeRowDirtyFlag(rowId);
     this.formulaBarControl.setValue(String(validation.normalizedValue ?? ''), {
       emitEvent: false,
     });
@@ -6402,6 +6441,7 @@ export class App implements OnInit, OnDestroy {
       }
     }
 
+    this.recomputeRowDirtyFlag(rowId);
     if (!this.dirtyRowIds.has(rowId)) {
       return;
     }
@@ -6592,15 +6632,16 @@ export class App implements OnInit, OnDestroy {
     const col = this.columns().find((c) => c.id === colId);
     if (row && col) {
       if (col.colType === 'formula') {
-        this.formulaBarControl.setValue(col.formula);
+        this.formulaBarControl.setValue(col.formula, { emitEvent: false });
       } else {
         const displayVal = this.getDisplayCellValue(row, col);
         this.formulaBarControl.setValue(
-          displayVal !== undefined && displayVal !== null ? String(displayVal) : ''
+          displayVal !== undefined && displayVal !== null ? String(displayVal) : '',
+          { emitEvent: false }
         );
       }
     }
-    this.broadcastPresence();
+    // Clicking/selecting a cell is not a data mutation — do NOT trigger network/Redis calls
   }
 
   public startInlineEdit(rowId: string, colId: string, event?: Event): void {
@@ -7494,6 +7535,12 @@ export class App implements OnInit, OnDestroy {
           }
         }
 
+        if (deltas.length === 0 && totalErrorCells === 0) {
+          // No actual cell values changed compared to the last saved row snapshot:
+          // do NOT store anything in Redis, do NOT trigger DB updates, and do NOT show a save banner.
+          return;
+        }
+
         this.syncLocalActiveTableIntoDatabasesTree();
         this.snapshotValidRows(this.rows());
         this.cloudSyncStatus.set('synced');
@@ -7520,7 +7567,7 @@ export class App implements OnInit, OnDestroy {
         this.invalidCellKey.set(null);
         this.showBanner(
           'success',
-          `${newlyValidatedRows.length} valid row(s) saved to table "${this.activeTableName()}" in database.`
+          `${newlyValidatedRows.length} valid row(s) saved to Redis & queued for database policy sync in "${this.activeTableName()}".`
         );
       } else {
         this.showBanner(
@@ -8722,15 +8769,15 @@ export class App implements OnInit, OnDestroy {
         }
 
         this.activeModal.set('none');
-        this.realtimeSync
-          .executeCrud<{
+        this.http
+          .post<{
             ok: boolean;
             databases?: DbDatabaseSummary[];
             tables?: DbTableSummary[];
             columns?: GridColumn[];
             rows?: GridRow[];
             activities?: ActivityLogItem[];
-          }>('workspace_sync', {
+          }>('/api/workspace/sync', {
             clientId: this.currentClientId(),
             userName: this.currentUserName(),
             userColor: this.currentUserColor(),
@@ -8984,15 +9031,15 @@ export class App implements OnInit, OnDestroy {
         }
 
         this.activeModal.set('none');
-        this.realtimeSync
-          .executeCrud<{
+        this.http
+          .post<{
             ok: boolean;
             databases?: DbDatabaseSummary[];
             tables?: DbTableSummary[];
             columns?: GridColumn[];
             rows?: GridRow[];
             activities?: ActivityLogItem[];
-          }>('workspace_sync', {
+          }>('/api/workspace/sync', {
             clientId: this.currentClientId(),
             userName: this.currentUserName(),
             userColor: this.currentUserColor(),
