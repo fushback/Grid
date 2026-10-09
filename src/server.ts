@@ -639,10 +639,13 @@ function sanitizeRowsAgainstSchema(columns: ServerColumn[], rows: ServerRow[]): 
       const rawVal = rawCells[col.name] !== undefined ? rawCells[col.name] : rawCells[col.id];
       const hasDefault =
         col.defaultValue !== undefined && String(col.defaultValue).trim().length > 0;
-      const val =
-        (rawVal === undefined || rawVal === null || rawVal === '') && hasDefault
-          ? resolveServerColumnDefaultValue(col)
-          : rawVal;
+      const isMissingOrRequiredEmpty =
+        rawVal === undefined ||
+        rawVal === null ||
+        (rawVal === '' && (col.required || col.isNullable === false));
+      const val = isMissingOrRequiredEmpty && hasDefault
+        ? resolveServerColumnDefaultValue(col)
+        : rawVal;
       let normalized: string | number | boolean = val ?? '';
 
       if (col.colType === 'number') {
@@ -1170,6 +1173,7 @@ const writeBehindMetrics = {
   bufferThresholdRows: 100,
   isFlushing: false,
 };
+let debouncedWriteBehindTimer: ReturnType<typeof setTimeout> | null = null;
 
 async function execCreateDatabaseInPostgres(databaseName: string): Promise<void> {
   const pool = getPgPool();
@@ -1239,12 +1243,24 @@ async function execSyncTableToPostgres(table: ServerTable, databaseName?: string
       .map((col) => `${quoteSqlIdent(col.name)} ${mapColTypeToSqlType(col)}`)
       .join(', ');
 
-    await client.query(`DROP TABLE IF EXISTS ${schemaQualifiedTable}`);
+    await client.query(`DROP TABLE IF EXISTS ${schemaQualifiedTable} CASCADE`);
     await client.query(`CREATE TABLE ${schemaQualifiedTable} (${colDefs})`);
 
     if (table.rows.length > 0) {
       const colNamesSql = sortedCols.map((c) => quoteSqlIdent(c.name)).join(', ');
       const batchSize = 100;
+      const seenPkSet = new Set<number>();
+      let maxPkSeen = 0;
+
+      for (const r of table.rows) {
+        const pkCol = sortedCols.find((c) => c.isPrimaryKey || c.isIdentity);
+        if (pkCol) {
+          const rawPk = Number(getServerDisplayValue(r, pkCol, sortedCols));
+          if (Number.isInteger(rawPk) && rawPk > maxPkSeen) {
+            maxPkSeen = rawPk;
+          }
+        }
+      }
 
       for (let offset = 0; offset < table.rows.length; offset += batchSize) {
         const chunk = table.rows.slice(offset, offset + batchSize);
@@ -1258,8 +1274,13 @@ async function execSyncTableToPostgres(table: ServerTable, databaseName?: string
             rowPlaceholders.push(`$${paramIdx++}`);
             const rawVal = getServerDisplayValue(row, col, sortedCols);
             if (col.isPrimaryKey || col.isIdentity) {
-              const pkNum = Number(rawVal);
-              params.push(Number.isInteger(pkNum) && pkNum >= 1 ? pkNum : 1);
+              let pkNum = Number(rawVal);
+              if (!Number.isInteger(pkNum) || pkNum < 1 || seenPkSet.has(pkNum)) {
+                maxPkSeen += 1;
+                pkNum = maxPkSeen;
+              }
+              seenPkSet.add(pkNum);
+              params.push(pkNum);
             } else if (col.colType === 'number') {
               const numVal = Number(rawVal);
               params.push(Number.isFinite(numVal) ? numVal : 0);
@@ -1276,6 +1297,15 @@ async function execSyncTableToPostgres(table: ServerTable, databaseName?: string
           `INSERT INTO ${schemaQualifiedTable} (${colNamesSql}) VALUES ${valuesPlaceholders.join(', ')}`,
           params
         );
+      }
+
+      const pkCol = sortedCols.find((c) => c.isPrimaryKey || c.isIdentity);
+      if (pkCol && maxPkSeen >= 1) {
+        await client
+          .query(
+            `ALTER TABLE ${schemaQualifiedTable} ALTER COLUMN ${quoteSqlIdent(pkCol.name)} RESTART WITH ${maxPkSeen + 1}`
+          )
+          .catch(() => null);
       }
     }
 
@@ -1404,6 +1434,7 @@ async function syncTableToRealDatabase(
     timestampMs: nowMs,
   });
   writeBehindMetrics.totalCoalescedEdits++;
+  scheduleWriteBehindFlush(1000);
 }
 
 async function dropTableFromRealDatabase(
@@ -2306,6 +2337,7 @@ function writeStateFilesToDiskOnly(state: CloudWorkspaceState): void {
 function saveStateToDisk(state: CloudWorkspaceState): void {
   writeStateFilesToDiskOnly(state);
   writeBehindMetadataDirty = true;
+  scheduleWriteBehindFlush(1000);
 }
 
 async function persistWorkspaceState(
@@ -2318,6 +2350,7 @@ async function persistWorkspaceState(
     return;
   }
   writeBehindMetadataDirty = true;
+  scheduleWriteBehindFlush(1000);
 }
 
 const cloudState: CloudWorkspaceState = loadOrCreateState();
@@ -5559,11 +5592,19 @@ function processRealtimeCellDeltaBatch(deltas: RealtimeCellDelta[]): {
       databaseName: db.databaseName,
       mutatedTableName: table.tableName,
     });
+    if (
+      db.databaseName.toLowerCase() === (cloudState.activeDatabaseName || '').toLowerCase() &&
+      table.tableName.toLowerCase() === (cloudState.activeTableName || '').toLowerCase()
+    ) {
+      cloudState.columns = table.columns;
+      cloudState.rows = table.rows;
+    }
   }
 
   if (acceptedDeltas.length > 0) {
     // Fast local file checkpoint (no PostgreSQL network round-trip on keystroke)
     writeStateFilesToDiskOnly(cloudState);
+    writeBehindMetadataDirty = true;
   }
 
   const status = getWriteBehindBufferStatus();
@@ -5592,12 +5633,32 @@ function processRealtimeCellDeltaBatch(deltas: RealtimeCellDelta[]): {
 
   broadcastEvent('write_behind_status', status);
 
-  // If write-behind buffer threshold is met, trigger asynchronous bulk flush to PostgreSQL immediately
+  // If write-behind buffer threshold is met, trigger asynchronous bulk flush to PostgreSQL immediately;
+  // otherwise schedule a debounced write-behind flush (1s policy window) so Redis updates persist to PostgreSQL reliably.
   if (writeBehindDirtyRows.size >= writeBehindMetrics.bufferThresholdRows) {
     void flushWriteBehindBufferToPostgres('threshold');
+  } else if (acceptedDeltas.length > 0) {
+    scheduleWriteBehindFlush(1000);
   }
 
   return { acks, acceptedDeltas, status };
+}
+
+function scheduleWriteBehindFlush(delayMs = 1000): void {
+  if (debouncedWriteBehindTimer) {
+    clearTimeout(debouncedWriteBehindTimer);
+  }
+  debouncedWriteBehindTimer = setTimeout(() => {
+    debouncedWriteBehindTimer = null;
+    if (
+      writeBehindDirtyTables.size > 0 ||
+      writeBehindDdlQueue.length > 0 ||
+      writeBehindMetadataDirty
+    ) {
+      void flushWriteBehindBufferToPostgres('periodic');
+    }
+  }, delayMs);
+  debouncedWriteBehindTimer.unref?.();
 }
 
 /**

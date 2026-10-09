@@ -167,6 +167,8 @@ const ANON_NAMES = [
     '(window:keydown)': 'onGlobalKeydown($event)',
     '(window:paste)': 'onGlobalPaste($event)',
     '(window:scroll)': 'onWindowScroll()',
+    '(window:beforeunload)': 'onWindowBeforeUnload()',
+    '(document:mousedown)': 'onDocumentPointerDown($event)',
     '(document:click)': 'closeAllMenus()',
     '(mousedown)': 'clearActionTooltip()',
     '(mouseover)': 'onGlobalMouseOver($event)',
@@ -5053,6 +5055,10 @@ export class App implements OnInit, OnDestroy {
       this.refreshObjectExplorerTreeFromDb();
       return;
     }
+    if (this.editingCell()) {
+      this.commitInlineEdit();
+    }
+    this.flushAllDirtyRowsAutoSave();
     this.editingCell.set(null);
     this.cellValidationErrors.set({});
     this.pendingUnsavedRowIds.set(new Set());
@@ -5283,6 +5289,10 @@ export class App implements OnInit, OnDestroy {
 
   public queryDatabaseRows(resetOffset = true, customLimit?: number): void {
     if (!this.isBrowser) return;
+    if (this.editingCell()) {
+      this.commitInlineEdit();
+    }
+    this.flushAllDirtyRowsAutoSave();
     const offset = resetOffset ? 0 : this.rows().length;
     const limit = customLimit ?? this.lazyBatchSize;
 
@@ -6273,6 +6283,40 @@ export class App implements OnInit, OnDestroy {
     this.formulaBarControl.setValue(rawText, { emitEvent: false });
   }
 
+  public onDocumentPointerDown(event: MouseEvent): void {
+    const target = event.target as HTMLElement | null;
+    if (!target) return;
+    if (target.closest('[data-first-row-reset="true"]')) {
+      return;
+    }
+    const clickedRowEl = target.closest('tr[data-row-id]');
+    const clickedRowId = clickedRowEl?.getAttribute('data-row-id') || null;
+
+    if (this.dirtyRowIds.size > 0 || this.liveCellDraftMap.size > 0) {
+      const currentRowId = this.activeEditingRowId();
+      if (!clickedRowId || clickedRowId !== currentRowId) {
+        this.flushAllDirtyRowsAutoSave();
+      }
+    }
+    if (
+      (this.hasNewRowDraftValues() || this.newRowLiveDraftMap.size > 0) &&
+      (!clickedRowId || clickedRowId !== this.newRowSentinelId)
+    ) {
+      this.commitAllNewRowLiveDrafts();
+      if (this.hasNewRowDraftValues()) {
+        this.commitFirstRowAddRow();
+      }
+    }
+  }
+
+  public onWindowBeforeUnload(): void {
+    if (this.editingCell()) {
+      this.commitInlineEdit();
+    }
+    this.flushAllDirtyRowsAutoSave();
+    this.realtimeSync.flushPendingDeltasKeepalive();
+  }
+
   private recomputeRowDirtyFlag(rowId: string): void {
     const prefix = `${rowId}:`;
     for (const key of this.liveCellDraftMap.keys()) {
@@ -6282,9 +6326,13 @@ export class App implements OnInit, OnDestroy {
       }
     }
     const row = this.rows().find((r) => r.id === rowId);
-    const snap = this.lastValidRowSnapshots.get(rowId);
-    if (!row || !snap) {
+    if (!row) {
       this.dirtyRowIds.delete(rowId);
+      return;
+    }
+    const snap = this.lastValidRowSnapshots.get(rowId);
+    if (!snap) {
+      this.dirtyRowIds.add(rowId);
       return;
     }
     const editableCols = this.sortedColumns().filter(

@@ -256,26 +256,57 @@ export class GridRealtimeSyncService implements OnDestroy {
     }
   }
 
+  private inFlightDeltaFlush: Promise<void> | null = null;
+
   /**
-   * Queues multiple cell mutations at once (e.g. from a multi-cell edit or row update).
+   * Queues multiple cell mutations at once (e.g. from a multi-cell edit or row-exit auto-save)
+   * and immediately dispatches them to the Redis Write-Behind buffer on the backend.
    */
   public queueCellMutationBatch(deltas: CellDeltaPayload[]): void {
+    if (!deltas || deltas.length === 0) return;
     for (const delta of deltas) {
       const cellKey = `${delta.databaseName}|${delta.tableName}|${delta.rowId}|${delta.columnId}`;
       this.microCoalesceMap.set(cellKey, delta);
     }
-    if (!this.coalesceTimerId) {
-      this.coalesceTimerId = setTimeout(() => {
-        this.coalesceTimerId = null;
-        void this.flushMicroCoalesceBuffer();
-      }, this.coalesceWindowMs);
+    if (this.coalesceTimerId) {
+      clearTimeout(this.coalesceTimerId);
+      this.coalesceTimerId = null;
+    }
+    void this.flushMicroCoalesceBuffer();
+  }
+
+  /**
+   * Synchronously flushes any remaining coalesced deltas (e.g. before page unload or table switch).
+   */
+  public flushPendingDeltasKeepalive(): void {
+    if (!this.isBrowser || this.microCoalesceMap.size === 0) return;
+    const deltas = Array.from(this.microCoalesceMap.values());
+    this.microCoalesceMap.clear();
+    if (this.coalesceTimerId) {
+      clearTimeout(this.coalesceTimerId);
+      this.coalesceTimerId = null;
+    }
+    try {
+      const body = JSON.stringify({ deltas });
+      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+        const blob = new Blob([body], { type: 'application/json' });
+        navigator.sendBeacon('/api/realtime/delta', blob);
+      } else if (typeof fetch === 'function') {
+        void fetch('/api/realtime/delta', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body,
+          keepalive: true,
+        });
+      }
+    } catch {
+      // Ignore unload network errors
     }
   }
 
   /**
-   * Primary Real-Time CRUD Method for the entire project (Sidebar Tree Databases, Tables, Fields + Grid Rows, Columns, Queries).
-   * Dispatches over persistent WebSocket if open, with seamless fallback to the multiplexed `/api/realtime/crud` endpoint
-   * and automatic offline write-behind queueing.
+   * Primary Real-Time CRUD Method for Grid Rows, Columns, and Queries.
+   * Ensures any pending cell/row delta mutations are flushed first so subsequent queries never read stale state.
    */
   public executeCrud<T = Record<string, unknown>>(
     crudAction: RealtimeCrudAction,
@@ -297,37 +328,17 @@ export class GridRealtimeSyncService implements OnDestroy {
     crudAction: RealtimeCrudAction,
     payload: Record<string, unknown>
   ): Promise<T> {
-    // 1. Prefer persistent WebSocket RPC if socket is open
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      const invocationId = `crud_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-      try {
-        const wsRes = await new Promise<T>((resolve, reject) => {
-          const timeoutId = setTimeout(() => {
-            this.pendingCrudInvocations.delete(invocationId);
-            reject(new Error('WebSocket CRUD invocation timeout'));
-          }, 4500);
-
-          this.pendingCrudInvocations.set(invocationId, {
-            resolve: (val) => resolve(val as T),
-            reject,
-            timeoutId,
-          });
-
-          this.sendWsFrame({
-            type: 'ExecuteCrudCommand',
-            invocationId,
-            crudAction,
-            payload,
-          });
-        });
-        this.connectionStatus.set('connected');
-        return wsRes;
-      } catch {
-        // Fall through to multiplexed HTTP CRUD stream if WS frame timed out
-      }
+    if (!this.isBrowser) {
+      return {} as T;
     }
 
-    // 2. Multiplexed real-time CRUD endpoint (operates against the server's in-memory Redis cache + write-behind buffer)
+    // Ensure any pending row-exit cell deltas are flushed to the server BEFORE executing a read/sync
+    if (this.microCoalesceMap.size > 0) {
+      await this.flushMicroCoalesceBuffer();
+    } else if (this.inFlightDeltaFlush) {
+      await this.inFlightDeltaFlush.catch(() => undefined);
+    }
+
     try {
       const response = await firstValueFrom(
         this.http.post<{
@@ -396,6 +407,11 @@ export class GridRealtimeSyncService implements OnDestroy {
 
   public async triggerManualPostgresFlush(): Promise<WriteBehindBufferStatus | null> {
     try {
+      if (this.microCoalesceMap.size > 0) {
+        await this.flushMicroCoalesceBuffer();
+      } else if (this.inFlightDeltaFlush) {
+        await this.inFlightDeltaFlush.catch(() => undefined);
+      }
       const res = await firstValueFrom(
         this.http.post<{ ok: boolean; status?: WriteBehindBufferStatus }>(
           '/api/realtime/flush',
@@ -412,55 +428,39 @@ export class GridRealtimeSyncService implements OnDestroy {
     return null;
   }
 
-  private async flushMicroCoalesceBuffer(): Promise<void> {
+  public async flushMicroCoalesceBuffer(): Promise<void> {
     if (this.microCoalesceMap.size === 0) return;
 
     const deltas = Array.from(this.microCoalesceMap.values());
     this.microCoalesceMap.clear();
 
+    const flushTask = (async () => {
+      try {
+        const acks = await this.dispatchDeltasToServer(deltas);
+        this.connectionStatus.set('connected');
+        for (const ack of acks) {
+          this.handleServerAck(ack);
+        }
+      } catch {
+        for (const delta of deltas) {
+          this.bufferDeltaOffline(delta);
+        }
+        this.scheduleReconnect();
+      }
+    })();
+
+    this.inFlightDeltaFlush = flushTask;
     try {
-      const acks = await this.dispatchDeltasToServer(deltas);
-      this.connectionStatus.set('connected');
-      for (const ack of acks) {
-        this.handleServerAck(ack);
+      await flushTask;
+    } finally {
+      if (this.inFlightDeltaFlush === flushTask) {
+        this.inFlightDeltaFlush = null;
       }
-    } catch {
-      for (const delta of deltas) {
-        this.bufferDeltaOffline(delta);
-      }
-      this.scheduleReconnect();
     }
   }
 
   private async dispatchDeltasToServer(deltas: CellDeltaPayload[]): Promise<CellAckPayload[]> {
-    // 1. Prefer persistent WebSocket frame if socket is open
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      const invocationId = `inv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-      return new Promise<CellAckPayload[]>((resolve, reject) => {
-        const timeoutId = setTimeout(() => {
-          this.pendingInvocations.delete(invocationId);
-          reject(new Error('WebSocket invocation timeout'));
-        }, 4000);
-
-        this.pendingInvocations.set(invocationId, { resolve, reject, timeoutId });
-
-        if (deltas.length === 1) {
-          this.sendWsFrame({
-            type: 'StreamCellDelta',
-            invocationId,
-            delta: deltas[0],
-          });
-        } else {
-          this.sendWsFrame({
-            type: 'StreamCellDeltaBatch',
-            invocationId,
-            deltas,
-          });
-        }
-      });
-    }
-
-    // 2. Multiplexed delta stream transport (works even behind proxies that intercept raw WS upgrades)
+    // Dispatch directly via HTTP delta endpoint (reliable across Angular SSR / Vite dev proxy and Cloud Run)
     const response = await firstValueFrom(
       this.http.post<{
         ok: boolean;
@@ -548,62 +548,9 @@ export class GridRealtimeSyncService implements OnDestroy {
 
   private connectWebSocket(): void {
     if (!this.isBrowser || this.isDestroyed) return;
-
-    try {
-      this.connectionStatus.set(
-        this.offlineDeltaMap.size > 0 ? 'buffering_offline' : 'connecting'
-      );
-      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const wsUrl = `${proto}//${window.location.host}/api/realtime-ws`;
-      const socket = new WebSocket(wsUrl);
-      this.ws = socket;
-
-      socket.onopen = () => {
-        this.reconnectAttempt = 0;
-        this.transportMode.set('websocket');
-        this.connectionStatus.set('connected');
-        if (this.activeGroup) {
-          this.sendWsFrame({
-            type: 'JoinTableGroup',
-            databaseName: this.activeGroup.databaseName,
-            tableName: this.activeGroup.tableName,
-          });
-        }
-        void this.flushOfflineBufferOnReconnect();
-      };
-
-      socket.onmessage = (event: MessageEvent) => {
-        try {
-          const frame = JSON.parse(String(event.data)) as HubWireFrame;
-          this.handleIncomingWsFrame(frame);
-        } catch {
-          // Ignore malformed frame
-        }
-      };
-
-      socket.onerror = () => {
-        // If Vite dev server intercepts raw WS upgrade, seamlessly operate over multiplexed stream mode
-        this.transportMode.set('stream');
-        this.connectionStatus.set('connected');
-        void this.flushOfflineBufferOnReconnect();
-      };
-
-      socket.onclose = () => {
-        if (this.ws === socket) {
-          this.ws = null;
-        }
-        if (this.transportMode() === 'stream') {
-          this.connectionStatus.set(
-            this.offlineDeltaMap.size > 0 ? 'buffering_offline' : 'connected'
-          );
-          return;
-        }
-        this.scheduleReconnect();
-      };
-    } catch {
-      this.transportMode.set('stream');
-      this.connectionStatus.set('connected');
-    }
+    this.transportMode.set('stream');
+    this.connectionStatus.set('connected');
+    void this.flushOfflineBufferOnReconnect();
   }
 
   private handleIncomingWsFrame(frame: HubWireFrame): void {
