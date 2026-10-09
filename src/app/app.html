@@ -387,10 +387,10 @@
           (click)="setRibbonTab('rows', $event)"
           class="gridario-ribbon-tab"
           [class.is-active]="activeRibbonTab() === 'rows'"
-          data-office-tip="Row, Cell & First Row CRUD Operations"
+          data-office-tip="Rows (Row, Cell & First Row CRUD Operations)"
         >
           <mat-icon style="color: #34A853">table_rows</mat-icon>
-          <span>Row & Cell CRUD</span>
+          <span>Rows</span>
         </button>
 
         <button
@@ -398,10 +398,10 @@
           (click)="setRibbonTab('columns', $event)"
           class="gridario-ribbon-tab"
           [class.is-active]="activeRibbonTab() === 'columns'"
-          data-office-tip="Column & Dynamic Schema Commands"
+          data-office-tip="Columns (Column & Dynamic Schema Commands)"
         >
           <mat-icon style="color: #4285F4">view_column</mat-icon>
-          <span>Column & Schema</span>
+          <span>Columns</span>
         </button>
 
         <button
@@ -409,10 +409,10 @@
           (click)="setRibbonTab('database', $event)"
           class="gridario-ribbon-tab"
           [class.is-active]="activeRibbonTab() === 'database'"
-          data-office-tip="SQL Server Database & Table Explorer Actions"
+          data-office-tip="SQL (SQL Server Database & Table Explorer Actions)"
         >
           <mat-icon style="color: #EA4335">dns</mat-icon>
-          <span>SQL Server Explorer</span>
+          <span>SQL</span>
         </button>
       </div>
 
@@ -438,15 +438,15 @@
         <button
           type="button"
           (click)="toggleRibbonCollapsed($event)"
-          class="inline-flex align-items-center gap-0.5 px-1.5 py-0.5 rounded border border-transparent hover:border-slate-300 hover:bg-slate-200/60 text-[10px] font-semibold text-slate-700"
+          class="inline-flex align-items-center justify-content-center p-1 rounded border border-transparent hover:border-slate-300 hover:bg-slate-200/60 text-slate-700"
           [attr.data-office-tip]="isRibbonCollapsed() ? 'Expand Ribbon Toolbar' : 'Collapse Ribbon Toolbar'"
+          [attr.aria-label]="isRibbonCollapsed() ? 'Expand Ribbon Toolbar' : 'Collapse Ribbon Toolbar'"
         >
           <mat-icon
-            style="font-size: 14px; width: 14px; height: 14px; min-width: 14px; min-height: 14px"
+            style="font-size: 16px; width: 16px; height: 16px; min-width: 16px; min-height: 16px"
           >
             {{ isRibbonCollapsed() ? 'expand_more' : 'expand_less' }}
           </mat-icon>
-          <span class="hidden md:inline">{{ isRibbonCollapsed() ? 'Expand' : 'Collapse' }}</span>
         </button>
       </div>
     </div>
@@ -1596,12 +1596,12 @@
       <!-- SQL SERVER DESIGN / BROWSER-STYLE DATABASE TABS BAR (TOP OF WORKSPACE)-->
       <!-- Displays the active Database Name e.g. [DatabaseName] with close icon -->
       <!-- ===================================================================== -->
-      <div class="bg-slate-200 border-b border-slate-300 px-2 pt-1 pb-1 d-flex align-items-center justify-content-between gap-2 select-none shrink-0" style="min-height: 36px">
+      <div class="bg-slate-200 border-b border-slate-300 px-2 py-0.5 d-flex align-items-center justify-content-between gap-1.5 select-none shrink-0" style="min-height: 28px">
         <div class="excel-sheet-tabs-strip d-flex align-items-center gap-1 overflow-x-auto flex-grow-1 py-0.5">
           @for (dbTab of databaseTabs(); track dbTab.tabId; let tIdx = $index) {
             @let isCurrentDbTab = dbTab.tabId === activeDatabaseTabId();
             <div
-              class="excel-top-tab excel-sheet-tab d-inline-flex align-items-center gap-1.5 px-3 py-1.5 rounded-top border cursor-pointer whitespace-nowrap select-none text-xs transition-all"
+              class="excel-top-tab excel-sheet-tab d-inline-flex align-items-center gap-1.5 rounded-top border cursor-pointer whitespace-nowrap select-none transition-all"
               [class.excel-top-tab-active]="isCurrentDbTab"
               [class.excel-sheet-tab-active]="isCurrentDbTab"
               [class.bg-white]="isCurrentDbTab"
@@ -1618,14 +1618,14 @@
             >
               <span
                 class="rounded-full shrink-0"
-                style="width: 7px; height: 7px"
+                style="width: 6px; height: 6px"
                 [style.background-color]="isCurrentDbTab ? '#34A853' : dbTab.databaseName ? '#94a3b8' : '#FBBC05'"
                 [title]="dbTab.databaseName ? 'Connected to ' + dbTab.databaseName : 'Awaiting database selection'"
               ></span>
               <mat-icon
                 [class.text-emerald-600]="isCurrentDbTab"
                 [class.text-slate-400]="!isCurrentDbTab"
-                style="font-size: 16px; width: 16px; height: 16px"
+                style="font-size: 15px; width: 15px; height: 15px; min-width: 15px; min-height: 15px"
               >
                 storage
               </mat-icon>
@@ -1635,11 +1635,11 @@
               <button
                 type="button"
                 (click)="closeDatabaseTab(dbTab.tabId, $event)"
-                class="btn btn-sm p-0 ms-1 border-0 bg-transparent text-slate-400 hover:text-red-600 d-inline-flex align-items-center gridario-icon-only-btn"
+                class="btn btn-sm p-0 ms-0.5 border-0 bg-transparent text-slate-400 hover:text-red-600 d-inline-flex align-items-center gridario-icon-only-btn"
                 [title]="'Close connection for ' + getDatabaseTabDisplayTableName(dbTab)"
                 aria-label="Close database connection tab"
               >
-                <mat-icon style="font-size: 14px; width: 14px; height: 14px">close</mat-icon>
+                <mat-icon style="font-size: 14px; width: 14px; height: 14px; min-width: 14px; min-height: 14px">close</mat-icon>
               </button>
             </div>
           }
@@ -2342,27 +2342,29 @@
   <!-- ===================================================================== -->
   <!-- EXCEL SHEET TABS FOOTER BAR (Open Tables from Sidebar for Active DB)  -->
   <!-- ===================================================================== -->
-  <footer class="excel-sheet-footer bg-slate-200 border-t border-slate-300 px-2 py-1 shrink-0 z-30">
+  <footer class="excel-sheet-footer bg-slate-200 border-t border-slate-300 px-2 py-0.5 shrink-0 z-30" style="min-height: 28px">
     <div class="d-flex align-items-center justify-content-between gap-2">
       <!-- Left Scroll Arrows -->
       <div class="d-flex align-items-center gap-1 shrink-0">
         <button
           type="button"
           (click)="scrollTabsBar('left', $event)"
-          class="btn btn-sm p-1 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 d-inline-flex align-items-center justify-content-center rounded gridario-icon-only-btn"
+          class="btn btn-sm p-0.5 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 d-inline-flex align-items-center justify-content-center rounded gridario-icon-only-btn"
+          style="width: 21px; height: 21px"
           title="Scroll sheet tabs left"
           aria-label="Scroll sheet tabs left"
         >
-          <mat-icon>chevron_left</mat-icon>
+          <mat-icon style="font-size: 15px; width: 15px; height: 15px; min-width: 15px; min-height: 15px">chevron_left</mat-icon>
         </button>
         <button
           type="button"
           (click)="scrollTabsBar('right', $event)"
-          class="btn btn-sm p-1 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 d-inline-flex align-items-center justify-content-center rounded gridario-icon-only-btn"
+          class="btn btn-sm p-0.5 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 d-inline-flex align-items-center justify-content-center rounded gridario-icon-only-btn"
+          style="width: 21px; height: 21px"
           title="Scroll sheet tabs right"
           aria-label="Scroll sheet tabs right"
         >
-          <mat-icon>chevron_right</mat-icon>
+          <mat-icon style="font-size: 15px; width: 15px; height: 15px; min-width: 15px; min-height: 15px">chevron_right</mat-icon>
         </button>
       </div>
 
@@ -2374,7 +2376,7 @@
         @for (tbl of openTablesForActiveDatabase(); track tbl.tableName) {
           @let isActiveTab = tbl.tableName === activeTableName();
           <div
-            class="excel-sheet-tab d-inline-flex align-items-center gap-1.5 px-3 py-1.5 rounded-top border cursor-pointer whitespace-nowrap select-none text-xs transition-all"
+            class="excel-sheet-tab d-inline-flex align-items-center gap-1.5 rounded-top border cursor-pointer whitespace-nowrap select-none transition-all"
             [class.excel-sheet-tab-active]="isActiveTab"
             [class.bg-white]="isActiveTab"
             [class.text-emerald-800]="isActiveTab"
@@ -2391,14 +2393,14 @@
             <mat-icon
               [class.text-emerald-600]="isActiveTab"
               [class.text-slate-400]="!isActiveTab"
-              style="font-size: 16px; width: 16px; height: 16px"
+              style="font-size: 15px; width: 15px; height: 15px; min-width: 15px; min-height: 15px"
             >
               grid_on
             </mat-icon>
             <span>{{ tbl.tableName }}</span>
             <span
               class="px-1.5 py-0 rounded font-mono-tabular"
-              style="font-size: 10px"
+              style="font-size: 10.5px"
               [class.bg-emerald-100]="isActiveTab"
               [class.text-emerald-800]="isActiveTab"
               [class.bg-slate-200]="!isActiveTab"
@@ -2410,18 +2412,18 @@
             <button
               type="button"
               (click)="closeTableTab(tbl.tableName, $event)"
-              class="btn btn-sm p-0 ms-1 border-0 bg-transparent text-slate-400 hover:text-red-600 d-inline-flex align-items-center gridario-icon-only-btn"
+              class="btn btn-sm p-0 ms-0.5 border-0 bg-transparent text-slate-400 hover:text-red-600 d-inline-flex align-items-center gridario-icon-only-btn"
               [title]="'Close ' + tbl.tableName + ' tab'"
               aria-label="Close table tab"
             >
-              <mat-icon style="font-size: 15px; width: 15px; height: 15px">close</mat-icon>
+              <mat-icon style="font-size: 14px; width: 14px; height: 14px; min-width: 14px; min-height: 14px">close</mat-icon>
             </button>
           </div>
         }
       </div>
 
       <!-- Right Side Table Schema Summary (Inside Database Tab) -->
-      <div class="d-none d-md-flex align-items-center gap-2 shrink-0 text-xs text-slate-600 font-mono-tabular pe-1">
+      <div class="d-none d-md-flex align-items-center gap-1.5 shrink-0 text-[11.5px] text-slate-600 font-mono-tabular pe-1">
         <span>DB Tab: <strong>{{ activeDatabaseName() }}</strong></span>
         <span>·</span>
         <span>Excel Sheet (Table): <strong>{{ activeTableName() || '(None)' }}</strong></span>

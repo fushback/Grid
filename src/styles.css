@@ -1673,11 +1673,15 @@ mat-icon.text-purple-700 {
   box-shadow: none !important;
 }
 
-/* Top & Footer Excel Sheet Tabs — Green lines clearly identify the selected tab */
+/* Top & Footer Excel Sheet Tabs — Compact height (+15%) & green active line */
 .excel-sheet-tab,
 .excel-top-tab {
+  font-size: 12.5px;
+  line-height: 1.2;
+  min-height: 23px;
+  padding: 3px 9px !important;
   border-top: 2px solid transparent;
-  border-bottom: 3px solid transparent;
+  border-bottom: 2px solid transparent;
 }
 
 .excel-sheet-tab.excel-sheet-tab-active,
@@ -1686,7 +1690,7 @@ mat-icon.text-purple-700 {
   color: #065f46 !important;
   font-weight: 700 !important;
   border-top: 2px solid #34A853 !important;
-  border-bottom: 3px solid #059669 !important;
+  border-bottom: 2px solid #059669 !important;
 }
 
 [data-theme='classic-dark'] .excel-sheet-tab,
@@ -1695,7 +1699,7 @@ mat-icon.text-purple-700 {
   color: #9ca3af !important;
   border-color: #27272a !important;
   border-top: 2px solid transparent !important;
-  border-bottom: 3px solid transparent !important;
+  border-bottom: 2px solid transparent !important;
 }
 
 [data-theme='classic-dark'] .excel-sheet-tab.excel-sheet-tab-active,
@@ -1704,7 +1708,7 @@ mat-icon.text-purple-700 {
   color: #FFFFFF !important;
   font-weight: 700 !important;
   border-top: 2px solid #34A853 !important;
-  border-bottom: 3px solid #34A853 !important;
+  border-bottom: 2px solid #34A853 !important;
 }
 
 [data-theme='classic-dark'] .gridario-loader-overlay {
@@ -1932,9 +1936,9 @@ mat-icon.text-purple-700 {
   display: inline-flex;
   align-items: center;
   flex-shrink: 0;
-  gap: 4px;
-  padding: 3px 9px;
-  font-size: 11px;
+  gap: 5px;
+  padding: 3.5px 10.5px;
+  font-size: 12.5px;
   font-weight: 600;
   color: #0f172a;
   background: transparent;
@@ -1962,12 +1966,12 @@ mat-icon.text-purple-700 {
 }
 
 .gridario-ribbon-tab mat-icon {
-  font-size: 13px !important;
-  width: 13px !important;
-  height: 13px !important;
-  min-width: 13px !important;
-  min-height: 13px !important;
-  line-height: 13px !important;
+  font-size: 15px !important;
+  width: 15px !important;
+  height: 15px !important;
+  min-width: 15px !important;
+  min-height: 15px !important;
+  line-height: 15px !important;
 }
 
 .gridario-ribbon-body {
