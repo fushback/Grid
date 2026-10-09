@@ -39,6 +39,7 @@ export interface DbTableSummary {
   rowCount: number;
   columnCount: number;
   columns?: GridColumn[];
+  rows?: GridRow[];
   identitySeed: number;
   identityIncrement: number;
   nextIdentityValue: number;
@@ -139,31 +140,38 @@ export interface ValidationResult {
 
 export function getDropdownOptions(col: GridColumn): string[] {
   const raw = (col.optionsCsv || '').trim();
+  const defVal = col.defaultValue !== undefined ? String(col.defaultValue).trim() : '';
   const seen = new Set<string>();
   const result: string[] = [];
-  if (raw) {
-    for (const part of raw.split(/[,\n;|]+/)) {
-      const clean = part.trim();
-      if (clean.length > 0 && !seen.has(clean)) {
-        seen.add(clean);
+
+  const addSplitOptions = (source: string) => {
+    for (const part of source.split(/[,\n;|]+/)) {
+      const clean = part.trim().replace(/^['"]|['"]$/g, '').trim();
+      if (clean.length > 0 && !seen.has(clean.toLowerCase())) {
+        seen.add(clean.toLowerCase());
         result.push(clean);
       }
     }
+  };
+
+  // If optionsCsv is still the placeholder 'High, Medium, Low' while defaultValue has custom comma-separated options, prioritize defaultValue
+  const isDefaultPlaceholder = raw.toLowerCase() === 'high, medium, low';
+  const defHasCommas =
+    defVal.includes(',') &&
+    !defVal.startsWith('[') &&
+    !defVal.startsWith('{') &&
+    !defVal.startsWith('=');
+
+  if (isDefaultPlaceholder && defHasCommas) {
+    addSplitOptions(defVal);
+  } else if (raw && !raw.startsWith('[') && !raw.startsWith('{')) {
+    addSplitOptions(raw);
   }
-  const defVal = col.defaultValue !== undefined ? String(col.defaultValue).trim() : '';
+
   if (defVal && !defVal.startsWith('[') && !defVal.startsWith('{') && !defVal.startsWith('=')) {
-    if (result.length === 0) {
-      for (const part of defVal.split(/[,\n;|]+/)) {
-        const clean = part.trim();
-        if (clean.length > 0 && !seen.has(clean)) {
-          seen.add(clean);
-          result.push(clean);
-        }
-      }
-    } else if (!result.some((o) => o.toLowerCase() === defVal.toLowerCase())) {
-      result.push(defVal);
-    }
+    addSplitOptions(defVal);
   }
+
   return result;
 }
 
@@ -192,7 +200,10 @@ export function parseLookupString(raw: string): LookupItem[] {
               attrs[k] = String(v);
             }
           }
-          const rawId = obj['id'] ?? obj['ID'] ?? obj['key'] ?? idx + 1;
+          const idEntry = Object.entries(obj).find(
+            ([k]) => k.toLowerCase() === 'id' || k.toLowerCase() === 'key'
+          );
+          const rawId = obj['id'] ?? obj['ID'] ?? obj['key'] ?? idEntry?.[1] ?? idx + 1;
           const rawName =
             obj['name'] ??
             obj['Name'] ??
@@ -502,21 +513,44 @@ export function matchLookupItemFromRaw(items: LookupItem[], rawVal: string): Loo
   const trimmed = rawVal.trim();
   const lower = trimmed.toLowerCase();
 
-  // 1. Check if rawVal is a JSON object or relaxed object with an id/key
-  const parsedInput = parseLookupString(trimmed);
-  if (parsedInput.length === 1) {
-    const inputItem = parsedInput[0];
-    const byId = items.find(
-      (i) => String(i.id).toLowerCase() === String(inputItem.id).toLowerCase()
-    );
-    if (byId) return byId;
-    const byName = items.find(
-      (i) => i.name.toLowerCase() === inputItem.name.toLowerCase()
-    );
-    if (byName) return byName;
+  // 1. Exact JSON match first
+  const exactJson = items.find((item) => item.json.toLowerCase() === lower);
+  if (exactJson) return exactJson;
+
+  // 2. Check if rawVal is a JSON object or relaxed object with an id/key or attributes
+  if (trimmed.includes('{')) {
+    const parsedInput = parseLookupString(trimmed);
+    if (parsedInput.length === 1) {
+      const inputItem = parsedInput[0];
+      const hasExplicitIdField = /['"]?(?:id|key)['"]?\s*:/i.test(trimmed);
+      if (hasExplicitIdField) {
+        const byId = items.find(
+          (i) => String(i.id).toLowerCase() === String(inputItem.id).toLowerCase()
+        );
+        if (byId) return byId;
+      }
+      if (inputItem.name) {
+        const byName = items.find(
+          (i) => i.name.toLowerCase() === inputItem.name.toLowerCase()
+        );
+        if (byName) return byName;
+      }
+      if (inputItem.attributes) {
+        for (const [attrKey, attrVal] of Object.entries(inputItem.attributes)) {
+          if (attrKey.toLowerCase() === 'id') continue;
+          const strAttr = String(attrVal).toLowerCase();
+          const byAttr = items.find((item) =>
+            item.attributes
+              ? Object.values(item.attributes).some((v) => String(v).toLowerCase() === strAttr)
+              : false
+          );
+          if (byAttr) return byAttr;
+        }
+      }
+    }
   }
 
-  // 2. Match by exact JSON, id, name, or attribute values
+  // 3. Match by id, name, formatted label, or attribute values
   return items.find((item) => {
     if (item.json.toLowerCase() === lower) return true;
     if (String(item.id).toLowerCase() === lower) return true;

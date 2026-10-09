@@ -39,287 +39,999 @@
   }
 
   <!-- ===================================================================== -->
-  <!-- CLEAN TOP HEADER: LEFT (BRAND + CLEAR SORT/FILTER), RIGHT (USER AVATAR)-->
+  <!-- COMPACT TOP HEADER ALIGNED WITH TOOLBAR & GRID DESIGN                 -->
   <!-- ===================================================================== -->
-  <header class="container-fluid px-3 md:px-4 py-2 bg-white border-b border-slate-200 shrink-0 z-40">
-    <div class="d-flex align-items-center justify-content-between gap-2">
-      <!-- Left Hand Side: Brand + Clear Sort/Filter -->
-      <div class="d-flex align-items-center gap-2 flex-wrap">
-        <a
-          href="/"
-          class="text-base font-bold tracking-tight text-slate-900 no-underline whitespace-nowrap d-inline-flex align-items-center gap-1.5"
-          data-gridario-tip="Reload the Gridario workspace home view."
+  <header class="gridario-compact-header shrink-0 z-40">
+    <!-- Left Hand Side: Compact Brand + Clear Sort/Filter -->
+    <div class="d-flex align-items-center gap-2 flex-wrap">
+      <a
+        href="/"
+        class="font-bold tracking-tight text-slate-900 no-underline whitespace-nowrap d-inline-flex align-items-center gap-1.5"
+        style="font-size: 12px; line-height: 1"
+        data-office-tip="Gridario Home"
+      >
+        <span
+          class="rounded bg-blue-600 text-white font-mono-tabular font-bold d-inline-flex align-items-center justify-content-center"
+          style="width: 18px; height: 18px; font-size: 10.5px"
         >
-          <span class="px-1.5 py-0.5 rounded bg-blue-600 text-white font-mono-tabular text-xs font-bold">G</span>
-          <span>Gridario</span>
-        </a>
+          G
+        </span>
+        <span>Gridario</span>
+      </a>
 
-        @if (sortRules().length > 0 || activeFilterCount() > 0 || globalSearchQuery().length > 0) {
-          <button
-            type="button"
-            (click)="clearAllFiltersAndSearch(); clearAllSorts()"
-            class="btn btn-sm btn-outline-danger d-inline-flex align-items-center gap-1 text-xs font-medium whitespace-nowrap"
-            data-gridario-tip="Clear all active sort rules, column filters, and search queries to display all rows."
-          >
-            <mat-icon>filter_alt_off</mat-icon>
-            <span>Clear Sort/Filter</span>
-          </button>
-        }
-      </div>
-
-      <!-- Right Hand Side: Sign In (when signed out) + Logged-in User Profile Image in a Small Circle -->
-      <div class="d-inline-flex align-items-center gap-2 position-relative">
-        @if (!firebaseUser()) {
-          <button
-            type="button"
-            (click)="handleGoogleSignIn($event)"
-            class="btn btn-sm btn-primary text-xs d-inline-flex align-items-center gap-1 whitespace-nowrap"
-            data-gridario-tip="Sign in to your account to manage your profile and collaborate."
-          >
-            <mat-icon>login</mat-icon>
-            <span>Login</span>
-          </button>
-        }
-
-        <!-- Logged-In User Profile Image in a Small Circle (Replaces Gear Icon) -->
+      @if (sortRules().length > 0 || activeFilterCount() > 0 || globalSearchQuery().length > 0) {
         <button
           type="button"
-          (click)="toggleSettingsDropdown($event)"
-          class="gridario-user-avatar-btn p-0 rounded-full border-2 d-inline-flex align-items-center justify-content-center position-relative overflow-visible cursor-pointer transition-all"
-          style="width: 34px; height: 34px"
-          [style.border-color]="isSettingsDropdownOpen() ? '#4285F4' : currentUserColor()"
-          [attr.data-gridario-tip]="'Open profile, themes, version control, and account settings for ' + currentUserName() + '.'"
-          aria-label="Open user profile, themes, version control, and settings menu"
+          (click)="clearAllFiltersAndSearch(); clearAllSorts()"
+          class="btn btn-sm btn-outline-danger py-0 px-1.5 d-inline-flex align-items-center gap-1 font-medium whitespace-nowrap"
+          style="height: 20px; font-size: 10.5px; line-height: 1"
+          data-office-tip="Clear Sort / Filter"
         >
-          <img
-            [src]="currentUserAvatarUrl()"
-            [alt]="currentUserName() + ' profile image'"
-            class="w-100 h-100 rounded-full object-cover d-block"
-            referrerpolicy="no-referrer"
-          />
-          <span
-            class="position-absolute bottom-0 end-0 rounded-full border border-white"
-            style="width: 9px; height: 9px"
-            [style.background-color]="firebaseUser() ? '#34A853' : '#94a3b8'"
-          ></span>
+          <mat-icon style="font-size: 13px; width: 13px; height: 13px">filter_alt_off</mat-icon>
+          <span>Clear Sort/Filter</span>
         </button>
+      }
+    </div>
 
-        <!-- User Profile & Settings Dropdown Popup (Profile, Version Control, Host on Vercel & Export) -->
-        @if (isSettingsDropdownOpen()) {
-          <div
-            class="position-absolute end-0 top-100 mt-1.5 bg-white border border-slate-200 rounded-xl shadow-md p-3 z-50 text-xs text-slate-800 gridpulse-floating-popup"
-            style="width: 295px"
-            (click)="$event.stopPropagation()"
-            (keydown.escape)="isSettingsDropdownOpen.set(false)"
-            tabindex="0"
-          >
-            <div class="d-flex align-items-center justify-content-between pb-2 mb-2 border-b border-slate-200">
-              <span class="font-bold text-slate-900">Profile &amp; Account</span>
+    <!-- Right Hand Side: Compact Login + 24x24 Circular User Avatar -->
+    <div class="d-inline-flex align-items-center gap-1.5 position-relative">
+      @if (!firebaseUser()) {
+        <button
+          type="button"
+          (click)="handleGoogleSignIn($event)"
+          class="btn btn-sm btn-primary py-0 px-2 d-inline-flex align-items-center gap-1 whitespace-nowrap"
+          style="height: 22px; font-size: 11px; line-height: 1"
+          data-office-tip="Sign In"
+        >
+          <mat-icon style="font-size: 13px; width: 13px; height: 13px">login</mat-icon>
+          <span>Login</span>
+        </button>
+      }
+
+      <!-- Compact 24x24 Circular User Profile Image -->
+      <button
+        type="button"
+        (click)="toggleSettingsDropdown($event)"
+        class="gridario-user-avatar-btn p-0 rounded-full border d-inline-flex align-items-center justify-content-center position-relative overflow-visible cursor-pointer transition-all"
+        style="width: 24px; height: 24px"
+        [style.border-color]="isSettingsDropdownOpen() ? '#4285F4' : currentUserColor()"
+        [attr.data-office-tip]="currentUserName() + ' · Profile & Settings'"
+        aria-label="Open user profile, themes, version control, and settings menu"
+      >
+        <img
+          [src]="currentUserAvatarUrl()"
+          [alt]="currentUserName() + ' profile image'"
+          class="w-100 h-100 rounded-full object-cover d-block"
+          referrerpolicy="no-referrer"
+        />
+        <span
+          class="position-absolute bottom-0 end-0 rounded-full border border-white"
+          style="width: 7px; height: 7px"
+          [style.background-color]="firebaseUser() ? '#34A853' : '#94a3b8'"
+        ></span>
+      </button>
+
+      <!-- User Profile & Settings Dropdown Popup (Profile, Version Control, Host on Vercel & Export) -->
+      @if (isSettingsDropdownOpen()) {
+        <div
+          class="position-absolute end-0 top-100 mt-1 bg-white border border-slate-200 rounded-xl shadow-md p-3 z-50 text-xs text-slate-800 gridpulse-floating-popup"
+          style="width: 295px"
+          (click)="$event.stopPropagation()"
+          (keydown.escape)="isSettingsDropdownOpen.set(false)"
+          tabindex="0"
+        >
+          <div class="d-flex align-items-center justify-content-between pb-2 mb-2 border-b border-slate-200">
+            <span class="font-bold text-slate-900">Profile &amp; Account</span>
+            <span
+              class="px-2 py-0.5 rounded font-semibold"
+              style="font-size: 10px"
+              [class.bg-emerald-100]="firebaseUser()"
+              [class.text-emerald-800]="firebaseUser()"
+              [class.bg-slate-100]="!firebaseUser()"
+              [class.text-slate-600]="!firebaseUser()"
+            >
+              {{ firebaseUser() ? 'Verified' : 'Guest Session' }}
+            </span>
+          </div>
+
+          <!-- Collaborator Circular Profile Image, Display Name & Email -->
+          <div class="d-flex align-items-center gap-2.5 mb-2.5">
+            <img
+              [src]="currentUserAvatarUrl()"
+              [alt]="currentUserName()"
+              class="rounded-full shrink-0 border"
+              style="width: 34px; height: 34px; object-fit: cover"
+              [style.border-color]="currentUserColor()"
+              referrerpolicy="no-referrer"
+            />
+            <div class="overflow-hidden">
+              <div class="font-semibold text-slate-900 truncate">{{ currentUserName() }}</div>
+              @if (firebaseUser(); as user) {
+                <div class="text-slate-500 truncate" [attr.data-gridario-tip]="user.email || ''">
+                  {{ user.email }} ({{ user.role }})
+                </div>
+              } @else {
+                <div class="text-slate-400">Not signed in (Guest)</div>
+              }
+            </div>
+          </div>
+
+          <div class="py-1.5 px-2 bg-slate-50 rounded-lg border border-slate-200 mb-1.5 d-flex align-items-center justify-content-between text-slate-600">
+            <span>Cloud Sync</span>
+            @if (cloudSyncStatus() === 'syncing') {
+              <span class="text-amber-600 font-semibold">Saving...</span>
+            } @else if (cloudSyncStatus() === 'synced') {
+              <span class="text-emerald-700 font-semibold">Saved {{ lastSyncedTime() }}</span>
+            } @else {
+              <span class="text-red-600 font-semibold">Offline</span>
+            }
+          </div>
+
+          <div class="py-1.5 px-2 bg-slate-50 rounded-lg border border-slate-200 mb-2 d-flex flex-column gap-1 text-slate-600">
+            <div class="d-flex align-items-center justify-content-between gap-1">
+              <span class="font-medium" style="font-size: 11px">Realtime Stream</span>
               <span
-                class="px-2 py-0.5 rounded font-semibold"
+                class="font-mono-tabular font-semibold truncate"
                 style="font-size: 10px"
-                [class.bg-emerald-100]="firebaseUser()"
-                [class.text-emerald-800]="firebaseUser()"
-                [class.bg-slate-100]="!firebaseUser()"
-                [class.text-slate-600]="!firebaseUser()"
+                [class.text-emerald-700]="realtimeSync.connectionStatus() === 'connected'"
+                [class.text-amber-600]="realtimeSync.connectionStatus() !== 'connected'"
               >
-                {{ firebaseUser() ? 'Verified' : 'Guest Session' }}
+                {{ realtimeSync.statusBadgeText() }}
               </span>
             </div>
-
-            <!-- Collaborator Circular Profile Image, Display Name & Email -->
-            <div class="d-flex align-items-center gap-2.5 mb-2.5">
-              <img
-                [src]="currentUserAvatarUrl()"
-                [alt]="currentUserName()"
-                class="rounded-full shrink-0 border"
-                style="width: 34px; height: 34px; object-fit: cover"
-                [style.border-color]="currentUserColor()"
-                referrerpolicy="no-referrer"
-              />
-              <div class="overflow-hidden">
-                <div class="font-semibold text-slate-900 truncate">{{ currentUserName() }}</div>
-                @if (firebaseUser(); as user) {
-                  <div class="text-slate-500 truncate" [attr.data-gridario-tip]="user.email || ''">
-                    {{ user.email }} ({{ user.role }})
-                  </div>
-                } @else {
-                  <div class="text-slate-400">Not signed in (Guest)</div>
-                }
-              </div>
+            <div class="d-flex align-items-center justify-content-between gap-1" style="font-size: 10px">
+              <span class="text-slate-500">
+                Coalesced: {{ realtimeSync.writeBehindStatus().totalCoalescedEdits }} · PG Flushes: {{ realtimeSync.writeBehindStatus().totalPostgresBulkFlushes }}
+              </span>
+              @if (realtimeSync.writeBehindStatus().dirtyRowCount > 0) {
+                <button
+                  type="button"
+                  (click)="triggerManualWriteBehindFlush($event)"
+                  class="btn btn-sm py-0 px-1.5 btn-outline-primary font-semibold"
+                  style="font-size: 10px; line-height: 1.3"
+                  data-office-tip="Flush buffered in-memory cell deltas to PostgreSQL immediately"
+                >
+                  <mat-icon style="font-size: 11px; width: 11px; height: 11px">sync</mat-icon>
+                  <span>Flush PG</span>
+                </button>
+              }
             </div>
+          </div>
 
-            <div class="py-1.5 px-2 bg-slate-50 rounded-lg border border-slate-200 mb-2 d-flex align-items-center justify-content-between text-slate-600">
-              <span>Cloud Sync</span>
-              @if (cloudSyncStatus() === 'syncing') {
-                <span class="text-amber-600 font-semibold">Saving...</span>
-              } @else if (cloudSyncStatus() === 'synced') {
-                <span class="text-emerald-700 font-semibold">Saved {{ lastSyncedTime() }}</span>
-              } @else {
-                <span class="text-red-600 font-semibold">Offline</span>
+          <button
+            type="button"
+            (click)="isSettingsDropdownOpen.set(false); activeModal.set('collaborator_profile')"
+            class="w-100 btn btn-sm btn-outline-secondary d-flex align-items-center justify-content-center gap-1.5 text-xs mb-2"
+          >
+            <mat-icon>manage_accounts</mat-icon>
+            <span>Edit Profile &amp; Cursor Color</span>
+          </button>
+
+          <!-- Display Mode: Classic Light / Classic Dark Toggle Switch -->
+          <div class="pt-2 mb-2 border-t border-slate-200 d-flex align-items-center justify-content-between gap-2">
+            <span class="text-slate-600 font-semibold" style="font-size: 11px">Display mode :</span>
+            <div class="d-inline-flex align-items-center gap-2">
+              <button
+                type="button"
+                (click)="setTheme('classic-light', $event)"
+                class="btn btn-sm p-0 border-0 bg-transparent text-xs cursor-pointer"
+                [class.font-bold]="!isDarkMode()"
+                [class.text-slate-900]="!isDarkMode()"
+                [class.text-slate-400]="isDarkMode()"
+                data-office-tip="Switch to Classic Light mode"
+              >
+                Light
+              </button>
+
+              <button
+                type="button"
+                role="switch"
+                [attr.aria-checked]="isDarkMode()"
+                (click)="toggleLightDarkTheme($event)"
+                class="gridario-theme-switch-btn p-0 border-0 position-relative rounded-full cursor-pointer transition-all"
+                [class.is-dark]="isDarkMode()"
+                data-office-tip="Toggle Light or Dark mode"
+                aria-label="Toggle Light or Dark display mode"
+              >
+                <span class="gridario-theme-switch-thumb rounded-full"></span>
+              </button>
+
+              <button
+                type="button"
+                (click)="setTheme('classic-dark', $event)"
+                class="btn btn-sm p-0 border-0 bg-transparent text-xs cursor-pointer"
+                [class.font-bold]="isDarkMode()"
+                [class.text-slate-900]="isDarkMode()"
+                [class.text-slate-400]="!isDarkMode()"
+                data-office-tip="Switch to Classic Dark mode"
+              >
+                Dark
+              </button>
+            </div>
+          </div>
+
+          <!-- Version Control & Cloud Hosting Section inside Settings Dropdown -->
+          <div class="pt-2 mb-2 border-t border-slate-200 d-flex flex-column gap-1.5">
+            <div class="pb-0.5 text-slate-400 font-semibold d-flex align-items-center justify-content-between" style="font-size: 10px">
+              <span>Version Control &amp; Cloud Hosting</span>
+              @if (versions().length > 0) {
+                <span class="px-1.5 py-0 rounded bg-blue-100 text-blue-800 font-mono-tabular font-bold">
+                  {{ versions()[0].versionTag }}
+                </span>
               }
             </div>
 
             <button
               type="button"
-              (click)="isSettingsDropdownOpen.set(false); activeModal.set('collaborator_profile')"
-              class="w-100 btn btn-sm btn-outline-secondary d-flex align-items-center justify-content-center gap-1.5 text-xs mb-2"
+              (click)="openVersionControlModal($event)"
+              class="w-100 btn btn-sm btn-outline-primary d-flex align-items-center justify-content-between text-xs font-semibold"
             >
-              <mat-icon>manage_accounts</mat-icon>
-              <span>Edit Profile &amp; Cursor Color</span>
+              <span class="d-inline-flex align-items-center gap-1.5">
+                <mat-icon>history</mat-icon>
+                <span>Version Control &amp; Snapshots</span>
+              </span>
+              <span class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-mono-tabular" style="font-size: 10px">
+                {{ versions().length }} saved
+              </span>
             </button>
 
-            <!-- Display Mode: Classic Light / Classic Dark Toggle Switch -->
-            <div class="pt-2 mb-2 border-t border-slate-200 d-flex align-items-center justify-content-between gap-2">
-              <span class="text-slate-600 font-semibold" style="font-size: 11px">Display mode :</span>
-              <div class="d-inline-flex align-items-center gap-2">
+            <button
+              type="button"
+              (click)="openGitHubModal($event)"
+              class="w-100 btn btn-sm btn-outline-dark d-flex align-items-center justify-content-between text-xs font-semibold"
+            >
+              <span class="d-inline-flex align-items-center gap-1.5">
+                <mat-icon>cloud_upload</mat-icon>
+                <span>Commit to GitHub / Host on Vercel</span>
+              </span>
+              <span class="text-slate-400 font-mono-tabular" style="font-size: 10px">Git + Vercel</span>
+            </button>
+          </div>
+
+          <!-- Collaboration & Export Section inside Gear Dropdown -->
+          <div class="pt-2 mb-2 border-t border-slate-200">
+            <div class="pb-1 text-slate-400 font-semibold" style="font-size: 10px">
+              Collaboration &amp; Export
+            </div>
+
+            <button
+              type="button"
+              (click)="openExcelPasteModal('overlay', $event)"
+              class="w-100 text-start px-2 py-1.5 rounded bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-xs text-slate-700"
+            >
+              <mat-icon class="text-blue-600">content_paste_go</mat-icon>
+              <span>Paste Data from Excel / CSV...</span>
+            </button>
+
+            <button
+              type="button"
+              (click)="isSettingsDropdownOpen.set(false); toggleCoEditorPresence()"
+              class="w-100 text-start px-2 py-1.5 rounded bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-xs text-slate-700"
+            >
+              <mat-icon class="text-slate-500">{{ isCoEditorSimActive() ? 'person_off' : 'person_add' }}</mat-icon>
+              <span>{{ isCoEditorSimActive() ? 'Stop Simulated Co-Editor' : 'Simulate Live Co-Editor' }}</span>
+            </button>
+
+            <button
+              type="button"
+              (click)="isSettingsDropdownOpen.set(false); exportToCsv()"
+              class="w-100 text-start px-2 py-1.5 rounded bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-xs text-slate-700"
+            >
+              <mat-icon class="text-slate-500">download</mat-icon>
+              <span>Export Filtered Table to CSV</span>
+            </button>
+
+            <a
+              href="/api/download-project"
+              download="gridpulse-complete-project.tar.gz"
+              (click)="isSettingsDropdownOpen.set(false)"
+              class="w-100 text-start px-2 py-1.5 rounded bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-xs text-slate-700 no-underline"
+            >
+              <mat-icon class="text-emerald-600">folder_zip</mat-icon>
+              <span>Download Complete Project (.tar.gz)</span>
+            </a>
+          </div>
+
+          <div class="pt-2 border-t border-slate-200">
+            @if (firebaseUser()) {
+              <button
+                type="button"
+                (click)="isSettingsDropdownOpen.set(false); handleSignOut()"
+                class="w-100 btn btn-sm btn-outline-danger d-flex align-items-center justify-content-center gap-1.5 text-xs"
+              >
+                <mat-icon>logout</mat-icon>
+                <span>Log Out</span>
+              </button>
+            } @else {
+              <button
+                type="button"
+                (click)="isSettingsDropdownOpen.set(false); handleGoogleSignIn($event)"
+                class="w-100 btn btn-sm btn-primary d-flex align-items-center justify-content-center gap-1.5 text-xs"
+              >
+                <mat-icon>login</mat-icon>
+                <span>User Login</span>
+              </button>
+            }
+          </div>
+        </div>
+      }
+    </div>
+  </header>
+
+  <!-- ===================================================================== -->
+  <!-- WORD / EXCEL / SQL SERVER RIBBON COMMAND TOOLBAR (BELOW HEADER)       -->
+  <!-- Includes Submenu Category Tabs, Text + Icon Groups, Paste Submenu,    -->
+  <!-- and Ribbon Collapse Toggle.                                           -->
+  <!-- ===================================================================== -->
+  <section
+    class="gridario-office-ribbon shrink-0"
+    aria-label="Office & SQL Server Command Ribbon"
+    (mouseleave)="clearActionTooltip()"
+  >
+    <!-- RIBBON TOP TAB BAR (Submenu Categories + Active Context Badge + Collapse Toggle) -->
+    <div class="gridario-ribbon-tab-bar">
+      <div class="d-flex flex-nowrap align-items-center gap-0.5 shrink-0">
+        <button
+          type="button"
+          (click)="setRibbonTab('home', $event)"
+          class="gridario-ribbon-tab"
+          [class.is-active]="activeRibbonTab() === 'home'"
+          data-office-tip="Home (History, Sync, Clipboard & Scoped Paste Commands)"
+        >
+          <mat-icon style="color: #4285F4">home</mat-icon>
+          <span>Home</span>
+        </button>
+
+        <button
+          type="button"
+          (click)="setRibbonTab('rows', $event)"
+          class="gridario-ribbon-tab"
+          [class.is-active]="activeRibbonTab() === 'rows'"
+          data-office-tip="Row, Cell & First Row CRUD Operations"
+        >
+          <mat-icon style="color: #34A853">table_rows</mat-icon>
+          <span>Row & Cell CRUD</span>
+        </button>
+
+        <button
+          type="button"
+          (click)="setRibbonTab('columns', $event)"
+          class="gridario-ribbon-tab"
+          [class.is-active]="activeRibbonTab() === 'columns'"
+          data-office-tip="Column & Dynamic Schema Commands"
+        >
+          <mat-icon style="color: #4285F4">view_column</mat-icon>
+          <span>Column & Schema</span>
+        </button>
+
+        <button
+          type="button"
+          (click)="setRibbonTab('database', $event)"
+          class="gridario-ribbon-tab"
+          [class.is-active]="activeRibbonTab() === 'database'"
+          data-office-tip="SQL Server Database & Table Explorer Actions"
+        >
+          <mat-icon style="color: #EA4335">dns</mat-icon>
+          <span>SQL Server Explorer</span>
+        </button>
+      </div>
+
+      <!-- Right Side of Ribbon Tab Bar: Active Cell / Column Indicator & Collapse Button -->
+      <div class="d-flex align-items-center gap-1.5 pe-0.5 shrink-0">
+        <div
+          class="hidden sm:inline-flex align-items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-300 text-[10px] font-semibold text-slate-800"
+          data-office-tip="Current active selection target for toolbar commands"
+        >
+          <mat-icon
+            style="font-size: 12px; width: 12px; height: 12px; min-width: 12px; min-height: 12px; color: #4285F4"
+          >
+            my_location
+          </mat-icon>
+          <span class="font-mono-tabular">{{ effectiveToolbarCellRef() }}</span>
+          @if (selectedRowIds().size > 0) {
+            <span class="badge bg-blue-600 text-white text-[9px] px-1 py-0 ms-0.5">
+              {{ selectedRowIds().size }} sel
+            </span>
+          }
+        </div>
+
+        <button
+          type="button"
+          (click)="toggleRibbonCollapsed($event)"
+          class="inline-flex align-items-center gap-0.5 px-1.5 py-0.5 rounded border border-transparent hover:border-slate-300 hover:bg-slate-200/60 text-[10px] font-semibold text-slate-700"
+          [attr.data-office-tip]="isRibbonCollapsed() ? 'Expand Ribbon Toolbar' : 'Collapse Ribbon Toolbar'"
+        >
+          <mat-icon
+            style="font-size: 14px; width: 14px; height: 14px; min-width: 14px; min-height: 14px"
+          >
+            {{ isRibbonCollapsed() ? 'expand_more' : 'expand_less' }}
+          </mat-icon>
+          <span class="hidden md:inline">{{ isRibbonCollapsed() ? 'Expand' : 'Collapse' }}</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- RIBBON COMMAND BODY (Collapsible, Responsive Wrapping) -->
+    @if (!isRibbonCollapsed()) {
+      <div class="gridario-ribbon-body">
+        <!-- GROUP 1: HISTORY & SYNC (Shown in 'home') -->
+        @if (activeRibbonTab() === 'home') {
+          <div class="gridario-ribbon-group">
+            <div class="gridario-ribbon-group-items">
+              <button
+                type="button"
+                [disabled]="!canUndo()"
+                (click)="clearActionTooltip(); undo($event)"
+                class="gridario-ribbon-tall-btn"
+                [attr.data-office-tip]="canUndo() ? 'Undo: ' + undoStack()[undoStack().length - 1].label + ' (Ctrl+Z)' : 'Undo (Ctrl+Z)'"
+              >
+                <mat-icon style="color: #4285F4">undo</mat-icon>
+                <span>Undo</span>
+              </button>
+
+              <button
+                type="button"
+                [disabled]="!canRedo()"
+                (click)="clearActionTooltip(); redo($event)"
+                class="gridario-ribbon-tall-btn"
+                [attr.data-office-tip]="canRedo() ? 'Redo: ' + redoStack()[redoStack().length - 1].label + ' (Ctrl+Y)' : 'Redo (Ctrl+Y)'"
+              >
+                <mat-icon style="color: #4285F4">redo</mat-icon>
+                <span>Redo</span>
+              </button>
+
+              <div class="gridario-ribbon-stack">
                 <button
                   type="button"
-                  (click)="setTheme('classic-light', $event)"
-                  class="btn btn-sm p-0 border-0 bg-transparent text-xs cursor-pointer"
-                  [class.font-bold]="!isDarkMode()"
-                  [class.text-slate-900]="!isDarkMode()"
-                  [class.text-slate-400]="isDarkMode()"
-                  data-gridario-tip="Switch the workspace to Classic Light mode."
+                  (click)="clearActionTooltip(); refreshTableData($event)"
+                  class="gridario-ribbon-sm-btn is-success"
+                  data-office-tip="Refresh Table Data from Database"
                 >
-                  Light
+                  <mat-icon style="color: #34A853">refresh</mat-icon>
+                  <span>Refresh</span>
                 </button>
 
                 <button
                   type="button"
-                  role="switch"
-                  [attr.aria-checked]="isDarkMode()"
-                  (click)="toggleLightDarkTheme($event)"
-                  class="gridario-theme-switch-btn p-0 border-0 position-relative rounded-full cursor-pointer transition-all"
-                  [class.is-dark]="isDarkMode()"
-                  data-gridario-tip="Toggle display mode between Classic Light and Classic Dark."
-                  aria-label="Toggle Light or Dark display mode"
+                  (click)="clearActionTooltip(); clearCacheFromContextMenu($event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Clear Local Cache & Reload Clean Data"
                 >
-                  <span class="gridario-theme-switch-thumb rounded-full"></span>
-                </button>
-
-                <button
-                  type="button"
-                  (click)="setTheme('classic-dark', $event)"
-                  class="btn btn-sm p-0 border-0 bg-transparent text-xs cursor-pointer"
-                  [class.font-bold]="isDarkMode()"
-                  [class.text-slate-900]="isDarkMode()"
-                  [class.text-slate-400]="!isDarkMode()"
-                  data-gridario-tip="Switch the workspace to Classic Dark mode."
-                >
-                  Dark
+                  <mat-icon style="color: #FBBC05">cleaning_services</mat-icon>
+                  <span>Clear Cache</span>
                 </button>
               </div>
             </div>
+            <div class="gridario-ribbon-group-label">History & Sync</div>
+          </div>
+        }
 
-            <!-- Version Control & Cloud Hosting Section inside Settings Dropdown -->
-            <div class="pt-2 mb-2 border-t border-slate-200 d-flex flex-column gap-1.5">
-              <div class="pb-0.5 text-slate-400 font-semibold d-flex align-items-center justify-content-between" style="font-size: 10px">
-                <span>Version Control &amp; Cloud Hosting</span>
-                @if (versions().length > 0) {
-                  <span class="px-1.5 py-0 rounded bg-blue-100 text-blue-800 font-mono-tabular font-bold">
-                    {{ versions()[0].versionTag }}
-                  </span>
-                }
+        <!-- GROUP 2: CLIPBOARD & SCOPED PASTE SUBMENU (Shown in 'home') -->
+        @if (activeRibbonTab() === 'home') {
+          <div class="gridario-ribbon-group">
+            <div class="gridario-ribbon-group-items">
+              <!-- Split Paste Button + Submenu Dropdown Trigger -->
+              <div class="d-inline-flex align-items-stretch">
+                <button
+                  type="button"
+                  (click)="clearActionTooltip(); pasteWithTargetScope('cell', $event)"
+                  class="gridario-ribbon-tall-btn"
+                  data-office-tip="Paste into Active Cell (Ctrl+V)"
+                >
+                  <mat-icon style="color: #4285F4">content_paste</mat-icon>
+                  <span>Paste</span>
+                </button>
+                <button
+                  type="button"
+                  (click)="toggleRibbonPasteMenu($event)"
+                  class="gridario-ribbon-tall-btn px-1"
+                  style="min-width: 18px"
+                  data-office-tip="Paste Special & Scoped Paste Submenu"
+                  aria-label="Paste Submenu"
+                >
+                  <mat-icon style="font-size: 14px !important; width: 14px !important; height: 14px !important; color: #4285F4">
+                    arrow_drop_down
+                  </mat-icon>
+                  <span class="text-[8px]">Menu</span>
+                </button>
+              </div>
+
+              <!-- Copy / Cut Stack -->
+              <div class="gridario-ribbon-stack">
+                <button
+                  type="button"
+                  (click)="clearActionTooltip(); copySelectionToSystemClipboard('copy', $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Copy Cell or Selected Row(s) (Ctrl+C)"
+                >
+                  <mat-icon style="color: #4285F4">content_copy</mat-icon>
+                  <span>Copy</span>
+                </button>
+
+                <button
+                  type="button"
+                  [disabled]="effectiveToolbarRowId() === newRowSentinelId && selectedRowIds().size === 0"
+                  (click)="clearActionTooltip(); copyOrCutRows('cut', effectiveToolbarRowId(), $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Cut / Move Selected Row(s) (Ctrl+X)"
+                >
+                  <mat-icon style="color: #FBBC05">content_cut</mat-icon>
+                  <span>Cut Row(s)</span>
+                </button>
+              </div>
+
+              <!-- Scoped Paste Buttons Stack -->
+              <div class="gridario-ribbon-stack">
+                <button
+                  type="button"
+                  (click)="clearActionTooltip(); pasteWithTargetScope('row', $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Paste Clipboard Values Across Current Row"
+                >
+                  <mat-icon style="color: #4285F4">table_rows</mat-icon>
+                  <span>Paste Row</span>
+                </button>
+
+                <button
+                  type="button"
+                  (click)="clearActionTooltip(); pasteWithTargetScope('column', $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Paste Clipboard Values Down Current Column"
+                >
+                  <mat-icon style="color: #4285F4">view_column</mat-icon>
+                  <span>Paste Col</span>
+                </button>
+              </div>
+
+              <!-- Paste Table & Excel Box Stack -->
+              <div class="gridario-ribbon-stack">
+                <button
+                  type="button"
+                  (click)="clearActionTooltip(); pasteWithTargetScope('table', $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Paste Multi-Row Grid into Whole Table"
+                >
+                  <mat-icon style="color: #4285F4">table_view</mat-icon>
+                  <span>Paste Table</span>
+                </button>
+
+                <button
+                  type="button"
+                  (click)="clearActionTooltip(); openExcelPasteModal('overlay', $event)"
+                  class="gridario-ribbon-sm-btn is-success"
+                  data-office-tip="Open Bulk Excel / CSV Paste Dialog"
+                >
+                  <mat-icon style="color: #34A853">content_paste_go</mat-icon>
+                  <span>Excel Box</span>
+                </button>
+              </div>
+
+              <!-- Paste Row Above / Below Stack -->
+              <div class="gridario-ribbon-stack">
+                <button
+                  type="button"
+                  [disabled]="clipboard()?.targetType !== 'rows' || isAddRowAboveOrPasteAboveDisabled(effectiveToolbarRowId())"
+                  (click)="clearActionTooltip(); pasteClipboard('before', effectiveToolbarRowId(), $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Paste Copied/Cut Row(s) Above Active Row"
+                >
+                  <mat-icon style="color: #4285F4">vertical_align_top</mat-icon>
+                  <span>Paste Above</span>
+                </button>
+
+                <button
+                  type="button"
+                  [disabled]="clipboard()?.targetType !== 'rows'"
+                  (click)="clearActionTooltip(); pasteClipboard('after', effectiveToolbarRowId(), $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Paste Copied/Cut Row(s) Below Active Row"
+                >
+                  <mat-icon style="color: #4285F4">vertical_align_bottom</mat-icon>
+                  <span>Paste Below</span>
+                </button>
+              </div>
+            </div>
+            <div class="gridario-ribbon-group-label">Clipboard & Scoped Paste</div>
+          </div>
+        }
+
+        <!-- GROUP 3: FIRST ROW (ADD ROW) ACTIONS (Shown in 'rows') -->
+        @if (activeRibbonTab() === 'rows') {
+          <div class="gridario-ribbon-group" data-first-row-reset="true">
+            <div class="gridario-ribbon-group-items" data-first-row-reset="true">
+              <button
+                type="button"
+                data-first-row-reset="true"
+                [disabled]="!hasNewRowDraftValues()"
+                (click)="clearActionTooltip(); commitFirstRowAddRow($event)"
+                class="gridario-ribbon-tall-btn is-success"
+                data-office-tip="Save & Commit First Row Draft to Database (Enter)"
+              >
+                <mat-icon style="color: #34A853">add_task</mat-icon>
+                <span>Save 1st Row</span>
+              </button>
+
+              <div class="gridario-ribbon-stack" data-first-row-reset="true">
+                <button
+                  type="button"
+                  data-first-row-reset="true"
+                  (click)="clearActionTooltip(); pasteMultipleRowsIntoFirstRowFromMenu($event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Paste Multiple Rows into First Row One by One"
+                >
+                  <mat-icon style="color: #4285F4">playlist_add_check</mat-icon>
+                  <span>Paste Multi 1st Row</span>
+                </button>
+
+                <button
+                  type="button"
+                  data-first-row-reset="true"
+                  (click)="clearActionTooltip(); resetFirstRowFieldsFromMenu($event)"
+                  class="gridario-ribbon-sm-btn is-danger"
+                  data-office-tip="Reset & Clear Unsaved First Row Fields"
+                >
+                  <mat-icon style="color: #EA4335">restart_alt</mat-icon>
+                  <span>Reset 1st Row</span>
+                </button>
+              </div>
+            </div>
+            <div class="gridario-ribbon-group-label">First Row (Add Row)</div>
+          </div>
+        }
+
+        <!-- GROUP 4: ROW & CELL CRUD OPERATIONS (Shown in 'rows') -->
+        @if (activeRibbonTab() === 'rows') {
+          <div class="gridario-ribbon-group">
+            <div class="gridario-ribbon-group-items">
+              <button
+                type="button"
+                [disabled]="!activeTableName() || !effectiveToolbarColId()"
+                (click)="clearActionTooltip(); startToolbarInlineEdit($event)"
+                class="gridario-ribbon-tall-btn"
+                data-office-tip="Edit Active Cell Value Inline (Enter)"
+              >
+                <mat-icon style="color: #4285F4">edit</mat-icon>
+                <span>Edit Cell</span>
+              </button>
+
+              <div class="gridario-ribbon-stack">
+                <button
+                  type="button"
+                  [disabled]="isAddRowAboveOrPasteAboveDisabled(effectiveToolbarRowId())"
+                  (click)="clearActionTooltip(); createBlankRow('above_active', effectiveToolbarRowId())"
+                  class="gridario-ribbon-sm-btn is-success"
+                  data-office-tip="Insert Blank Row Above Active Row"
+                >
+                  <mat-icon style="color: #34A853">add</mat-icon>
+                  <span>Row Above</span>
+                </button>
+
+                <button
+                  type="button"
+                  [disabled]="!activeTableName()"
+                  (click)="clearActionTooltip(); createBlankRow('below_active', effectiveToolbarRowId())"
+                  class="gridario-ribbon-sm-btn is-success"
+                  data-office-tip="Insert Blank Row Below Active Row"
+                >
+                  <mat-icon style="color: #34A853">playlist_add</mat-icon>
+                  <span>Row Below</span>
+                </button>
+              </div>
+
+              <div class="gridario-ribbon-stack">
+                <button
+                  type="button"
+                  [disabled]="!activeTableName() || (effectiveToolbarRowId() === newRowSentinelId && selectedRowIds().size === 0)"
+                  (click)="clearActionTooltip(); duplicateRows(effectiveToolbarRowId(), $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Duplicate Active or Selected Row(s) (Ctrl+D)"
+                >
+                  <mat-icon style="color: #4285F4">control_point_duplicate</mat-icon>
+                  <span>Duplicate</span>
+                </button>
+
+                <button
+                  type="button"
+                  [disabled]="visibleRows().length === 0"
+                  (click)="clearActionTooltip(); selectAllRowsExplicit()"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Select All Visible Rows (Ctrl+A)"
+                >
+                  <mat-icon style="color: #4285F4">select_all</mat-icon>
+                  <span>Select All</span>
+                </button>
+              </div>
+
+              <div class="gridario-ribbon-stack">
+                <button
+                  type="button"
+                  [disabled]="isAddRowAboveOrPasteAboveDisabled(effectiveToolbarRowId())"
+                  (click)="clearActionTooltip(); moveRows('up', effectiveToolbarRowId(), $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Move Selected Row(s) Up"
+                >
+                  <mat-icon style="color: #4285F4">arrow_upward</mat-icon>
+                  <span>Move Up</span>
+                </button>
+
+                <button
+                  type="button"
+                  [disabled]="!activeTableName() || (effectiveToolbarRowId() === newRowSentinelId && selectedRowIds().size === 0)"
+                  (click)="clearActionTooltip(); moveRows('down', effectiveToolbarRowId(), $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Move Selected Row(s) Down"
+                >
+                  <mat-icon style="color: #4285F4">arrow_downward</mat-icon>
+                  <span>Move Down</span>
+                </button>
               </div>
 
               <button
                 type="button"
-                (click)="openVersionControlModal($event)"
-                class="w-100 btn btn-sm btn-outline-primary d-flex align-items-center justify-content-between text-xs font-semibold"
+                [disabled]="isDeleteRowDisabled(effectiveToolbarRowId())"
+                (click)="clearActionTooltip(); deleteSelectedOrSpecificRow(effectiveToolbarRowId(), $event)"
+                class="gridario-ribbon-tall-btn is-danger"
+                data-office-tip="Delete Active or Selected Row(s)"
               >
-                <span class="d-inline-flex align-items-center gap-1.5">
-                  <mat-icon>history</mat-icon>
-                  <span>Version Control &amp; Snapshots</span>
-                </span>
-                <span class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-mono-tabular" style="font-size: 10px">
-                  {{ versions().length }} saved
-                </span>
-              </button>
-
-              <button
-                type="button"
-                (click)="openGitHubModal($event)"
-                class="w-100 btn btn-sm btn-outline-dark d-flex align-items-center justify-content-between text-xs font-semibold"
-              >
-                <span class="d-inline-flex align-items-center gap-1.5">
-                  <mat-icon>cloud_upload</mat-icon>
-                  <span>Commit to GitHub / Host on Vercel</span>
-                </span>
-                <span class="text-slate-400 font-mono-tabular" style="font-size: 10px">Git + Vercel</span>
+                <mat-icon style="color: #EA4335">delete_outline</mat-icon>
+                <span>Delete Row</span>
               </button>
             </div>
+            <div class="gridario-ribbon-group-label">Rows & Cells CRUD</div>
+          </div>
+        }
 
-            <!-- Collaboration & Export Section inside Gear Dropdown -->
-            <div class="pt-2 mb-2 border-t border-slate-200">
-              <div class="pb-1 text-slate-400 font-semibold" style="font-size: 10px">
-                Collaboration &amp; Export
+        <!-- GROUP 5: COLUMN & DYNAMIC SCHEMA OPERATIONS (Shown in 'columns') -->
+        @if (activeRibbonTab() === 'columns') {
+          <div class="gridario-ribbon-group">
+            <div class="gridario-ribbon-group-items">
+              <button
+                type="button"
+                [disabled]="!activeTableName()"
+                (click)="clearActionTooltip(); openAddColumnForTableFromTree(activeDatabaseName(), activeTableName(), $event)"
+                class="gridario-ribbon-tall-btn is-success"
+                data-office-tip="Add New Field / Column to Active Table"
+              >
+                <mat-icon style="color: #34A853">add_column_right</mat-icon>
+                <span>New Column</span>
+              </button>
+
+              <div class="gridario-ribbon-stack">
+                <button
+                  type="button"
+                  [disabled]="!effectiveToolbarColId()"
+                  (click)="clearActionTooltip(); copyOrCutColumn('copy', effectiveToolbarColId(), $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Copy Active Column Schema & Values"
+                >
+                  <mat-icon style="color: #4285F4">file_copy</mat-icon>
+                  <span>Copy Col</span>
+                </button>
+
+                <button
+                  type="button"
+                  [disabled]="!effectiveToolbarColId() || isColumnIdPrimaryKey(effectiveToolbarColId())"
+                  (click)="clearActionTooltip(); copyOrCutColumn('cut', effectiveToolbarColId(), $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Cut Active Column"
+                >
+                  <mat-icon style="color: #FBBC05">carpenter</mat-icon>
+                  <span>Cut Col</span>
+                </button>
               </div>
 
-              <button
-                type="button"
-                (click)="openExcelPasteModal('overlay', $event)"
-                class="w-100 text-start px-2 py-1.5 rounded bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-xs text-slate-700"
-              >
-                <mat-icon class="text-blue-600">content_paste_go</mat-icon>
-                <span>Paste Data from Excel / CSV...</span>
-              </button>
-
-              <button
-                type="button"
-                (click)="isSettingsDropdownOpen.set(false); toggleCoEditorPresence()"
-                class="w-100 text-start px-2 py-1.5 rounded bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-xs text-slate-700"
-              >
-                <mat-icon class="text-slate-500">{{ isCoEditorSimActive() ? 'person_off' : 'person_add' }}</mat-icon>
-                <span>{{ isCoEditorSimActive() ? 'Stop Simulated Co-Editor' : 'Simulate Live Co-Editor' }}</span>
-              </button>
-
-              <button
-                type="button"
-                (click)="isSettingsDropdownOpen.set(false); exportToCsv()"
-                class="w-100 text-start px-2 py-1.5 rounded bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-xs text-slate-700"
-              >
-                <mat-icon class="text-slate-500">download</mat-icon>
-                <span>Export Filtered Table to CSV</span>
-              </button>
-
-              <a
-                href="/api/download-project"
-                download="gridpulse-complete-project.tar.gz"
-                (click)="isSettingsDropdownOpen.set(false)"
-                class="w-100 text-start px-2 py-1.5 rounded bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-xs text-slate-700 no-underline"
-              >
-                <mat-icon class="text-emerald-600">folder_zip</mat-icon>
-                <span>Download Complete Project (.tar.gz)</span>
-              </a>
-            </div>
-
-            <div class="pt-2 border-t border-slate-200">
-              @if (firebaseUser()) {
+              <div class="gridario-ribbon-stack">
                 <button
                   type="button"
-                  (click)="isSettingsDropdownOpen.set(false); handleSignOut()"
-                  class="w-100 btn btn-sm btn-outline-danger d-flex align-items-center justify-content-center gap-1.5 text-xs"
+                  [disabled]="clipboard()?.targetType !== 'column' || !effectiveToolbarColId() || isColumnIdPrimaryKey(effectiveToolbarColId())"
+                  (click)="clearActionTooltip(); pasteClipboard('before', effectiveToolbarColId(), $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Paste Copied/Cut Column to the Left"
                 >
-                  <mat-icon>logout</mat-icon>
-                  <span>Log Out</span>
+                  <mat-icon style="color: #4285F4">west</mat-icon>
+                  <span>Paste Col L</span>
                 </button>
-              } @else {
+
                 <button
                   type="button"
-                  (click)="isSettingsDropdownOpen.set(false); handleGoogleSignIn($event)"
-                  class="w-100 btn btn-sm btn-primary d-flex align-items-center justify-content-center gap-1.5 text-xs"
+                  [disabled]="clipboard()?.targetType !== 'column' || !effectiveToolbarColId()"
+                  (click)="clearActionTooltip(); pasteClipboard('after', effectiveToolbarColId(), $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Paste Copied/Cut Column to the Right"
                 >
-                  <mat-icon>login</mat-icon>
-                  <span>User Login</span>
+                  <mat-icon style="color: #4285F4">east</mat-icon>
+                  <span>Paste Col R</span>
                 </button>
-              }
+              </div>
+
+              <div class="gridario-ribbon-stack">
+                <button
+                  type="button"
+                  [disabled]="!effectiveToolbarColId() || isColumnIdPrimaryKey(effectiveToolbarColId())"
+                  (click)="clearActionTooltip(); moveColumn('left', effectiveToolbarColId(), $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Move Active Column Left"
+                >
+                  <mat-icon style="color: #4285F4">chevron_left</mat-icon>
+                  <span>Col Left</span>
+                </button>
+
+                <button
+                  type="button"
+                  [disabled]="!effectiveToolbarColId() || isColumnIdPrimaryKey(effectiveToolbarColId())"
+                  (click)="clearActionTooltip(); moveColumn('right', effectiveToolbarColId(), $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Move Active Column Right"
+                >
+                  <mat-icon style="color: #4285F4">chevron_right</mat-icon>
+                  <span>Col Right</span>
+                </button>
+              </div>
+
+              <div class="gridario-ribbon-stack">
+                <button
+                  type="button"
+                  [disabled]="!effectiveToolbarColId() || isColumnIdPrimaryKey(effectiveToolbarColId())"
+                  (click)="clearActionTooltip(); openEditColumnModalById(effectiveToolbarColId(), $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Edit Column Data Type, Formula & Constraints"
+                >
+                  <mat-icon style="color: #4285F4">tune</mat-icon>
+                  <span>Edit Schema</span>
+                </button>
+
+                <button
+                  type="button"
+                  [disabled]="!effectiveToolbarColId() || isColumnIdPrimaryKey(effectiveToolbarColId())"
+                  (click)="clearActionTooltip(); deleteColumn(effectiveToolbarColId(), $event)"
+                  class="gridario-ribbon-sm-btn is-danger"
+                  data-office-tip="Delete Active Column from Table"
+                >
+                  <mat-icon style="color: #EA4335">delete_sweep</mat-icon>
+                  <span>Delete Col</span>
+                </button>
+              </div>
             </div>
+            <div class="gridario-ribbon-group-label">Columns & Schema</div>
+          </div>
+        }
+
+        <!-- GROUP 6: SQL SERVER DATABASE & TABLE OBJECT EXPLORER (Shown in 'database') -->
+        @if (activeRibbonTab() === 'database') {
+          <div class="gridario-ribbon-group">
+            <div class="gridario-ribbon-group-items">
+              <button
+                type="button"
+                (click)="clearActionTooltip(); openCreateDatabaseModal($event)"
+                class="gridario-ribbon-tall-btn"
+                data-office-tip="Create New SQL Server Database"
+              >
+                <mat-icon style="color: #FBBC05">create_new_folder</mat-icon>
+                <span>New DB</span>
+              </button>
+
+              <button
+                type="button"
+                [disabled]="!hasActiveConnection()"
+                (click)="clearActionTooltip(); openCreateTableForDatabaseFromTree(activeDatabaseName(), $event)"
+                class="gridario-ribbon-tall-btn is-success"
+                data-office-tip="Create New Table in Active Database"
+              >
+                <mat-icon style="color: #34A853">add_box</mat-icon>
+                <span>New Table</span>
+              </button>
+
+              <div class="gridario-ribbon-stack">
+                <button
+                  type="button"
+                  [disabled]="!activeTableName()"
+                  (click)="clearActionTooltip(); openRenameSidebarModal('table', activeDatabaseName(), activeTableName(), null, $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Edit / Rename Active Table"
+                >
+                  <mat-icon style="color: #FBBC05">drive_file_rename_outline</mat-icon>
+                  <span>Rename Table</span>
+                </button>
+
+                <button
+                  type="button"
+                  [disabled]="!activeTableName()"
+                  (click)="clearActionTooltip(); deleteTable(activeTableName(), $event, activeDatabaseName())"
+                  class="gridario-ribbon-sm-btn is-danger"
+                  data-office-tip="Drop / Delete Active Table"
+                >
+                  <mat-icon style="color: #EA4335">table_rows</mat-icon>
+                  <span>Drop Table</span>
+                </button>
+              </div>
+
+              <div class="gridario-ribbon-stack">
+                <button
+                  type="button"
+                  [disabled]="!hasActiveConnection()"
+                  (click)="clearActionTooltip(); connectDatabaseFromSidebar(activeDatabaseName(), true, $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Open Active Database Connection in a New Tab"
+                >
+                  <mat-icon style="color: #34A853">tab</mat-icon>
+                  <span>DB New Tab</span>
+                </button>
+
+                <button
+                  type="button"
+                  [disabled]="!hasActiveConnection()"
+                  (click)="clearActionTooltip(); openRenameSidebarModal('database', activeDatabaseName(), '', null, $event)"
+                  class="gridario-ribbon-sm-btn"
+                  data-office-tip="Rename Active Database"
+                >
+                  <mat-icon style="color: #FBBC05">edit_note</mat-icon>
+                  <span>Rename DB</span>
+                </button>
+              </div>
+            </div>
+            <div class="gridario-ribbon-group-label">SQL Server Explorer</div>
           </div>
         }
       </div>
-    </div>
-  </header>
+    }
+
+    <!-- Floating Paste Submenu Dropdown (Rendered outside scroll container so it is never clipped) -->
+    @if (isRibbonPasteMenuOpen() && !isRibbonCollapsed()) {
+      <div
+        (click)="$event.stopPropagation()"
+        class="position-absolute top-100 mt-0.5 rounded-lg bg-white border border-slate-300 shadow-lg py-1.5 z-50"
+        style="left: 195px; min-width: 220px"
+      >
+        <div class="px-2.5 py-1 text-[9px] font-bold uppercase tracking-wider text-slate-500 border-b border-slate-100">
+          Paste Target Scope Submenu
+        </div>
+        <button
+          type="button"
+          (click)="isRibbonPasteMenuOpen.set(false); pasteWithTargetScope('cell', $event)"
+          class="w-100 px-2.5 py-1.5 text-left text-xs text-slate-900 hover:bg-blue-50 d-flex align-items-center justify-content-between"
+        >
+          <span class="d-flex align-items-center gap-2">
+            <mat-icon style="font-size: 15px; width: 15px; height: 15px; color: #4285F4">content_paste</mat-icon>
+            <span>Paste into Cell</span>
+          </span>
+          <span class="text-[10px] font-mono text-slate-500">Ctrl+V</span>
+        </button>
+        <button
+          type="button"
+          (click)="isRibbonPasteMenuOpen.set(false); pasteWithTargetScope('row', $event)"
+          class="w-100 px-2.5 py-1.5 text-left text-xs text-slate-900 hover:bg-blue-50 d-flex align-items-center gap-2"
+        >
+          <mat-icon style="font-size: 15px; width: 15px; height: 15px; color: #4285F4">table_rows</mat-icon>
+          <span>Paste into Current Row</span>
+        </button>
+        <button
+          type="button"
+          (click)="isRibbonPasteMenuOpen.set(false); pasteWithTargetScope('column', $event)"
+          class="w-100 px-2.5 py-1.5 text-left text-xs text-slate-900 hover:bg-blue-50 d-flex align-items-center gap-2"
+        >
+          <mat-icon style="font-size: 15px; width: 15px; height: 15px; color: #4285F4">view_column</mat-icon>
+          <span>Paste into Current Column</span>
+        </button>
+        <button
+          type="button"
+          (click)="isRibbonPasteMenuOpen.set(false); pasteWithTargetScope('table', $event)"
+          class="w-100 px-2.5 py-1.5 text-left text-xs text-slate-900 hover:bg-blue-50 d-flex align-items-center gap-2"
+        >
+          <mat-icon style="font-size: 15px; width: 15px; height: 15px; color: #4285F4">table_view</mat-icon>
+          <span>Paste into Whole Table</span>
+        </button>
+        <div class="my-1 border-t border-slate-200"></div>
+        <button
+          type="button"
+          (click)="isRibbonPasteMenuOpen.set(false); openExcelPasteModal('overlay', $event)"
+          class="w-100 px-2.5 py-1.5 text-left text-xs text-slate-900 hover:bg-emerald-50 d-flex align-items-center gap-2 font-semibold"
+        >
+          <mat-icon style="font-size: 15px; width: 15px; height: 15px; color: #34A853">content_paste_go</mat-icon>
+          <span>Open Excel Paste Box...</span>
+        </button>
+      </div>
+    }
+  </section>
 
   <!-- ===================================================================== -->
   <!-- VALIDATION OR CLIPBOARD STATUS STRIP (Only shown when active)         -->
@@ -1275,39 +1987,67 @@
                       />
                     </div>
                   } @else if (col.colType === 'dropdown') {
+                    @let newRowDropVal = getNewRowMatchedDropdownCellValue(col);
                     <select
                       [id]="'new-row-inline-input-' + col.id"
-                      [value]="getNewRowEditableCellDomText(col)"
+                      [value]="newRowDropVal"
                       (click)="$event.stopPropagation()"
                       (focus)="onNewRowCellFocus(col.id, $event)"
                       (contextmenu)="onContextMenu($event, 'new_row', newRowSentinelId, col.id, 1)"
                       (change)="onNewRowSelectChange(col.id, $any($event.target).value)"
+                      (input)="onNewRowSelectChange(col.id, $any($event.target).value)"
                       (blur)="onNewRowEditableCellBlur(col.id, $event)"
                       (keydown)="onNewRowCellKeydown($event, col.id)"
                       class="excel-cell-select"
                       [attr.aria-label]="'Select new row ' + col.name"
                     >
-                      <option value="">-- {{ col.name }}{{ isColumnNotNull(col) ? ' *' : '' }} --</option>
+                      <option
+                        value=""
+                        [selected]="!newRowDropVal"
+                        [attr.selected]="!newRowDropVal ? '' : null"
+                      >
+                        -- {{ col.name }}{{ isColumnNotNull(col) ? ' *' : '' }} --
+                      </option>
                       @for (opt of getDropdownOptionsForCol(col); track opt) {
-                        <option [value]="opt">{{ opt }}</option>
+                        <option
+                          [value]="opt"
+                          [selected]="opt === newRowDropVal"
+                          [attr.selected]="opt === newRowDropVal ? '' : null"
+                        >
+                          {{ opt }}
+                        </option>
                       }
                     </select>
                   } @else if (col.colType === 'lookup' && getLookupOptionsForCol(col).length > 0) {
+                    @let newRowLookupVal = getNewRowMatchedLookupCellJson(col);
                     <select
                       [id]="'new-row-inline-input-' + col.id"
-                      [value]="getNewRowMatchedLookupCellJson(col)"
+                      [value]="newRowLookupVal"
                       (click)="$event.stopPropagation()"
                       (focus)="onNewRowCellFocus(col.id, $event)"
                       (contextmenu)="onContextMenu($event, 'new_row', newRowSentinelId, col.id, 1)"
                       (change)="onNewRowSelectChange(col.id, $any($event.target).value)"
+                      (input)="onNewRowSelectChange(col.id, $any($event.target).value)"
                       (blur)="onNewRowEditableCellBlur(col.id, $event)"
                       (keydown)="onNewRowCellKeydown($event, col.id)"
                       class="excel-cell-select font-mono-tabular"
                       [attr.aria-label]="'Select new row lookup ' + col.name"
                     >
-                      <option value="">-- {{ col.name }}{{ isColumnNotNull(col) ? ' *' : '' }} --</option>
+                      <option
+                        value=""
+                        [selected]="!newRowLookupVal"
+                        [attr.selected]="!newRowLookupVal ? '' : null"
+                      >
+                        -- {{ col.name }}{{ isColumnNotNull(col) ? ' *' : '' }} --
+                      </option>
                       @for (item of getLookupOptionsForCol(col); track item.id) {
-                        <option [value]="item.json">{{ formatLookupOptionLabel(item) }}</option>
+                        <option
+                          [value]="item.json"
+                          [selected]="item.json === newRowLookupVal"
+                          [attr.selected]="item.json === newRowLookupVal ? '' : null"
+                        >
+                          {{ formatLookupOptionLabel(item) }}
+                        </option>
                       }
                     </select>
                   } @else {
@@ -1459,45 +2199,71 @@
                       />
                     </div>
                   } @else if (col.colType === 'dropdown') {
+                    @let matchedDropVal = getMatchedDropdownCellValue(row, col);
                     <select
                       [id]="'grid-cell-' + row.id + '-' + col.id"
-                      [value]="getRawCellString(row, col)"
+                      [value]="matchedDropVal"
                       (click)="$event.stopPropagation()"
                       (focus)="onCellFocus(row.id, col.id, $event)"
                       (contextmenu)="onContextMenu($event, 'cell', row.id, col.id, visualRowNum)"
                       (change)="onSelectCellChange(row.id, col.id, $any($event.target).value)"
+                      (input)="onSelectCellChange(row.id, col.id, $any($event.target).value)"
                       (blur)="onEditableCellBlur(row.id, col.id, $event)"
                       (keydown)="onAlwaysEditableCellKeydown($event, row.id, col.id)"
                       class="excel-cell-select text-slate-800"
                       [attr.aria-label]="col.name"
                     >
-                      @if (!getDropdownOptionsForCol(col).includes(getRawCellString(row, col))) {
-                        <option [value]="getRawCellString(row, col)">
-                          {{ getRawCellString(row, col) || '(Empty)' }}
+                      @if (!getDropdownOptionsForCol(col).includes(matchedDropVal)) {
+                        <option
+                          [value]="matchedDropVal"
+                          [selected]="true"
+                          [attr.selected]="''"
+                        >
+                          {{ matchedDropVal || '(Empty)' }}
                         </option>
                       }
                       @for (opt of getDropdownOptionsForCol(col); track opt) {
-                        <option [value]="opt">{{ opt }}</option>
+                        <option
+                          [value]="opt"
+                          [selected]="opt === matchedDropVal"
+                          [attr.selected]="opt === matchedDropVal ? '' : null"
+                        >
+                          {{ opt }}
+                        </option>
                       }
                     </select>
                   } @else if (col.colType === 'lookup' && getLookupOptionsForCol(col).length > 0) {
+                    @let matchedLookupVal = getMatchedLookupCellJson(row, col);
                     <select
                       [id]="'grid-cell-' + row.id + '-' + col.id"
-                      [value]="getMatchedLookupCellJson(row, col)"
+                      [value]="matchedLookupVal"
                       (click)="$event.stopPropagation()"
                       (focus)="onCellFocus(row.id, col.id, $event)"
                       (contextmenu)="onContextMenu($event, 'cell', row.id, col.id, visualRowNum)"
                       (change)="onSelectCellChange(row.id, col.id, $any($event.target).value)"
+                      (input)="onSelectCellChange(row.id, col.id, $any($event.target).value)"
                       (blur)="onEditableCellBlur(row.id, col.id, $event)"
                       (keydown)="onAlwaysEditableCellKeydown($event, row.id, col.id)"
                       class="excel-cell-select font-mono-tabular text-slate-800"
                       [attr.aria-label]="col.name"
                     >
-                      @if (!getMatchedLookupCellJson(row, col)) {
-                        <option value="">(Empty)</option>
+                      @if (!isLookupValueInOptions(col, matchedLookupVal)) {
+                        <option
+                          [value]="matchedLookupVal"
+                          [selected]="true"
+                          [attr.selected]="''"
+                        >
+                          {{ matchedLookupVal || '(Empty)' }}
+                        </option>
                       }
                       @for (item of getLookupOptionsForCol(col); track item.id) {
-                        <option [value]="item.json">{{ formatLookupOptionLabel(item) }}</option>
+                        <option
+                          [value]="item.json"
+                          [selected]="item.json === matchedLookupVal"
+                          [attr.selected]="item.json === matchedLookupVal ? '' : null"
+                        >
+                          {{ formatLookupOptionLabel(item) }}
+                        </option>
                       }
                     </select>
                   } @else {
@@ -1763,11 +2529,11 @@
         </button>
       </div>
 
-      <!-- REFRESH TABLE DATA IN RIGHT-CLICK DROPDOWN -->
+      <!-- REFRESH TABLE DATA & CLEAR CACHE IN RIGHT-CLICK DROPDOWN -->
       <button
         type="button"
         (click)="refreshTableData($event)"
-        class="w-100 text-start px-3 py-1.5 bg-transparent border-0 border-b border-slate-200 hover:bg-slate-100 d-flex align-items-center justify-content-between"
+        class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center justify-content-between"
         title="Refresh table data from cloud database"
       >
         <span class="d-inline-flex align-items-center gap-2">
@@ -1775,6 +2541,19 @@
           <span class="font-medium">Refresh Table Data</span>
         </span>
         <span class="text-slate-400 font-mono-tabular" style="font-size: 10px">Sync DB</span>
+      </button>
+
+      <button
+        type="button"
+        (click)="clearCacheFromContextMenu($event)"
+        class="w-100 text-start px-3 py-1.5 bg-transparent border-0 border-b border-slate-200 hover:bg-amber-50 text-amber-800 d-flex align-items-center justify-content-between"
+        title="Clear local cached state, reset transient drafts and filters, and reload fresh data from database"
+      >
+        <span class="d-inline-flex align-items-center gap-2">
+          <mat-icon class="text-amber-600">cleaning_services</mat-icon>
+          <span class="font-medium">Clear Cache</span>
+        </span>
+        <span class="text-amber-700 font-mono-tabular" style="font-size: 10px">Reset</span>
       </button>
 
       <!-- PASTE OPTIONS FOR CURRENT CELL, CURRENT ROW, CURRENT COLUMN, OR WHOLE TABLE (ON SELECT OR EDIT) -->
@@ -2411,6 +3190,21 @@
           </div>
         }
       }
+
+      <div class="border-t border-slate-200 mt-1 pt-1">
+        <button
+          type="button"
+          (click)="clearCacheFromContextMenu($event)"
+          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-amber-50 text-amber-800 d-flex align-items-center justify-content-between"
+          title="Clear local cached state, reset transient drafts and filters, and reload fresh data from database"
+        >
+          <span class="d-inline-flex align-items-center gap-2">
+            <mat-icon class="text-amber-600">cleaning_services</mat-icon>
+            <span class="font-medium">Clear Cache</span>
+          </span>
+          <span class="text-amber-700 font-mono-tabular" style="font-size: 10px">Reset</span>
+        </button>
+      </div>
     </div>
   }
 
@@ -2788,6 +3582,7 @@
               id="col-type-select"
               formControlName="colType"
               (change)="onSchemaColTypeChange()"
+              (input)="onSchemaColTypeChange()"
               class="form-select form-select-sm text-xs"
             >
               <option value="text">Text / VARCHAR</option>
@@ -2810,6 +3605,7 @@
                 id="col-options-input"
                 type="text"
                 formControlName="optionsCsv"
+                (input)="onSchemaOptionsCsvInput()"
                 placeholder="e.g. High, Medium, Low"
                 class="form-control form-control-sm text-xs"
               />
@@ -2826,6 +3622,7 @@
                   id="col-lookup-table-select"
                   formControlName="lookupTableName"
                   (change)="onSchemaLookupTableChange()"
+                  (input)="onSchemaLookupTableChange()"
                   class="form-select form-select-sm text-xs font-mono-tabular"
                 >
                   <option value="">-- Custom JSON Array (Not linked to a table) --</option>
@@ -2934,6 +3731,17 @@
                     <option value="">-- No default record --</option>
                     @for (item of getSchemaModalLookupItems(); track item.id) {
                       <option [value]="item.json">{{ formatLookupOptionLabel(item) }}</option>
+                    }
+                  </select>
+                } @else if (schemaModalColType() === 'dropdown' && getSchemaModalDropdownOptions().length > 0) {
+                  <select
+                    id="col-default-input"
+                    formControlName="defaultValue"
+                    class="form-select form-select-sm text-xs"
+                  >
+                    <option value="">-- First option / None --</option>
+                    @for (opt of getSchemaModalDropdownOptions(); track opt) {
+                      <option [value]="opt">{{ opt }}</option>
                     }
                   </select>
                 } @else {
@@ -3048,7 +3856,7 @@
                     (change)="updateNewRowField(col.id, $any($event.target).value)"
                   >
                     @for (opt of getDropdownOptionsForCol(col); track opt) {
-                      <option [value]="opt">{{ opt }}</option>
+                      <option [value]="opt" [selected]="opt === newRowValues()[col.id]">{{ opt }}</option>
                     }
                   </select>
                 } @else if (col.colType === 'lookup' && getLookupOptionsForCol(col).length > 0) {
@@ -3059,7 +3867,7 @@
                     (change)="updateNewRowField(col.id, $any($event.target).value)"
                   >
                     @for (item of getLookupOptionsForCol(col); track item.id) {
-                      <option [value]="item.json">{{ formatLookupOptionLabel(item) }}</option>
+                      <option [value]="item.json" [selected]="item.json === newRowValues()[col.id]">{{ formatLookupOptionLabel(item) }}</option>
                     }
                   </select>
                 } @else if (col.colType === 'checkbox') {
@@ -3358,17 +4166,18 @@
                         id="create-tbl-top-type"
                         [value]="topDraft.colType"
                         (change)="updateTopNewTableColumnDraft({ colType: $any($event.target).value })"
+                        (input)="updateTopNewTableColumnDraft({ colType: $any($event.target).value })"
                         (keydown)="onCreateTableCellKeydown($event, -1, 'type', false)"
                         class="form-select form-select-sm text-xs"
                       >
-                        <option value="text">Text / VARCHAR</option>
-                        <option value="varchar_max">Text / VARCHAR(MAX)</option>
-                        <option value="number">Number / NUMERIC</option>
-                        <option value="date">Date / DATE</option>
-                        <option value="dropdown">Select Dropdown / ENUM</option>
-                        <option value="lookup">Lookup / Foreign Key JSON</option>
-                        <option value="checkbox">Checkbox / BOOLEAN</option>
-                        <option value="formula">Formula</option>
+                        <option value="text" [selected]="topDraft.colType === 'text'">Text / VARCHAR</option>
+                        <option value="varchar_max" [selected]="topDraft.colType === 'varchar_max'">Text / VARCHAR(MAX)</option>
+                        <option value="number" [selected]="topDraft.colType === 'number'">Number / NUMERIC</option>
+                        <option value="date" [selected]="topDraft.colType === 'date'">Date / DATE</option>
+                        <option value="dropdown" [selected]="topDraft.colType === 'dropdown'">Select Dropdown / ENUM</option>
+                        <option value="lookup" [selected]="topDraft.colType === 'lookup'">Lookup / Foreign Key JSON</option>
+                        <option value="checkbox" [selected]="topDraft.colType === 'checkbox'">Checkbox / BOOLEAN</option>
+                        <option value="formula" [selected]="topDraft.colType === 'formula'">Formula</option>
                       </select>
                     </td>
 
@@ -3410,9 +4219,12 @@
                             title="Link Other Table or Same Table for Lookup JSON"
                             class="form-select form-select-sm font-mono-tabular text-xs"
                           >
-                            <option value="">-- Custom Lookup JSON --</option>
+                            <option value="" [selected]="!topDraft.lookupTableName">-- Custom Lookup JSON --</option>
                             @for (tbl of getAvailableLookupTablesForCreateTableModal(); track tbl.tableName) {
-                              <option [value]="tbl.tableName">
+                              <option
+                                [value]="tbl.tableName"
+                                [selected]="tbl.tableName === (topDraft.lookupTableName || '')"
+                              >
                                 FK Link Table: {{ tbl.tableName }}
                                 {{ tbl.tableName.toLowerCase() === (newTableForm.controls.tableName.value || editingTableOriginalName() || activeTableName()).toLowerCase() ? '(Same Table)' : '' }}
                                 ({{ tbl.rowCount }} rows)
@@ -3468,9 +4280,9 @@
                               (keydown)="onCreateTableCellKeydown($event, -1, 'default', false)"
                               class="form-select form-select-sm font-mono-tabular text-xs"
                             >
-                              <option value="">-- Default Linked JSON Record (Optional) --</option>
+                              <option value="" [selected]="!topDraft.columnValue">-- Default Linked JSON Record (Optional) --</option>
                               @for (item of getDraftLookupItems(topDraft); track item.id) {
-                                <option [value]="item.json">{{ formatLookupOptionLabel(item) }}</option>
+                                <option [value]="item.json" [selected]="item.json === topDraft.columnValue">{{ formatLookupOptionLabel(item) }}</option>
                               }
                             </select>
                           } @else {
@@ -3640,17 +4452,18 @@
                           [id]="'create-tbl-type-' + idx"
                           [value]="draft.colType"
                           (change)="updateNewTableColumnDraft(idx, { colType: $any($event.target).value })"
+                          (input)="updateNewTableColumnDraft(idx, { colType: $any($event.target).value })"
                           (keydown)="onCreateTableCellKeydown($event, idx, 'type', false)"
                           class="form-select form-select-sm text-xs"
                         >
-                          <option value="text">Text / VARCHAR</option>
-                          <option value="varchar_max">Text / VARCHAR(MAX)</option>
-                          <option value="number">Number / NUMERIC</option>
-                          <option value="date">Date / DATE</option>
-                          <option value="dropdown">Select Dropdown / ENUM</option>
-                          <option value="lookup">Lookup / Foreign Key JSON</option>
-                          <option value="checkbox">Checkbox / BOOLEAN</option>
-                          <option value="formula">Formula</option>
+                          <option value="text" [selected]="draft.colType === 'text'">Text / VARCHAR</option>
+                          <option value="varchar_max" [selected]="draft.colType === 'varchar_max'">Text / VARCHAR(MAX)</option>
+                          <option value="number" [selected]="draft.colType === 'number'">Number / NUMERIC</option>
+                          <option value="date" [selected]="draft.colType === 'date'">Date / DATE</option>
+                          <option value="dropdown" [selected]="draft.colType === 'dropdown'">Select Dropdown / ENUM</option>
+                          <option value="lookup" [selected]="draft.colType === 'lookup'">Lookup / Foreign Key JSON</option>
+                          <option value="checkbox" [selected]="draft.colType === 'checkbox'">Checkbox / BOOLEAN</option>
+                          <option value="formula" [selected]="draft.colType === 'formula'">Formula</option>
                         </select>
                       </td>
 
@@ -3692,9 +4505,12 @@
                               title="Link Other Table or Same Table for Lookup JSON"
                               class="form-select form-select-sm font-mono-tabular text-xs"
                             >
-                              <option value="">-- Custom Lookup JSON --</option>
+                              <option value="" [selected]="!draft.lookupTableName">-- Custom Lookup JSON --</option>
                               @for (tbl of getAvailableLookupTablesForCreateTableModal(); track tbl.tableName) {
-                                <option [value]="tbl.tableName">
+                                <option
+                                  [value]="tbl.tableName"
+                                  [selected]="tbl.tableName === (draft.lookupTableName || '')"
+                                >
                                   FK Link Table: {{ tbl.tableName }}
                                   {{ tbl.tableName.toLowerCase() === (newTableForm.controls.tableName.value || editingTableOriginalName() || activeTableName()).toLowerCase() ? '(Same Table)' : '' }}
                                   ({{ tbl.rowCount }} rows)
@@ -3750,9 +4566,9 @@
                                 (keydown)="onCreateTableCellKeydown($event, idx, 'default', false)"
                                 class="form-select form-select-sm font-mono-tabular text-xs"
                               >
-                                <option value="">-- Default Linked JSON Record (Optional) --</option>
+                                <option value="" [selected]="!draft.columnValue">-- Default Linked JSON Record (Optional) --</option>
                                 @for (item of getDraftLookupItems(draft); track item.id) {
-                                  <option [value]="item.json">{{ formatLookupOptionLabel(item) }}</option>
+                                  <option [value]="item.json" [selected]="item.json === draft.columnValue">{{ formatLookupOptionLabel(item) }}</option>
                                 }
                               </select>
                             } @else {

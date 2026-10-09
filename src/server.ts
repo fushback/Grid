@@ -8,6 +8,9 @@ import express, { Request, Response } from 'express';
 import { join } from 'node:path';
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { createServer, IncomingMessage } from 'node:http';
+import { createHash } from 'node:crypto';
+import { Duplex } from 'node:stream';
 import pg from 'pg';
 
 const { Pool } = pg;
@@ -84,6 +87,28 @@ function getPgPool(): pg.Pool | null {
 const app = express();
 app.use(express.json({ limit: '10mb' }));
 
+// Registry of internal route handlers so WebSocket RPC (ExecuteCrudCommand) and /api/realtime/crud
+// can invoke any workspace/sidebar/grid CRUD handler in-memory with zero HTTP loopback overhead.
+type InternalRouteHandler = (req: Request, res: Response) => unknown;
+const registeredRouteHandlers = new Map<string, InternalRouteHandler>();
+
+const origAppGet = app.get.bind(app);
+const origAppPost = app.post.bind(app);
+
+(app as unknown as { get: (...args: unknown[]) => unknown }).get = (...args: unknown[]) => {
+  if (typeof args[0] === 'string' && typeof args[args.length - 1] === 'function') {
+    registeredRouteHandlers.set(`GET:${args[0]}`, args[args.length - 1] as InternalRouteHandler);
+  }
+  return (origAppGet as (...a: unknown[]) => unknown)(...args);
+};
+
+(app as unknown as { post: (...args: unknown[]) => unknown }).post = (...args: unknown[]) => {
+  if (typeof args[0] === 'string' && typeof args[args.length - 1] === 'function') {
+    registeredRouteHandlers.set(`POST:${args[0]}`, args[args.length - 1] as InternalRouteHandler);
+  }
+  return (origAppPost as (...a: unknown[]) => unknown)(...args);
+};
+
 const angularApp = new AngularNodeAppEngine();
 
 interface ServerColumn {
@@ -145,6 +170,7 @@ interface DbTableSummary {
   rowCount: number;
   columnCount: number;
   columns: ServerColumn[];
+  rows?: ServerRow[];
   identitySeed: number;
   identityIncrement: number;
   nextIdentityValue: number;
@@ -1115,7 +1141,37 @@ function mapColTypeToSqlType(col: ServerColumn): string {
   }
 }
 
-async function createDatabaseInRealBackend(databaseName: string): Promise<void> {
+interface WriteBehindDdlTask {
+  type: 'create_database' | 'rename_database' | 'drop_database' | 'drop_table';
+  databaseName: string;
+  newDatabaseName?: string;
+  tableName?: string;
+  timestampMs: number;
+}
+
+const writeBehindDdlQueue: WriteBehindDdlTask[] = [];
+let writeBehindMetadataDirty = false;
+
+// Write-Behind Buffer tracking dirty rows & dirty tables awaiting PostgreSQL bulk flush
+const writeBehindDirtyRows = new Map<
+  string,
+  { databaseName: string; tableName: string; rowId: string; timestampMs: number }
+>();
+const writeBehindDirtyTables = new Map<
+  string,
+  { databaseName: string; tableName: string; firstDirtyAtMs: number }
+>();
+
+const writeBehindMetrics = {
+  totalCoalescedEdits: 0,
+  totalPostgresBulkFlushes: 0,
+  lastFlushedAt: null as string | null,
+  flushIntervalSeconds: 120,
+  bufferThresholdRows: 100,
+  isFlushing: false,
+};
+
+async function execCreateDatabaseInPostgres(databaseName: string): Promise<void> {
   const pool = getPgPool();
   if (!pool || !databaseName) return;
   try {
@@ -1125,7 +1181,7 @@ async function createDatabaseInRealBackend(databaseName: string): Promise<void> 
   }
 }
 
-async function renameDatabaseInRealBackend(
+async function execRenameDatabaseInPostgres(
   oldDatabaseName: string,
   newDatabaseName: string
 ): Promise<void> {
@@ -1139,11 +1195,11 @@ async function renameDatabaseInRealBackend(
       `ALTER SCHEMA ${quoteSqlIdent(cleanOld)} RENAME TO ${quoteSqlIdent(cleanNew)}`
     );
   } catch {
-    await createDatabaseInRealBackend(cleanNew);
+    await execCreateDatabaseInPostgres(cleanNew);
   }
 }
 
-async function dropDatabaseFromRealBackend(databaseName: string): Promise<void> {
+async function execDropDatabaseFromPostgres(databaseName: string): Promise<void> {
   const pool = getPgPool();
   if (!pool || !databaseName) return;
   try {
@@ -1157,7 +1213,7 @@ function stripDboPrefix(name: string): string {
   return String(name || '').replace(/^dbo\./i, '').trim();
 }
 
-async function syncTableToRealDatabase(table: ServerTable, databaseName?: string): Promise<void> {
+async function execSyncTableToPostgres(table: ServerTable, databaseName?: string): Promise<void> {
   const pool = getPgPool();
   if (!pool) return;
   table.tableName = stripDboPrefix(table.tableName) || table.tableName;
@@ -1231,7 +1287,7 @@ async function syncTableToRealDatabase(table: ServerTable, databaseName?: string
   }
 }
 
-async function dropTableFromRealDatabase(tableName: string, databaseName?: string): Promise<void> {
+async function execDropTableFromPostgres(tableName: string, databaseName?: string): Promise<void> {
   const pool = getPgPool();
   if (!pool) return;
   const cleanTable = stripDboPrefix(tableName) || tableName;
@@ -1248,13 +1304,146 @@ async function dropTableFromRealDatabase(tableName: string, databaseName?: strin
   }
 }
 
+/**
+ * Write-Behind Buffer wrappers for Database, Table, Field, and Row CRUD operations:
+ * Mutates in-memory state immediately and queues DDL / Table sync for the Background Flush Worker.
+ */
+async function createDatabaseInRealBackend(
+  databaseName: string,
+  immediatePg = false
+): Promise<void> {
+  if (!databaseName) return;
+  if (immediatePg) {
+    await execCreateDatabaseInPostgres(databaseName);
+    return;
+  }
+  const cleanDb = stripDboPrefix(databaseName);
+  writeBehindDdlQueue.push({
+    type: 'create_database',
+    databaseName: cleanDb,
+    timestampMs: Date.now(),
+  });
+  writeBehindMetrics.totalCoalescedEdits++;
+}
+
+async function renameDatabaseInRealBackend(
+  oldDatabaseName: string,
+  newDatabaseName: string,
+  immediatePg = false
+): Promise<void> {
+  if (!oldDatabaseName || !newDatabaseName) return;
+  if (immediatePg) {
+    await execRenameDatabaseInPostgres(oldDatabaseName, newDatabaseName);
+    return;
+  }
+  const cleanOld = stripDboPrefix(oldDatabaseName);
+  const cleanNew = stripDboPrefix(newDatabaseName);
+  writeBehindDdlQueue.push({
+    type: 'rename_database',
+    databaseName: cleanOld,
+    newDatabaseName: cleanNew,
+    timestampMs: Date.now(),
+  });
+  writeBehindMetrics.totalCoalescedEdits++;
+}
+
+async function dropDatabaseFromRealBackend(
+  databaseName: string,
+  immediatePg = false
+): Promise<void> {
+  if (!databaseName) return;
+  if (immediatePg) {
+    await execDropDatabaseFromPostgres(databaseName);
+    return;
+  }
+  const cleanDb = stripDboPrefix(databaseName);
+  const lowerDbPrefix = `${cleanDb.toLowerCase()}|`;
+  for (const key of Array.from(writeBehindDirtyTables.keys())) {
+    if (key.startsWith(lowerDbPrefix)) {
+      writeBehindDirtyTables.delete(key);
+    }
+  }
+  for (const key of Array.from(writeBehindDirtyRows.keys())) {
+    if (key.startsWith(lowerDbPrefix)) {
+      writeBehindDirtyRows.delete(key);
+    }
+  }
+  writeBehindDdlQueue.push({
+    type: 'drop_database',
+    databaseName: cleanDb,
+    timestampMs: Date.now(),
+  });
+  writeBehindMetrics.totalCoalescedEdits++;
+}
+
+async function syncTableToRealDatabase(
+  table: ServerTable,
+  databaseName?: string,
+  immediatePg = false
+): Promise<void> {
+  table.tableName = stripDboPrefix(table.tableName) || table.tableName;
+  const cleanDb = stripDboPrefix(databaseName || cloudState.activeDatabaseName || 'GridPulse_DB');
+  if (immediatePg) {
+    await execSyncTableToPostgres(table, cleanDb);
+    return;
+  }
+  const nowMs = Date.now();
+  const tableKey = `${cleanDb.toLowerCase()}|${table.tableName.toLowerCase()}`;
+  if (!writeBehindDirtyTables.has(tableKey)) {
+    writeBehindDirtyTables.set(tableKey, {
+      databaseName: cleanDb,
+      tableName: table.tableName,
+      firstDirtyAtMs: nowMs,
+    });
+  }
+  const structuralRowKey = `${tableKey}|__schema_or_rows__`;
+  writeBehindDirtyRows.set(structuralRowKey, {
+    databaseName: cleanDb,
+    tableName: table.tableName,
+    rowId: '__schema_or_rows__',
+    timestampMs: nowMs,
+  });
+  writeBehindMetrics.totalCoalescedEdits++;
+}
+
+async function dropTableFromRealDatabase(
+  tableName: string,
+  databaseName?: string,
+  immediatePg = false
+): Promise<void> {
+  const cleanTable = stripDboPrefix(tableName) || tableName;
+  const cleanDb = stripDboPrefix(databaseName || cloudState.activeDatabaseName || 'GridPulse_DB');
+  if (immediatePg) {
+    await execDropTableFromPostgres(cleanTable, cleanDb);
+    return;
+  }
+  const tableKey = `${cleanDb.toLowerCase()}|${cleanTable.toLowerCase()}`;
+  writeBehindDirtyTables.delete(tableKey);
+  for (const key of Array.from(writeBehindDirtyRows.keys())) {
+    if (key.startsWith(`${tableKey}|`)) {
+      writeBehindDirtyRows.delete(key);
+    }
+  }
+  writeBehindDdlQueue.push({
+    type: 'drop_table',
+    databaseName: cleanDb,
+    tableName: cleanTable,
+    timestampMs: Date.now(),
+  });
+  writeBehindMetrics.totalCoalescedEdits++;
+}
+
 function summarizeTable(t: ServerTable): DbTableSummary {
   const sortedCols = [...(t.columns || [])].sort((a, b) => a.orderIndex - b.orderIndex);
+  const sortedRows = [...(t.rows || [])]
+    .sort((a, b) => a.orderIndex - b.orderIndex)
+    .slice(0, 250);
   return {
     tableName: t.tableName,
     rowCount: (t.rows || []).length,
     columnCount: sortedCols.length,
     columns: sortedCols,
+    rows: sortedRows,
     identitySeed: t.identitySeed || 1,
     identityIncrement: t.identityIncrement || 1,
     nextIdentityValue: computeNextIdentityValue(sortedCols, t.rows || []),
@@ -1582,7 +1771,72 @@ function syncAllLinkedLookupColumnsInState(
       }
     }
 
-    // 2. Resolve and synchronize all lookup columns in this database
+    // 2. Auto-detect any columns hydrated from PostgreSQL as 'text' whose cell values store Lookup JSON objects ({"ID":...})
+    for (const tbl of db.tables) {
+      for (const col of tbl.columns || []) {
+        if (col.isPrimaryKey || col.isIdentity) continue;
+        if (col.colType === 'text' && Array.isArray(tbl.rows) && tbl.rows.length > 0) {
+          let sampleParsed: Record<string, unknown> | null = null;
+          let jsonCellCount = 0;
+          let nonEmptyCount = 0;
+          for (const r of tbl.rows.slice(0, 25)) {
+            const rawVal = r.cells?.[col.name] ?? r.cells?.[col.id];
+            const strVal = rawVal === undefined || rawVal === null ? '' : String(rawVal).trim();
+            if (!strVal) continue;
+            nonEmptyCount++;
+            if (strVal.startsWith('{') && strVal.endsWith('}')) {
+              try {
+                const parsed = JSON.parse(strVal);
+                if (
+                  parsed &&
+                  typeof parsed === 'object' &&
+                  !Array.isArray(parsed) &&
+                  ('ID' in parsed || 'id' in parsed)
+                ) {
+                  jsonCellCount++;
+                  if (!sampleParsed) {
+                    sampleParsed = parsed as Record<string, unknown>;
+                  }
+                }
+              } catch {
+                // Not valid JSON
+              }
+            }
+          }
+          if (nonEmptyCount > 0 && jsonCellCount === nonEmptyCount && sampleParsed) {
+            const jsonKeys = Object.keys(sampleParsed);
+            const nonIdKeys = jsonKeys.filter((k) => k.toLowerCase() !== 'id');
+            const baseColName = col.name.replace(/id$/i, '').trim().toLowerCase();
+            // Match source table either by non-ID column names in the JSON or by column name
+            const bySchemaMatch =
+              nonIdKeys.length > 0
+                ? db.tables.find((candidateTbl) => {
+                    const candColsLower = new Set(
+                      (candidateTbl.columns || []).map((c) => c.name.trim().toLowerCase())
+                    );
+                    return nonIdKeys.every((k) => candColsLower.has(k.trim().toLowerCase()));
+                  })
+                : undefined;
+            const byNameMatch = db.tables.find(
+              (candidateTbl) =>
+                candidateTbl.tableName.toLowerCase() === col.name.trim().toLowerCase() ||
+                (baseColName.length > 0 &&
+                  candidateTbl.tableName.toLowerCase() === baseColName)
+            );
+            const inferredTable =
+              (nonIdKeys.length >= 2 ? bySchemaMatch || byNameMatch : byNameMatch || bySchemaMatch) ||
+              db.tables[0];
+            if (inferredTable) {
+              col.colType = 'lookup';
+              col.lookupTableName = inferredTable.tableName;
+              col.formula = formatLookupTemplateFromFieldNames(jsonKeys);
+            }
+          }
+        }
+      }
+    }
+
+    // 3. Resolve and synchronize all lookup columns in this database
     for (const tbl of db.tables) {
       for (const col of tbl.columns || []) {
         if (col.colType !== 'lookup') continue;
@@ -2051,12 +2305,19 @@ function writeStateFilesToDiskOnly(state: CloudWorkspaceState): void {
 
 function saveStateToDisk(state: CloudWorkspaceState): void {
   writeStateFilesToDiskOnly(state);
-  void saveStateToPostgresMetadata(state);
+  writeBehindMetadataDirty = true;
 }
 
-async function persistWorkspaceState(state: CloudWorkspaceState): Promise<void> {
+async function persistWorkspaceState(
+  state: CloudWorkspaceState,
+  immediatePg = false
+): Promise<void> {
   writeStateFilesToDiskOnly(state);
-  await saveStateToPostgresMetadata(state);
+  if (immediatePg) {
+    await saveStateToPostgresMetadata(state);
+    return;
+  }
+  writeBehindMetadataDirty = true;
 }
 
 const cloudState: CloudWorkspaceState = loadOrCreateState();
@@ -2294,16 +2555,16 @@ async function ensurePostgresHydrated(): Promise<void> {
 
       ensureDatabasesHierarchy(cloudState);
       getTargetTable(cloudState, cloudState.activeTableName, cloudState.activeDatabaseName);
-      await persistWorkspaceState(cloudState);
+      await persistWorkspaceState(cloudState, true);
 
       // Sync any tables in cloudState that do not yet exist in PostgreSQL in the background
       void (async () => {
         for (const db of cloudState.databases) {
-          await createDatabaseInRealBackend(db.databaseName);
+          await createDatabaseInRealBackend(db.databaseName, true);
           for (const tbl of db.tables) {
             const key = `${db.databaseName.toLowerCase()}::${tbl.tableName.toLowerCase()}`;
             if (!pgExistingTablesSet.has(key)) {
-              await syncTableToRealDatabase(tbl, db.databaseName);
+              await syncTableToRealDatabase(tbl, db.databaseName, true);
             }
           }
         }
@@ -2331,6 +2592,22 @@ function broadcastEvent(eventType: string, payload: unknown): void {
     } catch {
       sseClients.delete(client);
     }
+  }
+  if (eventType === 'workspace_sync' && payload && typeof payload === 'object') {
+    const wbStatus = getWriteBehindBufferStatus();
+    const wbData = `event: write_behind_status\ndata: ${JSON.stringify(wbStatus)}\n\n`;
+    for (const client of sseClients) {
+      try {
+        client.write(wbData);
+      } catch {
+        sseClients.delete(client);
+      }
+    }
+    broadcastWsFrameToAll({
+      type: 'ReceiveWorkspaceSync',
+      payload: payload as Record<string, unknown>,
+      status: wbStatus,
+    });
   }
 }
 
@@ -4642,6 +4919,7 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
     rows,
     deletedRowIds,
     defaultUpdatedColIds,
+    applyDefaultToAllRowsForColId,
     renamedColumns,
     replaceAllRows = false,
     appendSampleCount,
@@ -4659,6 +4937,7 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
     rows?: ServerRow[];
     deletedRowIds?: string[];
     defaultUpdatedColIds?: string[];
+    applyDefaultToAllRowsForColId?: string;
     renamedColumns?: { oldName: string; newName: string }[];
     replaceAllRows?: boolean;
     appendSampleCount?: number;
@@ -4775,6 +5054,12 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
     const colsRequiringFullTableDefaultUpdate = new Set<string>(
       (defaultUpdatedColIds || []).map((id) => id.toLowerCase())
     );
+    if (
+      typeof applyDefaultToAllRowsForColId === 'string' &&
+      applyDefaultToAllRowsForColId.trim().length > 0
+    ) {
+      colsRequiringFullTableDefaultUpdate.add(applyDefaultToAllRowsForColId.trim().toLowerCase());
+    }
 
     if (syncRenamedCols.length > 0) {
       for (const row of targetTable.rows) {
@@ -4822,14 +5107,14 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
         )
         .map((c) => c.name);
 
-      // Detect newly created columns or existing columns whose defaultValue was created/updated
+      // Only apply default across all rows automatically for newly created columns
+      // (existing columns only overwrite all rows when applyDefaultToAllRowsForColId / defaultUpdatedColIds is explicitly sent)
       for (const col of targetTable.columns) {
         if (col.isPrimaryKey || col.isIdentity || col.colType === 'formula') continue;
         const prevCol =
           prevColsById.get(col.id.toLowerCase()) || prevColsById.get(col.name.toLowerCase());
         const nextDef = String(col.defaultValue ?? '').trim();
-        const prevDef = String(prevCol?.defaultValue ?? '').trim();
-        if (!prevCol || (nextDef.length > 0 && nextDef !== prevDef)) {
+        if (!prevCol && nextDef.length > 0) {
           colsRequiringFullTableDefaultUpdate.add(col.id.toLowerCase());
           colsRequiringFullTableDefaultUpdate.add(col.name.toLowerCase());
         }
@@ -4954,6 +5239,854 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
 });
 
 /**
+ * ============================================================================
+ * COMPONENT A & B: REAL-TIME WEBSOCKET HUB + IN-MEMORY REDIS WRITE-BEHIND BUFFER
+ * & ASYNCHRONOUS BACKGROUND POSTGRESQL BULK FLUSH WORKER
+ * ============================================================================
+ */
+interface RealtimeCellDelta {
+  mutationId: string;
+  databaseName: string;
+  tableName: string;
+  rowId: string;
+  columnId: string;
+  rawValue: string | null;
+  userId: string;
+  userName: string;
+  userColor: string;
+  clientTimestampMs: number;
+}
+
+interface RealtimeCellAck {
+  mutationId: string;
+  accepted: boolean;
+  databaseName: string;
+  tableName: string;
+  rowId: string;
+  columnId: string;
+  authoritativeValue: string | null;
+  authoritativeTimestampMs: number;
+  updatedBy: string;
+}
+
+interface WriteBehindBufferStatus {
+  dirtyRowCount: number;
+  pendingDdlCount: number;
+  totalCoalescedEdits: number;
+  totalPostgresBulkFlushes: number;
+  oldestDirtyTimestampMs: number | null;
+  lastFlushedAt: string | null;
+  flushIntervalSeconds: number;
+  bufferThresholdRows: number;
+}
+
+// Atomic Last-Write-Wins (LWW) cell timestamp ledger ("dbLower|tableLower|rowId|colIdLower" -> timestampMs)
+const cellLwwTimestamps = new Map<string, number>();
+
+function getWriteBehindBufferStatus(): WriteBehindBufferStatus {
+  let oldest: number | null = null;
+  for (const entry of writeBehindDirtyRows.values()) {
+    if (oldest === null || entry.timestampMs < oldest) {
+      oldest = entry.timestampMs;
+    }
+  }
+  for (const ddl of writeBehindDdlQueue) {
+    if (oldest === null || ddl.timestampMs < oldest) {
+      oldest = ddl.timestampMs;
+    }
+  }
+  return {
+    dirtyRowCount: writeBehindDirtyRows.size + writeBehindDdlQueue.length,
+    pendingDdlCount: writeBehindDdlQueue.length,
+    totalCoalescedEdits: writeBehindMetrics.totalCoalescedEdits,
+    totalPostgresBulkFlushes: writeBehindMetrics.totalPostgresBulkFlushes,
+    oldestDirtyTimestampMs: oldest,
+    lastFlushedAt: writeBehindMetrics.lastFlushedAt,
+    flushIntervalSeconds: writeBehindMetrics.flushIntervalSeconds,
+    bufferThresholdRows: writeBehindMetrics.bufferThresholdRows,
+  };
+}
+
+function coerceSingleCellValueForColumn(
+  col: ServerColumn,
+  rawInput: string | null | undefined,
+  allCols: ServerColumn[],
+  row: ServerRow
+): string | number | boolean {
+  const rawStr = rawInput === null || rawInput === undefined ? '' : String(rawInput);
+  if (col.colType === 'checkbox') {
+    const low = rawStr.trim().toLowerCase();
+    return low === 'true' || low === '1' || low === 'yes';
+  }
+  if (col.colType === 'number') {
+    const trimmed = rawStr.trim();
+    if (!trimmed) return col.isNullable !== false ? '' : 0;
+    const num = Number(trimmed.replace(/[$,%\s()]/g, ''));
+    return Number.isFinite(num) ? num : 0;
+  }
+  if (col.colType === 'lookup') {
+    const trimmed = rawStr.trim();
+    if (!trimmed) return '';
+    const rawOpts = (col.optionsCsv || '').trim();
+    if (rawOpts.startsWith('[')) {
+      try {
+        const parsed = JSON.parse(rawOpts);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const lowerTrimmed = trimmed.toLowerCase();
+          const matchedObj = parsed.find((entry) => {
+            if (!entry || typeof entry !== 'object') return false;
+            const obj = entry as Record<string, unknown>;
+            if (JSON.stringify(obj).toLowerCase() === lowerTrimmed) return true;
+            for (const v of Object.values(obj)) {
+              if (String(v ?? '').toLowerCase() === lowerTrimmed) return true;
+            }
+            return false;
+          });
+          if (matchedObj) {
+            return JSON.stringify(matchedObj);
+          }
+        }
+      } catch {
+        // Fallback to raw trimmed string
+      }
+    }
+    return trimmed;
+  }
+  if (col.colType === 'formula') {
+    return evaluateServerFormula(col.formula, row, allCols);
+  }
+  return rawStr;
+}
+
+/**
+ * Atomically applies a batch of cell deltas into the in-memory cache with LWW concurrency control,
+ * queues dirty rows into the write-behind buffer, and broadcasts accepted deltas to connected peers.
+ */
+function processRealtimeCellDeltaBatch(deltas: RealtimeCellDelta[]): {
+  acks: RealtimeCellAck[];
+  acceptedDeltas: RealtimeCellDelta[];
+  status: WriteBehindBufferStatus;
+} {
+  ensureDatabasesHierarchy(cloudState);
+  const acks: RealtimeCellAck[] = [];
+  const acceptedDeltas: RealtimeCellDelta[] = [];
+  const mutatedTables = new Map<string, { db: ServerDatabase; table: ServerTable }>();
+
+  for (const rawDelta of deltas) {
+    if (!rawDelta || !rawDelta.rowId || !rawDelta.columnId) continue;
+
+    const clientTs =
+      typeof rawDelta.clientTimestampMs === 'number' && Number.isFinite(rawDelta.clientTimestampMs)
+        ? rawDelta.clientTimestampMs
+        : Date.now();
+
+    const targetDb = findDatabase(cloudState, rawDelta.databaseName);
+    const targetTable = findTable(targetDb, rawDelta.tableName);
+    if (!targetTable) {
+      acks.push({
+        mutationId: rawDelta.mutationId || '',
+        accepted: false,
+        databaseName: targetDb.databaseName,
+        tableName: rawDelta.tableName || '',
+        rowId: rawDelta.rowId,
+        columnId: rawDelta.columnId,
+        authoritativeValue: null,
+        authoritativeTimestampMs: Date.now(),
+        updatedBy: 'Server',
+      });
+      continue;
+    }
+
+    const targetCol = targetTable.columns.find(
+      (c) =>
+        c.id.toLowerCase() === rawDelta.columnId.toLowerCase() ||
+        c.name.toLowerCase() === rawDelta.columnId.toLowerCase()
+    );
+    const targetRow = targetTable.rows.find((r) => r.id === rawDelta.rowId);
+
+    if (!targetCol || !targetRow || targetCol.isPrimaryKey || targetCol.isIdentity) {
+      const existingVal =
+        targetRow && targetCol
+          ? (targetRow.cells[targetCol.name] ?? targetRow.cells[targetCol.id] ?? '')
+          : '';
+      acks.push({
+        mutationId: rawDelta.mutationId || '',
+        accepted: false,
+        databaseName: targetDb.databaseName,
+        tableName: targetTable.tableName,
+        rowId: rawDelta.rowId,
+        columnId: rawDelta.columnId,
+        authoritativeValue: String(existingVal),
+        authoritativeTimestampMs: Date.now(),
+        updatedBy: targetRow?.updatedBy || 'Server',
+      });
+      continue;
+    }
+
+    const cellLwwKey = `${targetDb.databaseName.toLowerCase()}|${targetTable.tableName.toLowerCase()}|${targetRow.id}|${targetCol.id.toLowerCase()}`;
+    const existingLwwTs = cellLwwTimestamps.get(cellLwwKey) ?? 0;
+
+    // Atomic LWW Concurrency Check: reject out-of-order / stale writes
+    if (clientTs < existingLwwTs) {
+      const authoritativeVal =
+        targetRow.cells[targetCol.name] !== undefined
+          ? targetRow.cells[targetCol.name]
+          : targetRow.cells[targetCol.id];
+      acks.push({
+        mutationId: rawDelta.mutationId || '',
+        accepted: false,
+        databaseName: targetDb.databaseName,
+        tableName: targetTable.tableName,
+        rowId: targetRow.id,
+        columnId: targetCol.id,
+        authoritativeValue: authoritativeVal !== undefined ? String(authoritativeVal) : '',
+        authoritativeTimestampMs: existingLwwTs,
+        updatedBy: targetRow.updatedBy || 'Collaborator',
+      });
+      continue;
+    }
+
+    // Apply winning cell mutation in-memory
+    const normalizedVal = coerceSingleCellValueForColumn(
+      targetCol,
+      rawDelta.rawValue,
+      targetTable.columns,
+      targetRow
+    );
+    targetRow.cells[targetCol.name] = normalizedVal;
+    targetRow.cells[targetCol.id] = normalizedVal;
+
+    // Re-evaluate any formula columns on this row in memory
+    for (const fCol of targetTable.columns) {
+      if (fCol.colType === 'formula') {
+        const fVal = evaluateServerFormula(fCol.formula, targetRow, targetTable.columns);
+        targetRow.cells[fCol.name] = fVal;
+        targetRow.cells[fCol.id] = fVal;
+      }
+    }
+
+    const updatedIso = new Date(clientTs).toISOString();
+    targetRow.updatedBy = rawDelta.userName || 'Collaborator';
+    targetRow.updatedAt = updatedIso;
+    targetTable.updatedAt = updatedIso;
+    targetDb.updatedAt = updatedIso;
+    cloudState.updatedAt = updatedIso;
+
+    cellLwwTimestamps.set(cellLwwKey, clientTs);
+    writeBehindMetrics.totalCoalescedEdits++;
+
+    const tableKey = `${targetDb.databaseName.toLowerCase()}|${targetTable.tableName.toLowerCase()}`;
+    const rowDirtyKey = `${tableKey}|${targetRow.id}`;
+    writeBehindDirtyRows.set(rowDirtyKey, {
+      databaseName: targetDb.databaseName,
+      tableName: targetTable.tableName,
+      rowId: targetRow.id,
+      timestampMs: clientTs,
+    });
+    if (!writeBehindDirtyTables.has(tableKey)) {
+      writeBehindDirtyTables.set(tableKey, {
+        databaseName: targetDb.databaseName,
+        tableName: targetTable.tableName,
+        firstDirtyAtMs: clientTs,
+      });
+    }
+    mutatedTables.set(tableKey, { db: targetDb, table: targetTable });
+
+    const normalizedDelta: RealtimeCellDelta = {
+      ...rawDelta,
+      databaseName: targetDb.databaseName,
+      tableName: targetTable.tableName,
+      rowId: targetRow.id,
+      columnId: targetCol.id,
+      rawValue: String(normalizedVal),
+      clientTimestampMs: clientTs,
+    };
+    acceptedDeltas.push(normalizedDelta);
+
+    acks.push({
+      mutationId: rawDelta.mutationId || '',
+      accepted: true,
+      databaseName: targetDb.databaseName,
+      tableName: targetTable.tableName,
+      rowId: targetRow.id,
+      columnId: targetCol.id,
+      authoritativeValue: String(normalizedVal),
+      authoritativeTimestampMs: clientTs,
+      updatedBy: targetRow.updatedBy,
+    });
+  }
+
+  // Keep linked lookup columns in memory synchronized when a main table cell changes
+  for (const { db, table } of mutatedTables.values()) {
+    syncAllLinkedLookupColumnsInState(cloudState, {
+      databaseName: db.databaseName,
+      mutatedTableName: table.tableName,
+    });
+  }
+
+  if (acceptedDeltas.length > 0) {
+    // Fast local file checkpoint (no PostgreSQL network round-trip on keystroke)
+    writeStateFilesToDiskOnly(cloudState);
+  }
+
+  const status = getWriteBehindBufferStatus();
+
+  // Broadcast accepted deltas to WebSocket and SSE clients
+  if (acceptedDeltas.length === 1) {
+    broadcastEvent('cell_delta', acceptedDeltas[0]);
+    broadcastWsFrameToGroup(
+      acceptedDeltas[0].databaseName,
+      acceptedDeltas[0].tableName,
+      {
+        type: 'ReceiveCellDelta',
+        delta: acceptedDeltas[0],
+        status,
+      }
+    );
+  } else if (acceptedDeltas.length > 1) {
+    broadcastEvent('cell_delta_batch', { deltas: acceptedDeltas });
+    const first = acceptedDeltas[0];
+    broadcastWsFrameToGroup(first.databaseName, first.tableName, {
+      type: 'ReceiveCellDeltaBatch',
+      deltas: acceptedDeltas,
+      status,
+    });
+  }
+
+  broadcastEvent('write_behind_status', status);
+
+  // If write-behind buffer threshold is met, trigger asynchronous bulk flush to PostgreSQL immediately
+  if (writeBehindDirtyRows.size >= writeBehindMetrics.bufferThresholdRows) {
+    void flushWriteBehindBufferToPostgres('threshold');
+  }
+
+  return { acks, acceptedDeltas, status };
+}
+
+/**
+ * Asynchronous Background Worker: Atomically drains queued DDL operations, dirty tables, and dirty rows
+ * from the in-memory write-behind buffer and bulk-flushes them to PostgreSQL with exponential-backoff retry resiliency.
+ */
+async function flushWriteBehindBufferToPostgres(
+  reason: 'periodic' | 'threshold' | 'manual' | 'shutdown' = 'periodic'
+): Promise<WriteBehindBufferStatus> {
+  if (
+    writeBehindMetrics.isFlushing ||
+    (writeBehindDirtyTables.size === 0 &&
+      writeBehindDdlQueue.length === 0 &&
+      !writeBehindMetadataDirty)
+  ) {
+    return getWriteBehindBufferStatus();
+  }
+
+  writeBehindMetrics.isFlushing = true;
+
+  // Atomically claim current dirty batch so incoming edits during flush accumulate into a fresh batch
+  const claimedDdls = writeBehindDdlQueue.splice(0, writeBehindDdlQueue.length);
+  const claimedTables = Array.from(writeBehindDirtyTables.entries());
+  const claimedRows = Array.from(writeBehindDirtyRows.entries());
+  writeBehindDirtyTables.clear();
+  writeBehindDirtyRows.clear();
+  writeBehindMetadataDirty = false;
+
+  try {
+    await ensurePostgresHydrated();
+
+    const maxAttempts = 3;
+    let attempt = 0;
+    let flushedSuccess = false;
+
+    while (attempt < maxAttempts && !flushedSuccess) {
+      attempt++;
+      try {
+        // 1. Execute queued Sidebar Tree / Schema DDL tasks in chronological order
+        for (const ddl of claimedDdls) {
+          if (ddl.type === 'create_database') {
+            await execCreateDatabaseInPostgres(ddl.databaseName);
+          } else if (ddl.type === 'rename_database' && ddl.newDatabaseName) {
+            await execRenameDatabaseInPostgres(ddl.databaseName, ddl.newDatabaseName);
+          } else if (ddl.type === 'drop_database') {
+            await execDropDatabaseFromPostgres(ddl.databaseName);
+          } else if (ddl.type === 'drop_table' && ddl.tableName) {
+            await execDropTableFromPostgres(ddl.tableName, ddl.databaseName);
+          }
+        }
+
+        // 2. Bulk-flush dirty tables and rows to PostgreSQL
+        for (const [, item] of claimedTables) {
+          const db = findDatabase(cloudState, item.databaseName);
+          const tbl = findTable(db, item.tableName);
+          if (tbl) {
+            await execSyncTableToPostgres(tbl, db.databaseName);
+            // Also flush any lookup-dependent tables in the same database
+            for (const otherTbl of db.tables) {
+              if (
+                otherTbl !== tbl &&
+                otherTbl.columns.some(
+                  (c) =>
+                    c.colType === 'lookup' &&
+                    (c.lookupTableName || '').toLowerCase() === tbl.tableName.toLowerCase()
+                )
+              ) {
+                await execSyncTableToPostgres(otherTbl, db.databaseName);
+              }
+            }
+          }
+        }
+
+        // 3. Persist authoritative workspace metadata snapshot to PostgreSQL
+        await persistWorkspaceState(cloudState, true);
+        flushedSuccess = true;
+      } catch {
+        if (attempt < maxAttempts) {
+          await new Promise((r) => setTimeout(r, 200 * Math.pow(2, attempt)));
+        }
+      }
+    }
+
+    if (flushedSuccess) {
+      writeBehindMetrics.totalPostgresBulkFlushes++;
+      writeBehindMetrics.lastFlushedAt = new Date().toISOString();
+      recordActivity(
+        'Write-Behind Worker',
+        '#0d9488',
+        'PostgreSQL Bulk Flush',
+        `Flushed ${claimedRows.length} dirty row(s), ${claimedTables.length} table(s), and ${claimedDdls.length} DDL op(s) to PostgreSQL (${reason} trigger)`
+      );
+    } else {
+      // Dead-letter recovery: re-queue claimed records if PostgreSQL was unreachable after retries
+      writeBehindDdlQueue.unshift(...claimedDdls);
+      for (const [k, v] of claimedTables) {
+        if (!writeBehindDirtyTables.has(k)) {
+          writeBehindDirtyTables.set(k, v);
+        }
+      }
+      for (const [k, v] of claimedRows) {
+        if (!writeBehindDirtyRows.has(k)) {
+          writeBehindDirtyRows.set(k, v);
+        }
+      }
+      writeBehindMetadataDirty = true;
+    }
+  } finally {
+    writeBehindMetrics.isFlushing = false;
+  }
+
+  const updatedStatus = getWriteBehindBufferStatus();
+  broadcastEvent('write_behind_status', updatedStatus);
+  broadcastWsFrameToAll({
+    type: 'WriteBehindStatus',
+    status: updatedStatus,
+  });
+  return updatedStatus;
+}
+
+// Start periodic background write-behind flush timer (every 2 minutes)
+const writeBehindIntervalId = setInterval(() => {
+  if (
+    writeBehindDirtyTables.size > 0 ||
+    writeBehindDdlQueue.length > 0 ||
+    writeBehindMetadataDirty
+  ) {
+    void flushWriteBehindBufferToPostgres('periodic');
+  }
+}, writeBehindMetrics.flushIntervalSeconds * 1000);
+writeBehindIntervalId.unref?.();
+
+/**
+ * Unified Real-Time CRUD Command Executor for Sidebar Tree (Databases, Tables, Fields) & Grid Operations.
+ * Executes against the in-memory Redis-grade cache and queues PostgreSQL persistence into the Write-Behind Buffer.
+ */
+async function executeRealtimeCrudCommand(
+  crudAction: string,
+  payload: Record<string, unknown> = {}
+): Promise<Record<string, unknown>> {
+  const routeKeyMap: Record<string, { method: 'GET' | 'POST'; path: string }> = {
+    get_workspace: { method: 'GET', path: '/api/workspace' },
+    get_tree: { method: 'GET', path: '/api/workspace/tree' },
+    query_rows: { method: 'POST', path: '/api/workspace/query' },
+    create_database: { method: 'POST', path: '/api/workspace/databases' },
+    delete_database: { method: 'POST', path: '/api/workspace/databases/delete' },
+    rename_database: { method: 'POST', path: '/api/workspace/databases/rename' },
+    create_table: { method: 'POST', path: '/api/workspace/tables' },
+    delete_table: { method: 'POST', path: '/api/workspace/tables/delete' },
+    rename_or_edit_table: { method: 'POST', path: '/api/workspace/tables/rename' },
+    workspace_sync: { method: 'POST', path: '/api/workspace/sync' },
+    restore_version: { method: 'POST', path: '/api/workspace/versions/restore' },
+    presence: { method: 'POST', path: '/api/workspace/presence' },
+  };
+
+  const routeInfo = routeKeyMap[crudAction];
+  if (!routeInfo) {
+    return { ok: false, error: `Unsupported CRUD action: ${crudAction}` };
+  }
+
+  const handler = registeredRouteHandlers.get(`${routeInfo.method}:${routeInfo.path}`);
+  if (!handler) {
+    return { ok: false, error: `Handler not registered for ${routeInfo.method}:${routeInfo.path}` };
+  }
+
+  const result = await new Promise<Record<string, unknown>>((resolve, reject) => {
+    const syntheticReq = {
+      method: routeInfo.method,
+      path: routeInfo.path,
+      query: routeInfo.method === 'GET' ? payload : {},
+      body: routeInfo.method === 'POST' ? payload : {},
+      headers: {},
+    } as unknown as Request;
+
+    const syntheticResObj = {
+      statusCode: 200,
+      status(code: number) {
+        syntheticResObj.statusCode = code;
+        return syntheticResObj;
+      },
+      json(data: unknown) {
+        resolve((data && typeof data === 'object' ? data : { ok: true, data }) as Record<string, unknown>);
+        return syntheticResObj;
+      },
+      send(data: unknown) {
+        resolve((data && typeof data === 'object' ? data : { ok: true, data }) as Record<string, unknown>);
+        return syntheticResObj;
+      },
+    };
+    const syntheticRes = syntheticResObj as unknown as Response;
+
+    Promise.resolve(handler(syntheticReq, syntheticRes)).catch(reject);
+  });
+
+  const status = getWriteBehindBufferStatus();
+  const isMutating =
+    crudAction !== 'get_workspace' &&
+    crudAction !== 'get_tree' &&
+    crudAction !== 'query_rows' &&
+    crudAction !== 'presence';
+
+  if (isMutating) {
+    broadcastEvent('write_behind_status', status);
+    broadcastWsFrameToAll({
+      type: 'WriteBehindStatus',
+      status,
+    });
+    if (status.dirtyRowCount >= writeBehindMetrics.bufferThresholdRows) {
+      void flushWriteBehindBufferToPostgres('threshold');
+    }
+  }
+
+  return {
+    ...result,
+    writeBehindStatus: status,
+  };
+}
+
+/**
+ * POST /api/realtime/crud — Multiplexed Real-Time CRUD endpoint for Sidebar Tree & Grid operations
+ */
+app.post('/api/realtime/crud', async (req: Request, res: Response) => {
+  try {
+    const { crudAction = '', payload = {} } = (req.body || {}) as {
+      crudAction?: string;
+      payload?: Record<string, unknown>;
+    };
+    const result = await executeRealtimeCrudCommand(crudAction, payload);
+    res.json({
+      ok: result['ok'] !== false,
+      result,
+      status: getWriteBehindBufferStatus(),
+    });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Realtime CRUD execution failed.',
+      status: getWriteBehindBufferStatus(),
+    });
+  }
+});
+
+/**
+ * POST /api/realtime/delta — Multiplexed delta stream endpoint for single or batched cell mutations
+ */
+app.post('/api/realtime/delta', async (req: Request, res: Response) => {
+  await ensurePostgresHydrated();
+  const body = (req.body || {}) as {
+    delta?: RealtimeCellDelta;
+    deltas?: RealtimeCellDelta[];
+  };
+  const list: RealtimeCellDelta[] = Array.isArray(body.deltas)
+    ? body.deltas
+    : body.delta
+    ? [body.delta]
+    : [];
+
+  const result = processRealtimeCellDeltaBatch(list);
+  res.json({
+    ok: true,
+    acks: result.acks,
+    status: result.status,
+  });
+});
+
+/**
+ * POST /api/realtime/flush — Immediately triggers the background write-behind worker to flush dirty rows to PostgreSQL
+ */
+app.post('/api/realtime/flush', async (_req: Request, res: Response) => {
+  const status = await flushWriteBehindBufferToPostgres('manual');
+  res.json({
+    ok: true,
+    status,
+  });
+});
+
+/**
+ * GET /api/realtime/status — Returns current Redis write-behind buffer metrics and flush status
+ */
+app.get('/api/realtime/status', (_req: Request, res: Response) => {
+  res.json({
+    ok: true,
+    status: getWriteBehindBufferStatus(),
+  });
+});
+
+// ============================================================================
+// NATIVE RFC 6455 WEBSOCKET UPGRADE HUB (/api/realtime-ws)
+// ============================================================================
+interface ConnectedWsClient {
+  socket: Duplex;
+  groupKey: string;
+}
+
+const wsClients = new Set<ConnectedWsClient>();
+
+function encodeWsTextFrame(text: string): Buffer {
+  const payload = Buffer.from(text, 'utf8');
+  const len = payload.length;
+  let header: Buffer;
+  if (len < 126) {
+    header = Buffer.alloc(2);
+    header[0] = 0x81; // FIN + text frame
+    header[1] = len;
+  } else if (len < 65536) {
+    header = Buffer.alloc(4);
+    header[0] = 0x81;
+    header[1] = 126;
+    header.writeUInt16BE(len, 2);
+  } else {
+    header = Buffer.alloc(10);
+    header[0] = 0x81;
+    header[1] = 127;
+    header.writeBigUInt64BE(BigInt(len), 2);
+  }
+  return Buffer.concat([header, payload]);
+}
+
+function sendWsJson(client: ConnectedWsClient, data: unknown): void {
+  try {
+    const frame = encodeWsTextFrame(JSON.stringify(data));
+    client.socket.write(frame);
+  } catch {
+    wsClients.delete(client);
+  }
+}
+
+function broadcastWsFrameToGroup(
+  databaseName: string,
+  tableName: string,
+  data: unknown,
+  excludeClient?: ConnectedWsClient
+): void {
+  const targetGroup = `${(databaseName || '').toLowerCase()}|${(tableName || '').toLowerCase()}`;
+  for (const client of wsClients) {
+    if (client === excludeClient) continue;
+    if (!client.groupKey || client.groupKey === targetGroup) {
+      sendWsJson(client, data);
+    }
+  }
+}
+
+function broadcastWsFrameToAll(data: unknown): void {
+  for (const client of wsClients) {
+    sendWsJson(client, data);
+  }
+}
+
+function handleIncomingWsMessage(client: ConnectedWsClient, rawText: string): void {
+  try {
+    const msg = JSON.parse(rawText) as {
+      type?: string;
+      invocationId?: string;
+      databaseName?: string;
+      tableName?: string;
+      crudAction?: string;
+      payload?: Record<string, unknown>;
+      delta?: RealtimeCellDelta;
+      deltas?: RealtimeCellDelta[];
+    };
+    if (!msg || typeof msg.type !== 'string') return;
+
+    if (msg.type === 'JoinTableGroup') {
+      client.groupKey = `${(msg.databaseName || '').toLowerCase()}|${(msg.tableName || '').toLowerCase()}`;
+      sendWsJson(client, {
+        type: 'WriteBehindStatus',
+        status: getWriteBehindBufferStatus(),
+      });
+      return;
+    }
+
+    if (msg.type === 'LeaveTableGroup') {
+      client.groupKey = '';
+      return;
+    }
+
+    if (msg.type === 'ExecuteCrudCommand' && msg.crudAction) {
+      void executeRealtimeCrudCommand(msg.crudAction, msg.payload || {}).then((result) => {
+        sendWsJson(client, {
+          type: 'CrudCommandAck',
+          invocationId: msg.invocationId,
+          result,
+          status: getWriteBehindBufferStatus(),
+        });
+      });
+      return;
+    }
+
+    if (msg.type === 'StreamCellDelta' && msg.delta) {
+      const result = processRealtimeCellDeltaBatch([msg.delta]);
+      sendWsJson(client, {
+        type: 'CellAck',
+        invocationId: msg.invocationId,
+        ack: result.acks[0],
+        acks: result.acks,
+        status: result.status,
+      });
+      return;
+    }
+
+    if (msg.type === 'StreamCellDeltaBatch' && Array.isArray(msg.deltas)) {
+      const result = processRealtimeCellDeltaBatch(msg.deltas);
+      sendWsJson(client, {
+        type: 'CellBatchAck',
+        invocationId: msg.invocationId,
+        acks: result.acks,
+        status: result.status,
+      });
+    }
+  } catch {
+    // Ignore malformed WebSocket frame
+  }
+}
+
+function upgradeToRealtimeWebSocket(req: IncomingMessage, socket: Duplex): void {
+  const key = req.headers['sec-websocket-key'];
+  if (!key || typeof key !== 'string') {
+    socket.destroy();
+    return;
+  }
+
+  const acceptKey = createHash('sha1')
+    .update(key + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11')
+    .digest('base64');
+
+  const responseHeaders = [
+    'HTTP/1.1 101 Switching Protocols',
+    'Upgrade: websocket',
+    'Connection: Upgrade',
+    `Sec-WebSocket-Accept: ${acceptKey}`,
+    '\r\n',
+  ];
+  socket.write(responseHeaders.join('\r\n'));
+
+  const client: ConnectedWsClient = {
+    socket,
+    groupKey: '',
+  };
+  wsClients.add(client);
+
+  // Send initial write-behind buffer status
+  sendWsJson(client, {
+    type: 'WriteBehindStatus',
+    status: getWriteBehindBufferStatus(),
+  });
+
+  let buffer = Buffer.alloc(0);
+
+  socket.on('data', (chunk: Buffer) => {
+    buffer = Buffer.concat([buffer, chunk]);
+
+    while (buffer.length >= 2) {
+      const firstByte = buffer[0];
+      const secondByte = buffer[1];
+      const opcode = firstByte & 0x0f;
+      const isMasked = (secondByte & 0x80) !== 0;
+      let payloadLen = secondByte & 0x7f;
+      let offset = 2;
+
+      if (payloadLen === 126) {
+        if (buffer.length < 4) return;
+        payloadLen = buffer.readUInt16BE(2);
+        offset = 4;
+      } else if (payloadLen === 127) {
+        if (buffer.length < 10) return;
+        payloadLen = Number(buffer.readBigUInt64BE(2));
+        offset = 10;
+      }
+
+      const maskLength = isMasked ? 4 : 0;
+      const totalFrameLen = offset + maskLength + payloadLen;
+      if (buffer.length < totalFrameLen) return;
+
+      if (opcode === 0x08) {
+        // Close frame
+        wsClients.delete(client);
+        socket.end();
+        return;
+      }
+
+      if (opcode === 0x09) {
+        // Ping -> Pong
+        const pong = Buffer.from([0x8a, 0x00]);
+        socket.write(pong);
+      } else if (opcode === 0x01) {
+        // Text frame
+        const mask = isMasked ? buffer.subarray(offset, offset + 4) : null;
+        const payloadOffset = offset + maskLength;
+        const dataBuf = Buffer.from(
+          buffer.subarray(payloadOffset, payloadOffset + payloadLen)
+        );
+        if (mask) {
+          for (let i = 0; i < dataBuf.length; i++) {
+            dataBuf[i] ^= mask[i % 4];
+          }
+        }
+        handleIncomingWsMessage(client, dataBuf.toString('utf8'));
+      }
+
+      buffer = buffer.subarray(totalFrameLen);
+    }
+  });
+
+  socket.on('close', () => {
+    wsClients.delete(client);
+  });
+
+  socket.on('error', () => {
+    wsClients.delete(client);
+  });
+}
+
+// Intercept WebSocket upgrade requests on /api/realtime-ws before Angular SSR catch-all
+app.use('/api', (req, _res, next) => {
+  if (
+    req.path === '/realtime-ws' &&
+    req.headers.upgrade &&
+    req.headers.upgrade.toLowerCase() === 'websocket'
+  ) {
+    upgradeToRealtimeWebSocket(req, req.socket);
+    return;
+  }
+  next();
+});
+
+/**
  * GET /api/workspace/tree — returns authoritative databases, tables, and columns schema directly from the backend database without changing activeDatabaseName
  */
 app.get('/api/workspace/tree', async (_req: Request, res: Response) => {
@@ -4997,14 +6130,19 @@ app.use((req, res, next) => {
     .catch(next);
 });
 
+const server = createServer(app);
+server.on('upgrade', (req, socket) => {
+  if (req.url && req.url.startsWith('/api/realtime-ws')) {
+    upgradeToRealtimeWebSocket(req, socket);
+  }
+});
+
 if (isMainModule(import.meta.url) || process.env['pm_id']) {
   const port = process.env['PORT'] || 4000;
-  app.listen(port, (error) => {
-    if (error) {
-      throw error;
-    }
-    console.log(`Node Express server listening on http://localhost:${port}`);
+  server.listen(port, () => {
+    console.log(`Node Express + Realtime WS server listening on http://localhost:${port}`);
   });
 }
 
 export const reqHandler = createNodeRequestHandler(app);
+

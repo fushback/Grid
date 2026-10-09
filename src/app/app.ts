@@ -37,6 +37,11 @@ import {
   resolveLookupTemplateAndColumns,
 } from './grid-models';
 import { OperationLoader } from './operation-loader';
+import {
+  GridRealtimeSyncService,
+  CellDeltaPayload,
+  CellAckPayload,
+} from './grid-realtime-sync';
 
 export interface PostgresAuthUser {
   id: string;
@@ -175,6 +180,7 @@ export class App implements OnInit, OnDestroy {
   private readonly platformId = inject(PLATFORM_ID);
   private readonly isBrowser = isPlatformBrowser(this.platformId);
   readonly loader = inject(OperationLoader);
+  readonly realtimeSync = inject(GridRealtimeSyncService);
 
   // Workspace, Multi-Database (SQL Server Database Tabs), Multi-Table (Excel Sheet Tabs inside Database Tab) & Cloud Sync State
   readonly workspaceId = signal<string>('ws_gridpulse_main');
@@ -1098,6 +1104,11 @@ export class App implements OnInit, OnDestroy {
 
       this.fetchWorkspaceFromServer();
       this.connectRealTimeStream();
+      this.realtimeSync.initializeConnection(
+        this.activeDatabaseName(),
+        this.activeTableName()
+      );
+      this.subscribeToRealtimeCellDeltas();
 
       window.addEventListener('message', (event: MessageEvent) => {
         const origin = event.origin || '';
@@ -1472,6 +1483,54 @@ export class App implements OnInit, OnDestroy {
     });
   }
 
+  public scheduleGridSelectDomSync(): void {
+    if (!this.isBrowser) return;
+    setTimeout(() => {
+      this.syncAllGridSelectDomValues();
+    }, 0);
+  }
+
+  private syncAllGridSelectDomValues(): void {
+    if (!this.isBrowser) return;
+    const cols = this.sortedColumns().filter(
+      (c) => c.colType === 'dropdown' || c.colType === 'lookup'
+    );
+    if (cols.length === 0) return;
+
+    for (const col of cols) {
+      const firstRowEl = document.getElementById(
+        `grid-new-row-cell-${col.id}`
+      ) as HTMLSelectElement | null;
+      if (firstRowEl instanceof HTMLSelectElement) {
+        const expectedFirstVal =
+          col.colType === 'dropdown'
+            ? this.getNewRowMatchedDropdownCellValue(col)
+            : this.getNewRowMatchedLookupCellJson(col);
+        if (firstRowEl.value !== expectedFirstVal) {
+          firstRowEl.value = expectedFirstVal;
+        }
+      }
+    }
+
+    const visRows = this.visibleRows();
+    for (const row of visRows) {
+      for (const col of cols) {
+        const el = document.getElementById(
+          `grid-cell-${row.id}-${col.id}`
+        ) as HTMLSelectElement | null;
+        if (el instanceof HTMLSelectElement) {
+          const expectedVal =
+            col.colType === 'dropdown'
+              ? this.getMatchedDropdownCellValue(row, col)
+              : this.getMatchedLookupCellJson(row, col);
+          if (el.value !== expectedVal) {
+            el.value = expectedVal;
+          }
+        }
+      }
+    }
+  }
+
   private snapshotValidRows(rowsList: GridRow[]): void {
     const invalidRows = this.invalidRowIds();
     for (const r of rowsList) {
@@ -1479,6 +1538,7 @@ export class App implements OnInit, OnDestroy {
         this.lastValidRowSnapshots.set(r.id, { ...r, cells: { ...r.cells } });
       }
     }
+    this.scheduleGridSelectDomSync();
   }
 
   // =========================================================================
@@ -1516,14 +1576,14 @@ export class App implements OnInit, OnDestroy {
 
   public refreshObjectExplorerTreeFromDb(): void {
     if (!this.isBrowser) return;
-    this.http
-      .get<{
+    this.realtimeSync
+      .executeCrud<{
         ok: boolean;
         activeDatabaseName?: string;
         activeTableName?: string;
         databases?: DbDatabaseSummary[];
         tables?: DbTableSummary[];
-      }>('/api/workspace/tree')
+      }>('get_tree', {})
       .subscribe({
         next: (res) => {
           if (res?.ok && Array.isArray(res.databases)) {
@@ -2272,8 +2332,8 @@ export class App implements OnInit, OnDestroy {
         return;
       }
       this.isRenamingSidebarItem.set(true);
-      this.http
-        .post<{
+      this.realtimeSync
+        .executeCrud<{
           ok: boolean;
           error?: string;
           renamedDatabaseName?: string;
@@ -2282,7 +2342,7 @@ export class App implements OnInit, OnDestroy {
           activeTableName?: string;
           tables?: DbTableSummary[];
           activities?: ActivityLogItem[];
-        }>('/api/workspace/databases/rename', {
+        }>('rename_database', {
           oldDatabaseName: dbName,
           newDatabaseName: cleanNewName,
           userName: this.currentUserName(),
@@ -2355,8 +2415,8 @@ export class App implements OnInit, OnDestroy {
         return;
       }
       this.isRenamingSidebarItem.set(true);
-      this.http
-        .post<{
+      this.realtimeSync
+        .executeCrud<{
           ok: boolean;
           error?: string;
           renamedTableName?: string;
@@ -2365,7 +2425,7 @@ export class App implements OnInit, OnDestroy {
           activeTableName?: string;
           tables?: DbTableSummary[];
           activities?: ActivityLogItem[];
-        }>('/api/workspace/tables/rename', {
+        }>('rename_or_edit_table', {
           databaseName: dbName,
           oldTableName: tableName,
           newTableName: cleanNewName,
@@ -2521,15 +2581,15 @@ export class App implements OnInit, OnDestroy {
           );
         }
 
-        this.http
-          .post<{
+        this.realtimeSync
+          .executeCrud<{
             ok: boolean;
             databases?: DbDatabaseSummary[];
             tables?: DbTableSummary[];
             columns?: GridColumn[];
             rows?: GridRow[];
             activities?: ActivityLogItem[];
-          }>('/api/workspace/sync', {
+          }>('workspace_sync', {
             clientId: this.currentClientId(),
             userName: this.currentUserName(),
             userColor: this.currentUserColor(),
@@ -2569,18 +2629,49 @@ export class App implements OnInit, OnDestroy {
     const activeTbl = this.activeTableName();
     if (!activeDb || !activeTbl) return;
     const currentCols = this.sortedColumns();
-    const currentRowCount = this.rows().length;
+    const currentRows = this.rows();
+    const currentRowCount = currentRows.length;
+
+    // If any lookup column in the active table or other tables in the active database links to activeTbl,
+    // immediately rebuild its live optionsCsv from currentRows so all UI dropdowns reflect the updated main table data
+    const refreshLookupColIfLinkedToActive = (col: GridColumn): GridColumn => {
+      if (col.colType !== 'lookup') return col;
+      const linkedName = (col.lookupTableName || '').trim();
+      if (linkedName && linkedName.toLowerCase() === activeTbl.toLowerCase()) {
+        const liveJson = this.buildClientLinkedLookupPreviewJson(
+          activeDb,
+          activeTbl,
+          col.formula
+        );
+        if (liveJson && liveJson !== col.optionsCsv) {
+          return { ...col, optionsCsv: liveJson };
+        }
+      }
+      return col;
+    };
+
+    const syncedActiveCols = currentCols.map(refreshLookupColIfLinkedToActive);
+    const didActiveLookupColsChange = syncedActiveCols.some(
+      (c, idx) => c.optionsCsv !== currentCols[idx]?.optionsCsv
+    );
+    if (didActiveLookupColsChange) {
+      this.columns.set(syncedActiveCols);
+    }
 
     this.tables.update((list) =>
       list.map((t) =>
         t.tableName.toLowerCase() === activeTbl.toLowerCase()
           ? {
               ...t,
-              columnCount: currentCols.length,
-              columns: currentCols,
+              columnCount: syncedActiveCols.length,
+              columns: syncedActiveCols,
+              rows: currentRows.slice(0, 250),
               rowCount: Math.max(t.rowCount, currentRowCount),
             }
-          : t
+          : {
+              ...t,
+              columns: (t.columns || []).map(refreshLookupColIfLinkedToActive),
+            }
       )
     );
 
@@ -2594,11 +2685,15 @@ export class App implements OnInit, OnDestroy {
             t.tableName.toLowerCase() === activeTbl.toLowerCase()
               ? {
                   ...t,
-                  columnCount: currentCols.length,
-                  columns: currentCols,
+                  columnCount: syncedActiveCols.length,
+                  columns: syncedActiveCols,
+                  rows: currentRows.slice(0, 250),
                   rowCount: Math.max(t.rowCount, currentRowCount),
                 }
-              : t
+              : {
+                  ...t,
+                  columns: (t.columns || []).map(refreshLookupColIfLinkedToActive),
+                }
           ),
         };
       })
@@ -2633,8 +2728,8 @@ export class App implements OnInit, OnDestroy {
     }
 
     this.isCreatingDatabase.set(true);
-    this.http
-      .post<{
+    this.realtimeSync
+      .executeCrud<{
         ok: boolean;
         error?: string;
         activeDatabaseName?: string;
@@ -2648,7 +2743,7 @@ export class App implements OnInit, OnDestroy {
         hasMore?: boolean;
         uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
         activities?: ActivityLogItem[];
-      }>('/api/workspace/databases', {
+      }>('create_database', {
         databaseName,
         createStarterTable: raw.createStarterTable,
         starterTableName: raw.starterTableName.trim() || 'Table_1',
@@ -3059,8 +3154,8 @@ export class App implements OnInit, OnDestroy {
       `Drop "${databaseName}"`,
       'danger',
       () => {
-        this.http
-          .post<{
+        this.realtimeSync
+          .executeCrud<{
             ok: boolean;
             error?: string;
             activeDatabaseName?: string;
@@ -3074,7 +3169,7 @@ export class App implements OnInit, OnDestroy {
             hasMore?: boolean;
             uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
             activities?: ActivityLogItem[];
-          }>('/api/workspace/databases/delete', {
+          }>('delete_database', {
             databaseName,
             userName: this.currentUserName(),
             userColor: this.currentUserColor(),
@@ -3519,10 +3614,42 @@ export class App implements OnInit, OnDestroy {
       return JSON.stringify(records);
     }
 
-    // Check if any existing column in the database already has a live synced optionsCsv for this lookupTableName
+    // Check if the target table in databases() or tables() has live rows populated from the server
     const dbObj = this.databases().find(
       (d) => d.databaseName.toLowerCase() === cleanDb.toLowerCase()
     );
+    const targetTblSummary =
+      dbObj?.tables?.find((t) => t.tableName.toLowerCase() === cleanTbl.toLowerCase()) ||
+      (cleanDb.toLowerCase() === this.activeDatabaseName().toLowerCase()
+        ? this.tables().find((t) => t.tableName.toLowerCase() === cleanTbl.toLowerCase())
+        : undefined);
+
+    if (targetTblSummary?.rows && targetTblSummary.rows.length > 0) {
+      const records = targetTblSummary.rows.map((row, idx) => {
+        const obj: Record<string, string | number | boolean> = {};
+        const rawPk = pkCol
+          ? row.cells[pkCol.name] !== undefined
+            ? row.cells[pkCol.name]
+            : row.cells[pkCol.id]
+          : row.cells['ID'] ?? row.cells['id'];
+        const numericId = Number(rawPk);
+        obj['ID'] = Number.isFinite(numericId) && numericId > 0 ? numericId : idx + 1;
+
+        for (const c of colsToProject) {
+          if (c.isPrimaryKey || c.isIdentity || c.name.toLowerCase() === 'id') continue;
+          if (c.colType === 'formula') {
+            obj[c.name] = evaluateFormula(c.formula, row, cols);
+          } else {
+            const raw = row.cells[c.name] !== undefined ? row.cells[c.name] : row.cells[c.id];
+            obj[c.name] = raw !== undefined && raw !== null ? raw : '';
+          }
+        }
+        return obj;
+      });
+      return JSON.stringify(records);
+    }
+
+    // Check if any existing column in the database already has a live synced optionsCsv for this lookupTableName
     if (dbObj?.tables) {
       for (const t of dbObj.tables) {
         for (const c of t.columns || []) {
@@ -3548,11 +3675,19 @@ export class App implements OnInit, OnDestroy {
                     ) {
                       continue;
                     }
-                    const val = entry[selCol.name];
+                    const directVal = entry[selCol.name];
+                    const ciVal =
+                      directVal !== undefined
+                        ? directVal
+                        : Object.entries(entry).find(
+                            ([k]) => k.toLowerCase() === selCol.name.toLowerCase()
+                          )?.[1];
                     obj[selCol.name] =
-                      typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean'
-                        ? val
-                        : selCol.defaultValue || `${cleanTbl}_${idx + 1}`;
+                      typeof ciVal === 'string' ||
+                      typeof ciVal === 'number' ||
+                      typeof ciVal === 'boolean'
+                        ? ciVal
+                        : '';
                   }
                   return obj;
                 });
@@ -3676,9 +3811,18 @@ export class App implements OnInit, OnDestroy {
       .filter((c) => !this.isProtectedIdColumn(c))
       .map((c) => {
         let initialFormula = c.formula || '';
+        let initialOptionsCsv = c.optionsCsv || '';
         if (c.colType === 'lookup' && c.lookupTableName) {
           const targetCols = this.getTargetLookupTableColumns(cleanDb, c.lookupTableName);
           initialFormula = resolveLookupTemplateAndColumns(c.formula, targetCols).normalizedTemplate;
+          const liveJson = this.buildClientLinkedLookupPreviewJson(
+            cleanDb,
+            c.lookupTableName,
+            initialFormula
+          );
+          if (liveJson) {
+            initialOptionsCsv = liveJson;
+          }
         }
         return {
           id: c.name,
@@ -3692,7 +3836,7 @@ export class App implements OnInit, OnDestroy {
               : !c.required,
           columnValue: c.defaultValue !== undefined ? String(c.defaultValue) : '',
           formula: initialFormula,
-          optionsCsv: c.optionsCsv || '',
+          optionsCsv: initialOptionsCsv,
           lookupTableName: c.lookupTableName || '',
           isPrimaryKey: false,
           isIdentity: false,
@@ -4212,8 +4356,8 @@ export class App implements OnInit, OnDestroy {
 
     // EDIT TABLE MODE: Update existing table name and tabular fields
     if (editingOriginalTbl) {
-      this.http
-        .post<{
+      this.realtimeSync
+        .executeCrud<{
           ok: boolean;
           error?: string;
           renamedDatabaseName?: string;
@@ -4229,7 +4373,7 @@ export class App implements OnInit, OnDestroy {
           hasMore?: boolean;
           uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
           activities?: ActivityLogItem[];
-        }>('/api/workspace/tables/rename', {
+        }>('rename_or_edit_table', {
           databaseName,
           oldTableName: editingOriginalTbl,
           newTableName: tableName,
@@ -4335,8 +4479,8 @@ export class App implements OnInit, OnDestroy {
     }
 
     // CREATE TABLE MODE
-    this.http
-      .post<{
+    this.realtimeSync
+      .executeCrud<{
         ok: boolean;
         error?: string;
         createdInDatabaseName?: string;
@@ -4352,7 +4496,7 @@ export class App implements OnInit, OnDestroy {
         hasMore?: boolean;
         uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
         activities?: ActivityLogItem[];
-      }>('/api/workspace/tables', {
+      }>('create_table', {
         databaseName,
         tableName,
         pkColumnName: 'ID',
@@ -4505,8 +4649,8 @@ export class App implements OnInit, OnDestroy {
       `Drop "${tableName}"`,
       'danger',
       () => {
-        this.http
-          .post<{
+        this.realtimeSync
+          .executeCrud<{
             ok: boolean;
             error?: string;
             activeDatabaseName?: string;
@@ -4520,7 +4664,7 @@ export class App implements OnInit, OnDestroy {
             hasMore?: boolean;
             uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
             activities?: ActivityLogItem[];
-          }>('/api/workspace/tables/delete', {
+          }>('delete_table', {
             databaseName: dbName,
             tableName,
             userName: this.currentUserName(),
@@ -4748,6 +4892,93 @@ export class App implements OnInit, OnDestroy {
     return this.isDeleteRowDisabled(rowId);
   }
 
+  readonly activeRibbonTab = signal<'home' | 'rows' | 'columns' | 'database'>('home');
+  readonly isRibbonCollapsed = signal<boolean>(false);
+  readonly isRibbonPasteMenuOpen = signal<boolean>(false);
+
+  public setRibbonTab(
+    tab: 'home' | 'rows' | 'columns' | 'database',
+    event?: Event
+  ): void {
+    event?.stopPropagation();
+    if (this.activeRibbonTab() === tab && !this.isRibbonCollapsed()) {
+      return;
+    }
+    this.activeRibbonTab.set(tab);
+    if (this.isRibbonCollapsed()) {
+      this.isRibbonCollapsed.set(false);
+    }
+  }
+
+  public toggleRibbonCollapsed(event?: Event): void {
+    event?.stopPropagation();
+    this.isRibbonCollapsed.update((v) => !v);
+  }
+
+  public toggleRibbonPasteMenu(event?: Event): void {
+    event?.stopPropagation();
+    const next = !this.isRibbonPasteMenuOpen();
+    this.closeAllMenus();
+    this.isRibbonPasteMenuOpen.set(next);
+  }
+
+  public effectiveToolbarRowId(): string | null {
+    return (
+      this.editingCell()?.rowId ||
+      this.activeCell()?.rowId ||
+      Array.from(this.selectedRowIds())[0] ||
+      null
+    );
+  }
+
+  public effectiveToolbarColId(): string | null {
+    return (
+      this.editingNewRowColId() ||
+      this.editingCell()?.colId ||
+      this.selectedColumnId() ||
+      this.activeCell()?.colId ||
+      this.sortedColumns()[0]?.id ||
+      null
+    );
+  }
+
+  public effectiveToolbarColName(): string {
+    const colId = this.effectiveToolbarColId();
+    if (!colId) return 'Column';
+    return this.getColumnNameById(colId) || colId;
+  }
+
+  public effectiveToolbarCellRef(): string {
+    const colId = this.effectiveToolbarColId();
+    const rowId = this.effectiveToolbarRowId();
+    const colLetter = colId ? this.getColumnLetterById(colId) : '';
+    if (rowId === this.newRowSentinelId) {
+      return colLetter ? `${colLetter}1* (Add Row)` : 'Row 1* (Add Row)';
+    }
+    if (rowId) {
+      const idx = this.visibleRows().findIndex((r) => r.id === rowId);
+      const rowNum = idx >= 0 ? idx + 2 : '';
+      if (colLetter && rowNum) return `${colLetter}${rowNum}`;
+      if (rowNum) return `Row ${rowNum}`;
+    }
+    if (colLetter) return `Col ${colLetter}`;
+    return this.activeTableName() || 'Workspace';
+  }
+
+  public startToolbarInlineEdit(event?: Event): void {
+    event?.stopPropagation();
+    const rowId = this.effectiveToolbarRowId();
+    const colId = this.effectiveToolbarColId();
+    if (!colId) return;
+    if (rowId === this.newRowSentinelId) {
+      this.startNewRowCellEdit(colId, event);
+      return;
+    }
+    const targetRowId = rowId || this.visibleRows()[0]?.id || null;
+    if (!targetRowId) return;
+    this.startInlineEdit(targetRowId, colId, event);
+  }
+
   public toggleSettingsDropdown(event: Event): void {
     event.stopPropagation();
     if (this.contextMenu().visible) {
@@ -4755,6 +4986,9 @@ export class App implements OnInit, OnDestroy {
     }
     if (this.sidebarContextMenu().visible) {
       this.sidebarContextMenu.update((m) => ({ ...m, visible: false }));
+    }
+    if (this.isRibbonPasteMenuOpen()) {
+      this.isRibbonPasteMenuOpen.set(false);
     }
     this.isSettingsDropdownOpen.update((v) => !v);
   }
@@ -4768,6 +5002,9 @@ export class App implements OnInit, OnDestroy {
     }
     if (this.isSettingsDropdownOpen()) {
       this.isSettingsDropdownOpen.set(false);
+    }
+    if (this.isRibbonPasteMenuOpen()) {
+      this.isRibbonPasteMenuOpen.set(false);
     }
   }
 
@@ -4825,19 +5062,88 @@ export class App implements OnInit, OnDestroy {
     );
   }
 
+  public clearCacheFromContextMenu(event?: Event): void {
+    event?.stopPropagation();
+    this.closeAllMenus();
+
+    this.editingCell.set(null);
+    this.editingNewRowColId.set(null);
+    this.liveCellDraftMap.clear();
+    this.dirtyRowIds.clear();
+    this.newRowLiveDraftMap.clear();
+    this.hasNewRowLiveDraft.set(false);
+    this.newRowDraftCells.set({});
+    this.newRowValidationErrors.set({});
+    this.clearNewRowDomElements();
+
+    this.cellValidationErrors.set({});
+    this.pendingUnsavedRowIds.set(new Set());
+    this.pendingUnsavedColIds.set(new Set());
+    this.invalidCellKey.set(null);
+    this.lastValidRowSnapshots.clear();
+    this.dbUniqueValuesByColumn.set({});
+    this.clipboard.set(null);
+    this.lastInternalClipboardText = '';
+    this.undoStack.set([]);
+    this.redoStack.set([]);
+
+    this.filterRules.set({});
+    this.draftFilterRules.set({});
+    this.columnHeaderSearches.set({});
+    this.draftColumnHeaderSearches.set({});
+    this.sortRules.set([]);
+    this.globalSearchQuery.set('');
+    this.searchInputControl.setValue('');
+
+    if (this.isBrowser) {
+      try {
+        localStorage.removeItem(this.sidebarTreeStorageKey);
+        localStorage.removeItem(this.tableLastUsedStorageKey);
+        localStorage.removeItem(this.openTableTabsStorageKey);
+      } catch {
+        // Ignore storage errors
+      }
+      if ('caches' in window && window.caches) {
+        void window.caches
+          .keys()
+          .then((keys) => Promise.all(keys.map((k) => window.caches.delete(k))))
+          .catch(() => undefined);
+      }
+    }
+
+    if (this.hasActiveConnection()) {
+      this.cloudSyncStatus.set('syncing');
+      this.fetchWorkspaceFromServer(
+        false,
+        this.activeTableName() || undefined,
+        this.activeDatabaseName()
+      );
+    } else {
+      this.refreshObjectExplorerTreeFromDb();
+    }
+
+    this.showBanner(
+      'success',
+      'Cache cleared! Reset local cached state, filters, and reloaded fresh data from database.'
+    );
+  }
+
   private fetchWorkspaceFromServer(
     showRefreshToast = false,
     requestedTableName?: string,
     requestedDatabaseName?: string
   ): void {
-    const dbParam = requestedDatabaseName
-      ? `&databaseName=${encodeURIComponent(requestedDatabaseName)}`
-      : '';
-    const tableParam = requestedTableName
-      ? `&tableName=${encodeURIComponent(requestedTableName)}`
-      : '';
-    this.http
-      .get<{
+    const queryPayload: Record<string, unknown> = {
+      limit: String(this.lazyBatchSize),
+    };
+    if (requestedDatabaseName) {
+      queryPayload['databaseName'] = requestedDatabaseName;
+    }
+    if (requestedTableName) {
+      queryPayload['tableName'] = requestedTableName;
+    }
+    this.realtimeSync
+      .executeCrud<{
         workspaceId: string;
         workspaceName: string;
         activeDatabaseName?: string;
@@ -4854,7 +5160,7 @@ export class App implements OnInit, OnDestroy {
         presence: CollaboratorPresence[];
         activities: ActivityLogItem[];
         versions?: VersionCommitItem[];
-      }>(`/api/workspace?limit=${this.lazyBatchSize}${dbParam}${tableParam}`)
+      }>('get_workspace', queryPayload)
       .subscribe({
         next: (res) => {
           if (res && Array.isArray(res.columns) && Array.isArray(res.rows)) {
@@ -4951,6 +5257,7 @@ export class App implements OnInit, OnDestroy {
               }
             }
             this.broadcastPresence();
+            this.realtimeSync.switchTableGroup(activeDb, activeTbl);
             if (showRefreshToast) {
               this.showBanner(
                 'success',
@@ -4981,8 +5288,8 @@ export class App implements OnInit, OnDestroy {
       this.cloudSyncStatus.set('syncing');
     }
 
-    this.http
-      .post<{
+    this.realtimeSync
+      .executeCrud<{
         ok: boolean;
         activeDatabaseName?: string;
         databases?: DbDatabaseSummary[];
@@ -4996,7 +5303,7 @@ export class App implements OnInit, OnDestroy {
         limit: number;
         hasMore: boolean;
         uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
-      }>('/api/workspace/query', {
+      }>('query_rows', {
         databaseName: this.activeDatabaseName(),
         tableName: this.activeTableName(),
         offset,
@@ -5115,6 +5422,180 @@ export class App implements OnInit, OnDestroy {
         // Ignore
       }
     });
+
+    this.eventSource.addEventListener('cell_delta', (event: MessageEvent) => {
+      try {
+        const delta = JSON.parse(event.data) as CellDeltaPayload;
+        this.realtimeSync.handleServerStreamEvent('cell_delta', delta);
+      } catch {
+        // Ignore
+      }
+    });
+
+    this.eventSource.addEventListener('cell_delta_batch', (event: MessageEvent) => {
+      try {
+        const batch = JSON.parse(event.data) as { deltas?: CellDeltaPayload[] };
+        this.realtimeSync.handleServerStreamEvent('cell_delta_batch', batch);
+      } catch {
+        // Ignore
+      }
+    });
+
+    this.eventSource.addEventListener('write_behind_status', (event: MessageEvent) => {
+      try {
+        const status = JSON.parse(event.data);
+        this.realtimeSync.handleServerStreamEvent('write_behind_status', status);
+      } catch {
+        // Ignore
+      }
+    });
+  }
+
+  private subscribeToRealtimeCellDeltas(): void {
+    this.realtimeSync.remoteDelta$.subscribe((delta) => {
+      if (delta.userId === this.currentClientId()) return;
+      this.applyRemoteCellDeltaBatch([delta]);
+    });
+
+    this.realtimeSync.remoteBatch$.subscribe((deltas) => {
+      const remoteOnly = deltas.filter((d) => d.userId !== this.currentClientId());
+      if (remoteOnly.length > 0) {
+        this.applyRemoteCellDeltaBatch(remoteOnly);
+      }
+    });
+
+    this.realtimeSync.reconciliation$.subscribe((ack: CellAckPayload) => {
+      if (ack.accepted) return;
+      this.applyAuthoritativeCellReconciliation(ack);
+    });
+
+    this.realtimeSync.remoteWorkspaceSync$.subscribe((data) => {
+      if (data['clientId'] && data['clientId'] === this.currentClientId()) {
+        return;
+      }
+      if (Array.isArray(data['databases'])) {
+        this.databases.set(data['databases'] as DbDatabaseSummary[]);
+      }
+      if (
+        typeof data['activeDatabaseName'] === 'string' &&
+        data['activeDatabaseName'].toLowerCase() === this.activeDatabaseName().toLowerCase()
+      ) {
+        if (Array.isArray(data['tables'])) {
+          this.tables.set(data['tables'] as DbTableSummary[]);
+        }
+        if (data['activeTableName'] && data['activeTableName'] === this.activeTableName()) {
+          if (Array.isArray(data['columns'])) {
+            this.columns.set(data['columns'] as GridColumn[]);
+          }
+          if (typeof data['totalRows'] === 'number') {
+            this.dbTotalRows.set(data['totalRows']);
+          }
+          this.queryDatabaseRows(true);
+        }
+      }
+      if (Array.isArray(data['activities'])) {
+        this.activities.set(data['activities'] as ActivityLogItem[]);
+      }
+      this.cloudSyncStatus.set('synced');
+      if (typeof data['updatedAt'] === 'string') {
+        this.lastSyncedTime.set(this.formatTimeShort(data['updatedAt']));
+      }
+    });
+  }
+
+  private applyRemoteCellDeltaBatch(deltas: CellDeltaPayload[]): void {
+    if (deltas.length === 0) return;
+    const activeDb = this.activeDatabaseName().toLowerCase();
+    const activeTbl = this.activeTableName().toLowerCase();
+
+    const activeTableDeltas = deltas.filter(
+      (d) =>
+        (d.databaseName || '').toLowerCase() === activeDb &&
+        (d.tableName || '').toLowerCase() === activeTbl
+    );
+
+    if (activeTableDeltas.length > 0) {
+      const cols = this.columns();
+      this.rows.update((currentRows) =>
+        currentRows.map((row) => {
+          const matching = activeTableDeltas.filter((d) => d.rowId === row.id);
+          if (matching.length === 0) return row;
+          const nextCells = { ...row.cells };
+          let latestUser = row.updatedBy;
+          let latestIso = row.updatedAt;
+          for (const d of matching) {
+            const col = cols.find(
+              (c) =>
+                c.id.toLowerCase() === d.columnId.toLowerCase() ||
+                c.name.toLowerCase() === d.columnId.toLowerCase()
+            );
+            if (!col) continue;
+            const check = validateCellValue(this.getLiveLookupColumn(col), d.rawValue);
+            nextCells[col.name] = check.normalizedValue;
+            nextCells[col.id] = check.normalizedValue;
+            latestUser = d.userName || latestUser;
+            latestIso = new Date(d.clientTimestampMs || Date.now()).toISOString();
+          }
+          return {
+            ...row,
+            cells: nextCells,
+            updatedBy: latestUser,
+            updatedAt: latestIso,
+          };
+        })
+      );
+      this.syncLocalActiveTableIntoDatabasesTree();
+      this.scheduleGridSelectDomSync();
+      this.cloudSyncStatus.set('synced');
+      this.lastSyncedTime.set(this.formatTimeShort(new Date().toISOString()));
+    }
+  }
+
+  private applyAuthoritativeCellReconciliation(ack: CellAckPayload): void {
+    if (
+      (ack.databaseName || '').toLowerCase() !== this.activeDatabaseName().toLowerCase() ||
+      (ack.tableName || '').toLowerCase() !== this.activeTableName().toLowerCase()
+    ) {
+      return;
+    }
+    const col = this.columns().find(
+      (c) =>
+        c.id.toLowerCase() === ack.columnId.toLowerCase() ||
+        c.name.toLowerCase() === ack.columnId.toLowerCase()
+    );
+    if (!col) return;
+    const check = validateCellValue(this.getLiveLookupColumn(col), ack.authoritativeValue);
+    this.rows.update((currentRows) =>
+      currentRows.map((r) =>
+        r.id === ack.rowId
+          ? {
+              ...r,
+              cells: {
+                ...r.cells,
+                [col.name]: check.normalizedValue,
+                [col.id]: check.normalizedValue,
+              },
+              updatedBy: ack.updatedBy || r.updatedBy,
+              updatedAt: new Date(ack.authoritativeTimestampMs || Date.now()).toISOString(),
+            }
+          : r
+      )
+    );
+    this.syncLocalActiveTableIntoDatabasesTree();
+    this.scheduleGridSelectDomSync();
+  }
+
+  public async triggerManualWriteBehindFlush(event?: Event): Promise<void> {
+    event?.stopPropagation();
+    const status = await this.realtimeSync.triggerManualPostgresFlush();
+    if (status) {
+      this.cloudSyncStatus.set('synced');
+      this.lastSyncedTime.set(this.formatTimeShort(status.lastFlushedAt || new Date().toISOString()));
+      this.showBanner(
+        'success',
+        `Write-behind buffer flushed to PostgreSQL (${status.totalPostgresBulkFlushes} bulk flush cycles completed).`
+      );
+    }
   }
 
   public persistToCloud(
@@ -5155,8 +5636,8 @@ export class App implements OnInit, OnDestroy {
     const reqTblName = this.activeTableName();
     this.cloudSyncStatus.set('syncing');
 
-    this.http
-      .post<{
+    this.realtimeSync
+      .executeCrud<{
         ok: boolean;
         activeDatabaseName?: string;
         databases?: DbDatabaseSummary[];
@@ -5167,7 +5648,7 @@ export class App implements OnInit, OnDestroy {
         updatedAt: string;
         totalRows?: number;
         activities: ActivityLogItem[];
-      }>('/api/workspace/sync', {
+      }>('workspace_sync', {
         clientId: this.currentClientId(),
         userName: this.currentUserName(),
         userColor: this.currentUserColor(),
@@ -5249,10 +5730,10 @@ export class App implements OnInit, OnDestroy {
       updatedAt: new Date().toISOString(),
     };
 
-    this.http
-      .post<{ ok: boolean; presence: CollaboratorPresence[] }>(
-        '/api/workspace/presence',
-        presencePayload
+    this.realtimeSync
+      .executeCrud<{ ok: boolean; presence: CollaboratorPresence[] }>(
+        'presence',
+        presencePayload as unknown as Record<string, unknown>
       )
       .subscribe({
         next: (res) => {
@@ -5438,8 +5919,8 @@ export class App implements OnInit, OnDestroy {
       'primary',
       () => {
         this.recordHistorySnapshot(`Rollback to ${ver.versionTag}`);
-        this.http
-          .post<{
+        this.realtimeSync
+          .executeCrud<{
             ok: boolean;
             restoredVersion?: string;
             columns?: GridColumn[];
@@ -5449,7 +5930,7 @@ export class App implements OnInit, OnDestroy {
             hasMore?: boolean;
             uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
             activities?: ActivityLogItem[];
-          }>('/api/workspace/versions/restore', {
+          }>('restore_version', {
             versionId: ver.id,
             userName: this.currentUserName(),
             userColor: this.currentUserColor(),
@@ -5565,7 +6046,7 @@ export class App implements OnInit, OnDestroy {
     if (col.colType === 'lookup') {
       const rawStr = String(val).trim();
       if (!rawStr) return '';
-      const items = getLookupOptions(col);
+      const items = this.getLookupOptionsForCol(col);
       if (items.length > 0) {
         const matched = matchLookupItemFromRaw(items, rawStr);
         if (matched) {
@@ -5628,10 +6109,18 @@ export class App implements OnInit, OnDestroy {
     return val !== undefined && val !== null ? String(val) : '';
   }
 
+  public getMatchedDropdownCellValue(row: GridRow, col: GridColumn): string {
+    const raw = this.getRawCellString(row, col).trim();
+    if (!raw) return '';
+    const opts = getDropdownOptions(col);
+    const matched = opts.find((o) => o.toLowerCase() === raw.toLowerCase());
+    return matched !== undefined ? matched : raw;
+  }
+
   public getMatchedLookupCellJson(row: GridRow, col: GridColumn): string {
     const raw = this.getRawCellString(row, col);
     if (!raw) return '';
-    const items = getLookupOptions(col);
+    const items = this.getLookupOptionsForCol(col);
     const matched = matchLookupItemFromRaw(items, raw);
     return matched ? matched.json : raw;
   }
@@ -5650,10 +6139,18 @@ export class App implements OnInit, OnDestroy {
     return String(val);
   }
 
+  public getNewRowMatchedDropdownCellValue(col: GridColumn): string {
+    const raw = this.getNewRowEditableCellDomText(col).trim();
+    if (!raw) return '';
+    const opts = getDropdownOptions(col);
+    const matched = opts.find((o) => o.toLowerCase() === raw.toLowerCase());
+    return matched !== undefined ? matched : raw;
+  }
+
   public getNewRowMatchedLookupCellJson(col: GridColumn): string {
     const raw = this.getNewRowEditableCellDomText(col);
     if (!raw) return '';
-    const items = getLookupOptions(col);
+    const items = this.getLookupOptionsForCol(col);
     const matched = matchLookupItemFromRaw(items, raw);
     return matched ? matched.json : raw;
   }
@@ -5696,7 +6193,6 @@ export class App implements OnInit, OnDestroy {
   public onFirstRowFocusOut(event: FocusEvent): void {
     const nextTarget = event.relatedTarget as HTMLElement | null;
     const rowEl = event.currentTarget as HTMLElement | null;
-    const targetEl = event.target as HTMLElement | null;
     if (nextTarget && rowEl && rowEl.contains(nextTarget)) {
       return;
     }
@@ -5708,15 +6204,6 @@ export class App implements OnInit, OnDestroy {
         if (this.contextMenu().visible) return;
         const activeEl = document.activeElement as HTMLElement | null;
         if (activeEl && rowEl && rowEl.contains(activeEl)) {
-          return;
-        }
-        // When opening a native <select> popup inside the First Row, some browsers temporarily
-        // set document.activeElement to body with relatedTarget === null; do not prematurely commit
-        if (
-          targetEl?.tagName === 'SELECT' &&
-          !nextTarget &&
-          (!activeEl || activeEl === document.body || activeEl === document.documentElement)
-        ) {
           return;
         }
         if (activeEl?.closest('[data-first-row-reset="true"]')) {
@@ -5775,6 +6262,12 @@ export class App implements OnInit, OnDestroy {
 
   public onEditableCellBlur(rowId: string, colId: string, event?: FocusEvent): void {
     const el = (event?.target as HTMLElement | null) ?? null;
+    if (el instanceof HTMLSelectElement) {
+      if (this.dirtyRowIds.has(rowId)) {
+        this.flushRowAutoSave(rowId);
+      }
+      return;
+    }
     this.commitLiveCellDraft(rowId, colId, el);
   }
 
@@ -5791,10 +6284,14 @@ export class App implements OnInit, OnDestroy {
   }
 
   public onSelectCellChange(rowId: string, colId: string, newValue: string): void {
+    this.liveCellDraftMap.delete(`${rowId}:${colId}`);
     this.onDataRowFocusIn(rowId);
     this.activeCell.set({ rowId, colId });
     this.selectedColumnId.set(colId);
-    this.stageCellEditInRow(rowId, colId, newValue);
+    const selectEl = this.isBrowser
+      ? (document.getElementById(`grid-cell-${rowId}-${colId}`) as HTMLElement | null)
+      : null;
+    this.stageCellEditInRow(rowId, colId, newValue, selectEl);
     this.flushRowAutoSave(rowId);
   }
 
@@ -5822,11 +6319,17 @@ export class App implements OnInit, OnDestroy {
       return;
     }
 
-    const validation = validateCellValue(col, rawInput);
-    const prevVal = row.cells[col.name] !== undefined ? row.cells[col.name] : row.cells[col.id];
+    const validation = validateCellValue(this.getLiveLookupColumn(col), rawInput);
+    const prevByName = row.cells[col.name];
+    const prevById = row.cells[col.id];
+    const prevVal = prevByName !== undefined ? prevByName : prevById;
+    const isAlreadyInSync =
+      prevVal === validation.normalizedValue &&
+      (prevByName === undefined || prevByName === validation.normalizedValue) &&
+      (prevById === undefined || prevById === validation.normalizedValue);
     const wasCellAlreadyInvalid = this.isCellInvalid(rowId, colId);
 
-    if (prevVal === validation.normalizedValue && validation.valid && !wasCellAlreadyInvalid) {
+    if (isAlreadyInSync && validation.valid && !wasCellAlreadyInvalid) {
       if (domEl && domEl.isContentEditable) {
         const cleanDom =
           col.colType === 'lookup'
@@ -5834,6 +6337,11 @@ export class App implements OnInit, OnDestroy {
             : String(validation.normalizedValue ?? '');
         if (domEl.textContent !== cleanDom) {
           domEl.textContent = cleanDom;
+        }
+      } else if (domEl instanceof HTMLSelectElement) {
+        const cleanSelectVal = String(validation.normalizedValue ?? '');
+        if (domEl.value !== cleanSelectVal) {
+          domEl.value = cleanSelectVal;
         }
       }
       return;
@@ -5870,6 +6378,11 @@ export class App implements OnInit, OnDestroy {
           : String(validation.normalizedValue ?? '');
       if (domEl.textContent !== cleanDom) {
         domEl.textContent = cleanDom;
+      }
+    } else if (domEl instanceof HTMLSelectElement) {
+      const cleanSelectVal = String(validation.normalizedValue ?? '');
+      if (domEl.value !== cleanSelectVal) {
+        domEl.value = cleanSelectVal;
       }
     }
   }
@@ -6208,13 +6721,19 @@ export class App implements OnInit, OnDestroy {
 
   public onNewRowEditableCellBlur(colId: string, event?: FocusEvent): void {
     const el = (event?.target as HTMLElement | null) ?? null;
+    if (el instanceof HTMLSelectElement) {
+      return;
+    }
     this.commitNewRowLiveCellDraft(colId, el);
   }
 
   public onNewRowSelectChange(colId: string, newValue: string): void {
     this.onDataRowFocusIn(this.newRowSentinelId);
+    this.activeCell.set({ rowId: this.newRowSentinelId, colId });
+    this.selectedColumnId.set(colId);
     this.newRowLiveDraftMap.set(colId, newValue);
     this.commitNewRowLiveCellDraft(colId);
+    this.formulaBarControl.setValue(newValue ?? '', { emitEvent: false });
   }
 
   public commitNewRowLiveCellDraft(colId: string, domEl?: HTMLElement | null): void {
@@ -6525,7 +7044,7 @@ export class App implements OnInit, OnDestroy {
         }
       }
 
-      const check = validateCellValue(col, candidateVal);
+      const check = validateCellValue(this.getLiveLookupColumn(col), candidateVal);
       cells[col.name] = check.normalizedValue;
       cells[col.id] = check.normalizedValue;
       if (!check.valid) {
@@ -6672,7 +7191,7 @@ export class App implements OnInit, OnDestroy {
             candidateVal = '';
           }
         }
-        const check = validateCellValue(col, candidateVal);
+        const check = validateCellValue(this.getLiveLookupColumn(col), candidateVal);
         cells[col.name] = check.normalizedValue;
         cells[col.id] = check.normalizedValue;
       }
@@ -6766,7 +7285,7 @@ export class App implements OnInit, OnDestroy {
     const row = this.rows().find((r) => r.id === rowId);
     if (!col || !row || col.isPrimaryKey || col.isIdentity) return;
 
-    const validation = validateCellValue(col, rawInput);
+    const validation = validateCellValue(this.getLiveLookupColumn(col), rawInput);
     const prevVal = row.cells[col.name] !== undefined ? row.cells[col.name] : row.cells[col.id];
     const wasCellAlreadyInvalid = this.isCellInvalid(rowId, colId);
     if (prevVal === validation.normalizedValue && validation.valid && !wasCellAlreadyInvalid) {
@@ -6857,7 +7376,7 @@ export class App implements OnInit, OnDestroy {
         }
         const rawVal =
           updatedCells[col.name] !== undefined ? updatedCells[col.name] : updatedCells[col.id];
-        const check = validateCellValue(col, rawVal);
+        const check = validateCellValue(this.getLiveLookupColumn(col), rawVal);
         updatedCells[col.name] = check.normalizedValue;
         updatedCells[col.id] = check.normalizedValue;
 
@@ -6934,17 +7453,68 @@ export class App implements OnInit, OnDestroy {
       nextPendingCols.clear();
       this.pendingUnsavedColIds.set(nextPendingCols);
 
-      this.persistToCloud(
-        actionType,
-        actionDetail,
-        newlyValidatedRows[0],
-        colsToSync[0],
-        newlyValidatedRows,
-        colsToSync,
-        undefined,
-        applyDefaultToAllRowsForColId,
-        renamedColumns
-      );
+      const isPureCellDeltaEdit =
+        (actionType === 'Cell Updated' || actionType === 'Row Auto-Saved') &&
+        colsToSync.length === 0 &&
+        !applyDefaultToAllRowsForColId &&
+        (!renamedColumns || renamedColumns.length === 0);
+
+      if (isPureCellDeltaEdit) {
+        // Stream minute cell-level deltas via SignalR/WebSocket to the in-memory Redis Write-Behind Buffer
+        // instead of posting the entire table over HTTP on every cell edit
+        const deltas: CellDeltaPayload[] = [];
+        const editableCols = cols.filter((c) => !c.isPrimaryKey && !c.isIdentity && c.colType !== 'formula');
+        const nowMs = Date.now();
+        for (const validRow of newlyValidatedRows) {
+          const prevSnap = this.lastValidRowSnapshots.get(validRow.id);
+          for (const col of editableCols) {
+            const nextVal =
+              validRow.cells[col.name] !== undefined
+                ? validRow.cells[col.name]
+                : validRow.cells[col.id];
+            const prevVal = prevSnap
+              ? prevSnap.cells[col.name] !== undefined
+                ? prevSnap.cells[col.name]
+                : prevSnap.cells[col.id]
+              : undefined;
+            if (!prevSnap || String(nextVal ?? '') !== String(prevVal ?? '')) {
+              deltas.push({
+                mutationId: `mut_${nowMs.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+                databaseName: this.activeDatabaseName(),
+                tableName: this.activeTableName(),
+                rowId: validRow.id,
+                columnId: col.id,
+                rawValue: nextVal === null || nextVal === undefined ? '' : String(nextVal),
+                userId: this.currentClientId(),
+                userName: this.currentUserName(),
+                userColor: this.currentUserColor(),
+                clientTimestampMs: nowMs,
+              });
+            }
+          }
+        }
+
+        this.syncLocalActiveTableIntoDatabasesTree();
+        this.snapshotValidRows(this.rows());
+        this.cloudSyncStatus.set('synced');
+        this.lastSyncedTime.set(this.formatTimeShort(new Date().toISOString()));
+
+        if (deltas.length > 0) {
+          this.realtimeSync.queueCellMutationBatch(deltas);
+        }
+      } else {
+        this.persistToCloud(
+          actionType,
+          actionDetail,
+          newlyValidatedRows[0],
+          colsToSync[0],
+          newlyValidatedRows,
+          colsToSync,
+          undefined,
+          applyDefaultToAllRowsForColId,
+          renamedColumns
+        );
+      }
 
       if (totalErrorCells === 0) {
         this.invalidCellKey.set(null);
@@ -7096,7 +7666,7 @@ export class App implements OnInit, OnDestroy {
             const opts = getDropdownOptions(col);
             cellVal = opts[0] || '';
           } else if (col.colType === 'lookup') {
-            const items = getLookupOptions(col);
+            const items = this.getLookupOptionsForCol(col);
             const activeItem = items.find((i) => i.isActive !== false) || items[0];
             cellVal = activeItem ? activeItem.json : '';
           } else {
@@ -7848,11 +8418,22 @@ export class App implements OnInit, OnDestroy {
     const isNullAllowed = col.isNullable !== undefined ? col.isNullable : !col.required;
     const targetDb = targetDbName || this.activeDatabaseName();
     let initialFormula = col.formula || '=[Units] * [Unit Cost]';
+    let initialOptionsCsv = col.optionsCsv || 'Option A, Option B';
     if (col.colType === 'lookup') {
       const targetCols = col.lookupTableName
         ? this.getTargetLookupTableColumns(targetDb, col.lookupTableName)
         : [];
       initialFormula = resolveLookupTemplateAndColumns(col.formula, targetCols).normalizedTemplate;
+      if (col.lookupTableName) {
+        const livePreview = this.buildClientLinkedLookupPreviewJson(
+          targetDb,
+          col.lookupTableName,
+          initialFormula
+        );
+        if (livePreview) {
+          initialOptionsCsv = livePreview;
+        }
+      }
     }
     this.columnSchemaForm.reset({
       name: col.name,
@@ -7861,7 +8442,7 @@ export class App implements OnInit, OnDestroy {
       required: !isNullAllowed,
       isNullable: isNullAllowed,
       lookupTableName: col.lookupTableName || '',
-      optionsCsv: col.optionsCsv || 'Option A, Option B',
+      optionsCsv: initialOptionsCsv,
       formula: initialFormula,
       defaultValue: col.defaultValue !== undefined ? String(col.defaultValue) : '',
     });
@@ -7921,6 +8502,14 @@ export class App implements OnInit, OnDestroy {
       if (!currentOpts || currentOpts.startsWith('[')) {
         this.columnSchemaForm.controls.optionsCsv.setValue('High, Medium, Low');
       }
+      const dropdownOpts = this.getSchemaModalDropdownOptions();
+      const curDef = (this.columnSchemaForm.controls.defaultValue.value || '').trim();
+      if (
+        dropdownOpts.length > 0 &&
+        (!curDef || !dropdownOpts.some((o) => o.toLowerCase() === curDef.toLowerCase()))
+      ) {
+        this.columnSchemaForm.controls.defaultValue.setValue(dropdownOpts[0]);
+      }
     } else if (selectedType === 'formula') {
       this.columnSchemaForm.controls.lookupTableName.setValue('');
       const currentFormula = (this.columnSchemaForm.controls.formula.value || '').trim();
@@ -7929,6 +8518,23 @@ export class App implements OnInit, OnDestroy {
       }
     } else {
       this.columnSchemaForm.controls.lookupTableName.setValue('');
+    }
+  }
+
+  public getSchemaModalDropdownOptions(): string[] {
+    const rawCsv = this.columnSchemaForm.controls.optionsCsv.value || '';
+    return rawCsv
+      .split(',')
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  }
+
+  public onSchemaOptionsCsvInput(): void {
+    if (this.schemaModalColType() !== 'dropdown') return;
+    const opts = this.getSchemaModalDropdownOptions();
+    const curDef = (this.columnSchemaForm.controls.defaultValue.value || '').trim();
+    if (curDef && opts.length > 0 && !opts.some((o) => o.toLowerCase() === curDef.toLowerCase())) {
+      this.columnSchemaForm.controls.defaultValue.setValue(opts[0]);
     }
   }
 
@@ -7997,7 +8603,7 @@ export class App implements OnInit, OnDestroy {
       return matched || opts[0] || '';
     }
     if (col.colType === 'lookup') {
-      const items = getLookupOptions(col);
+      const items = this.getLookupOptionsForCol(col);
       if (items.length > 0) {
         const matched = matchLookupItemFromRaw(items, trimmed);
         if (matched) return matched.json;
@@ -8053,7 +8659,16 @@ export class App implements OnInit, OnDestroy {
           : undefined;
 
       if (!isTargetActiveTable) {
-        const hasExplicitDefault = String(val.defaultValue ?? '').trim().length > 0;
+        const cleanDefault = String(val.defaultValue ?? '').trim();
+        const hasExplicitDefault = cleanDefault.length > 0;
+        const didDefaultChange = cleanDefault !== String(prevCol?.defaultValue ?? '').trim();
+        const didLookupSchemaAutoRefresh =
+          val.colType === 'lookup' &&
+          Boolean(
+            prevCol &&
+              ((prevCol.lookupTableName || '').trim() !== (val.lookupTableName || '').trim() ||
+                (prevCol.formula || '').trim() !== (val.formula || '').trim())
+          );
         const updatedCols = existingTargetCols.map((c) => {
           if (c.id !== editingId) return c;
           const isPk = Boolean(c.isPrimaryKey || c.isIdentity);
@@ -8065,7 +8680,7 @@ export class App implements OnInit, OnDestroy {
             width: Number(val.width) || 150,
             required: isPk ? true : isRequired,
             isNullable: isPk ? false : isNullAllowed,
-            defaultValue: String(val.defaultValue ?? '').trim(),
+            defaultValue: cleanDefault,
             lookupTableName:
               val.colType === 'lookup' ? (val.lookupTableName || '').trim() : '',
             optionsCsv:
@@ -8107,15 +8722,15 @@ export class App implements OnInit, OnDestroy {
         }
 
         this.activeModal.set('none');
-        this.http
-          .post<{
+        this.realtimeSync
+          .executeCrud<{
             ok: boolean;
             databases?: DbDatabaseSummary[];
             tables?: DbTableSummary[];
             columns?: GridColumn[];
             rows?: GridRow[];
             activities?: ActivityLogItem[];
-          }>('/api/workspace/sync', {
+          }>('workspace_sync', {
             clientId: this.currentClientId(),
             userName: this.currentUserName(),
             userColor: this.currentUserColor(),
@@ -8126,7 +8741,10 @@ export class App implements OnInit, OnDestroy {
             preserveActiveContext: true,
             columns: updatedCols,
             renamedColumns: renamedColumnsPayload,
-            applyDefaultToAllRowsForColId: hasExplicitDefault ? cleanName : undefined,
+            applyDefaultToAllRowsForColId:
+              hasExplicitDefault && didDefaultChange && !didLookupSchemaAutoRefresh
+                ? cleanName
+                : undefined,
           })
           .subscribe({
             next: (res) => {
@@ -8154,7 +8772,16 @@ export class App implements OnInit, OnDestroy {
       const prevCols = this.columns();
       this.recordHistorySnapshot(`Edit Schema for "${cleanName}"`);
       let updatedColRef: GridColumn | undefined;
-      const hasExplicitDefault = String(val.defaultValue ?? '').trim().length > 0;
+      const cleanDefault = String(val.defaultValue ?? '').trim();
+      const hasExplicitDefault = cleanDefault.length > 0;
+      const didDefaultChange = cleanDefault !== String(prevCol?.defaultValue ?? '').trim();
+      const didLookupSchemaAutoRefresh =
+        val.colType === 'lookup' &&
+        Boolean(
+          prevCol &&
+            ((prevCol.lookupTableName || '').trim() !== (val.lookupTableName || '').trim() ||
+              (prevCol.formula || '').trim() !== (val.formula || '').trim())
+        );
 
       this.columns.update((cols) =>
         cols.map((c) => {
@@ -8168,7 +8795,7 @@ export class App implements OnInit, OnDestroy {
               width: Number(val.width) || 150,
               required: isPk ? true : isRequired,
               isNullable: isPk ? false : isNullAllowed,
-              defaultValue: String(val.defaultValue ?? '').trim(),
+              defaultValue: cleanDefault,
               lookupTableName:
                 val.colType === 'lookup' ? (val.lookupTableName || '').trim() : '',
               optionsCsv:
@@ -8192,8 +8819,15 @@ export class App implements OnInit, OnDestroy {
 
       if (updatedColRef) {
         const targetCol = updatedColRef;
+        const liveTargetCol = this.getLiveLookupColumn(targetCol);
+        const didTypeOrOptionsChange = Boolean(
+          prevCol &&
+            (prevCol.colType !== targetCol.colType ||
+              (prevCol.optionsCsv || '').trim() !== (targetCol.optionsCsv || '').trim() ||
+              (prevCol.lookupTableName || '').trim() !== (targetCol.lookupTableName || '').trim())
+        );
         const resolvedDefault = hasExplicitDefault
-          ? this.resolveColumnDefaultPrimitive(targetCol, val.defaultValue)
+          ? this.resolveColumnDefaultPrimitive(liveTargetCol, val.defaultValue)
           : undefined;
 
         this.rows.update((list) =>
@@ -8227,15 +8861,46 @@ export class App implements OnInit, OnDestroy {
               } else if (targetCol.colType === 'checkbox') {
                 nextCells[cleanName] = false;
                 nextCells[targetCol.id] = false;
+              } else {
+                const coerced = this.resolveColumnDefaultPrimitive(liveTargetCol, '');
+                nextCells[cleanName] = coerced;
+                nextCells[targetCol.id] = coerced;
               }
-            } else if (resolvedDefault !== undefined) {
-              // Apply the updated default value across all rows in the table
-              nextCells[cleanName] = resolvedDefault;
-              nextCells[targetCol.id] = resolvedDefault;
             } else {
               const fallbackVal = oldVal !== undefined ? oldVal : '';
-              nextCells[cleanName] = fallbackVal;
-              nextCells[targetCol.id] = fallbackVal;
+              const isEmptyOld =
+                fallbackVal === '' || fallbackVal === null || fallbackVal === undefined;
+              const wasOldDefault =
+                prevCol?.defaultValue !== undefined &&
+                String(prevCol.defaultValue).trim() !== '' &&
+                String(fallbackVal).trim() === String(prevCol.defaultValue).trim();
+              const check = validateCellValue(liveTargetCol, fallbackVal);
+
+              if (
+                resolvedDefault !== undefined &&
+                didDefaultChange &&
+                !didLookupSchemaAutoRefresh &&
+                (isEmptyOld || wasOldDefault || targetCol.colType !== 'lookup')
+              ) {
+                nextCells[cleanName] = resolvedDefault;
+                nextCells[targetCol.id] = resolvedDefault;
+              } else if (!isEmptyOld && check.valid) {
+                nextCells[cleanName] = check.normalizedValue;
+                nextCells[targetCol.id] = check.normalizedValue;
+              } else if (isEmptyOld && resolvedDefault !== undefined) {
+                nextCells[cleanName] = resolvedDefault;
+                nextCells[targetCol.id] = resolvedDefault;
+              } else if (didTypeOrOptionsChange) {
+                const coerced = this.resolveColumnDefaultPrimitive(
+                  liveTargetCol,
+                  String(fallbackVal ?? '')
+                );
+                nextCells[cleanName] = coerced;
+                nextCells[targetCol.id] = coerced;
+              } else {
+                nextCells[cleanName] = fallbackVal;
+                nextCells[targetCol.id] = fallbackVal;
+              }
             }
             return {
               ...r,
@@ -8243,19 +8908,21 @@ export class App implements OnInit, OnDestroy {
             };
           })
         );
-      }
 
-      this.activeModal.set('none');
-      if (updatedColRef) {
+        this.activeModal.set('none');
         const allRowIds = this.rows().map((r) => r.id);
         this.validateAndSyncRows(
           allRowIds,
           [updatedColRef],
           'Field Schema Updated',
           `Updated field "${cleanName}" (${val.colType})`,
-          hasExplicitDefault ? updatedColRef.id : undefined,
+          hasExplicitDefault && didDefaultChange && !didLookupSchemaAutoRefresh
+            ? updatedColRef.id
+            : undefined,
           renamedColumnsPayload
         );
+      } else {
+        this.activeModal.set('none');
       }
     } else {
       if (existingTargetCols.some((c) => c.name.toLowerCase() === cleanName.toLowerCase())) {
@@ -8317,15 +8984,15 @@ export class App implements OnInit, OnDestroy {
         }
 
         this.activeModal.set('none');
-        this.http
-          .post<{
+        this.realtimeSync
+          .executeCrud<{
             ok: boolean;
             databases?: DbDatabaseSummary[];
             tables?: DbTableSummary[];
             columns?: GridColumn[];
             rows?: GridRow[];
             activities?: ActivityLogItem[];
-          }>('/api/workspace/sync', {
+          }>('workspace_sync', {
             clientId: this.currentClientId(),
             userName: this.currentUserName(),
             userColor: this.currentUserColor(),
@@ -10102,8 +10769,61 @@ export class App implements OnInit, OnDestroy {
     return getDropdownOptions(col);
   }
 
+  public getLiveLookupColumn(col: GridColumn): GridColumn {
+    if (col.colType !== 'lookup') return col;
+    let linkedTbl = (col.lookupTableName || '').trim();
+    const rawOpts = (col.optionsCsv || '').trim();
+    const activeDb = this.activeDatabaseName() || 'GridPulse_DB';
+    if (!linkedTbl && rawOpts && !rawOpts.startsWith('[') && !rawOpts.startsWith('{')) {
+      const fkCandidate = rawOpts.replace(/^fk:/i, '').trim();
+      const dbObj = this.databases().find(
+        (d) => d.databaseName.toLowerCase() === activeDb.toLowerCase()
+      );
+      const matchedTbl =
+        dbObj?.tables?.find((t) => t.tableName.toLowerCase() === fkCandidate.toLowerCase()) ||
+        this.tables().find((t) => t.tableName.toLowerCase() === fkCandidate.toLowerCase());
+      if (matchedTbl) {
+        linkedTbl = matchedTbl.tableName;
+      }
+    }
+    if (linkedTbl) {
+      const isSameActiveTable =
+        linkedTbl.toLowerCase() === this.activeTableName().toLowerCase() &&
+        this.rows().length > 0;
+      const dbObj = this.databases().find(
+        (d) => d.databaseName.toLowerCase() === activeDb.toLowerCase()
+      );
+      const tblSummary =
+        dbObj?.tables?.find((t) => t.tableName.toLowerCase() === linkedTbl.toLowerCase()) ||
+        this.tables().find((t) => t.tableName.toLowerCase() === linkedTbl.toLowerCase());
+      const hasLiveTableRows =
+        isSameActiveTable || Boolean(tblSummary?.rows && tblSummary.rows.length > 0);
+      if (hasLiveTableRows) {
+        const liveJson = this.buildClientLinkedLookupPreviewJson(
+          activeDb,
+          linkedTbl,
+          col.formula
+        );
+        if (liveJson && liveJson.startsWith('[')) {
+          return {
+            ...col,
+            lookupTableName: linkedTbl,
+            optionsCsv: liveJson,
+          };
+        }
+      }
+    }
+    return col;
+  }
+
   public getLookupOptionsForCol(col: GridColumn): LookupItem[] {
-    return getLookupOptions(col);
+    const liveCol = this.getLiveLookupColumn(col);
+    return getLookupOptions(liveCol);
+  }
+
+  public isLookupValueInOptions(col: GridColumn, val: string): boolean {
+    if (!val) return false;
+    return this.getLookupOptionsForCol(col).some((item) => item.json === val);
   }
 
   public formatLookupOptionLabel(item: LookupItem): string {
@@ -10761,7 +11481,7 @@ export class App implements OnInit, OnDestroy {
   }
 
   /**
-   * Immediately hides the 1-second hover explanation tooltip and cancels any pending hover timer.
+   * Immediately hides the lightweight hover tooltip and cancels any active 1-second auto-hide timer.
    */
   public clearActionTooltip(): void {
     if (this.actionHoverTimerId) {
@@ -10775,12 +11495,10 @@ export class App implements OnInit, OnDestroy {
   }
 
   /**
-   * Inspects any hovered interactive control (button, hyperlink, textbox, dropdown, checkbox, tab,
-   * sidebar node, splitter handle, or header action) and returns a short, professional explanation
-   * in simple English of what that functionality or action does.
+   * Inspects any hovered toolbar icon or interactive control and returns its lightweight tooltip text.
    */
   private resolveActionTooltipExplanation(el: HTMLElement): string {
-    // Preserve native title attribute in data-gridario-tip and strip native title so browser tooltip doesn't conflict
+    // Preserve native title attribute in data-gridario-tip and strip native title so browser tooltip never conflicts
     const rawTitle = el.getAttribute('title');
     if (rawTitle !== null) {
       if (rawTitle.trim()) {
@@ -10801,6 +11519,12 @@ export class App implements OnInit, OnDestroy {
       parentWithTitle = parentWithTitle.parentElement;
     }
 
+    // If element has a concise Office toolbar tooltip (data-office-tip), return it directly for a lightweight Office tooltip
+    const officeTip = (el.getAttribute('data-office-tip') || '').trim();
+    if (officeTip) {
+      return officeTip;
+    }
+
     const explicitTip = (
       el.getAttribute('data-tooltip') ||
       el.getAttribute('data-gridario-tip') ||
@@ -10809,6 +11533,9 @@ export class App implements OnInit, OnDestroy {
     ).trim();
 
     if (explicitTip) {
+      if (el.closest('.gridario-office-ribbon')) {
+        return explicitTip;
+      }
       return this.formatFriendlyActionTooltip(explicitTip, el);
     }
 
@@ -10818,61 +11545,61 @@ export class App implements OnInit, OnDestroy {
       const inp = el as HTMLInputElement;
       const inputType = (inp.type || 'text').toLowerCase();
       if (inputType === 'checkbox') {
-        return 'Click to check or uncheck this option.';
+        return 'Toggle option';
       }
       if (inputType === 'radio') {
-        return 'Click to select this option.';
+        return 'Select option';
       }
       if (inputType === 'color') {
-        return 'Click to choose a custom display color.';
+        return 'Choose color';
       }
       if (inputType === 'number') {
-        return 'Enter a numeric value in this field.';
+        return 'Enter numeric value';
       }
       if (inputType === 'date') {
-        return 'Select or type a date in YYYY-MM-DD format.';
+        return 'Select date (YYYY-MM-DD)';
       }
       const placeholder = (inp.placeholder || '').trim();
       if (placeholder) {
-        return this.formatFriendlyActionTooltip(placeholder, el);
+        return placeholder;
       }
-      return 'Type a value into this text box.';
+      return 'Enter text';
     }
 
     if (tag === 'textarea') {
       const ta = el as HTMLTextAreaElement;
       const placeholder = (ta.placeholder || '').trim();
       if (placeholder) {
-        return this.formatFriendlyActionTooltip(placeholder, el);
+        return placeholder;
       }
-      return 'Enter or paste text into this field.';
+      return 'Enter text';
     }
 
     if (tag === 'select') {
       const sel = el as HTMLSelectElement;
       const selectedOpt = sel.options?.[sel.selectedIndex]?.text?.trim() || '';
       if (selectedOpt) {
-        return `Click to open the dropdown menu and change the selection (currently "${selectedOpt}").`;
+        return `Select option (${selectedOpt})`;
       }
-      return 'Click to open the dropdown menu and choose an option.';
+      return 'Choose option';
     }
 
     if (tag === 'a') {
       const linkText = (el.textContent || '').replace(/\s+/g, ' ').trim();
       if (linkText) {
-        return `Click to open or download ${linkText}.`;
+        return linkText;
       }
-      return 'Click to open this link.';
+      return 'Open link';
     }
 
     if (el.classList.contains('gridario-col-resizer')) {
-      return 'Drag left or right to resize this column, or double-click to auto-fit its width.';
+      return 'Drag to resize column (Double-click to auto-fit)';
     }
     if (
       el.classList.contains('gridpulse-split-handle-horizontal') ||
       el.classList.contains('gridpulse-split-handle-vertical')
     ) {
-      return 'Drag to resize this panel, or double-click to toggle expanded view.';
+      return 'Drag to resize panel';
     }
 
     // Clone text without material icon ligature names
@@ -10880,98 +11607,26 @@ export class App implements OnInit, OnDestroy {
     clone.querySelectorAll('mat-icon, .material-icons').forEach((iconNode) => iconNode.remove());
     const cleanText = (clone.textContent || '').replace(/\s+/g, ' ').trim();
     if (cleanText) {
-      return this.formatFriendlyActionTooltip(cleanText, el);
+      return cleanText;
     }
 
-    return 'Click to perform this action.';
+    return '';
   }
 
   /**
-   * Formats raw titles, labels, or placeholders into a concise, professional sentence in simple English.
+   * Formats raw titles, labels, or placeholders into a concise, lightweight label.
    */
-  private formatFriendlyActionTooltip(raw: string, el: HTMLElement): string {
+  private formatFriendlyActionTooltip(raw: string, _el: HTMLElement): string {
     const cleaned = raw.replace(/\s+/g, ' ').trim();
-    if (!cleaned) return 'Click to use this feature.';
-
-    const lower = cleaned.toLowerCase();
-    const tag = el.tagName.toLowerCase();
-
-    // Direct friendly mappings for common UI controls
-    if (lower === 'close' || lower === 'cancel') {
-      return 'Close this dialog without saving changes.';
-    }
-    if (lower === 'apply' || lower === 'apply filter') {
-      return 'Apply the selected filter rules and update the table rows.';
-    }
-    if (lower === 'clear' || lower === 'clear filter') {
-      return 'Remove this filter and restore all matching rows in the table.';
-    }
-    if (lower === 'clear sort/filter' || lower.includes('clear all sort rules')) {
-      return 'Clear all active sort rules and filters to show all table rows.';
-    }
-    if (lower === 'select all') {
-      return 'Select all values in the list.';
-    }
-    if (lower === 'login' || lower === 'user login' || lower === 'sign in to your account') {
-      return 'Open the sign-in window to log in to your account.';
-    }
-    if (lower === 'log out' || lower.includes('log out of account')) {
-      return 'Sign out of your current account session.';
-    }
-    if (lower === 'new tab' || lower === 'new database tab') {
-      return 'Open a new database connection tab in the workspace.';
-    }
-    if (lower === 'new table' || lower.includes('create new table sheet tab')) {
-      return 'Create a new database table as a sheet tab in the active database.';
-    }
-    if (lower.includes('search rows, columns')) {
-      return 'Type keywords and press Enter to search across rows and columns in the active table.';
-    }
-    if (lower.includes('search scope column')) {
-      return 'Choose whether to search across all columns or within a specific column.';
-    }
-    if (lower.includes('filter databases, tables, or columns')) {
-      return 'Type to quickly filter databases, tables, and columns in the Object Explorer.';
-    }
-    if (lower.startsWith('filter ') && tag === 'input') {
-      return `Type a value and press Enter to filter rows by ${cleaned.slice(7).replace(/\.\.\.$/, '')}.`;
-    }
-    if (lower.startsWith('enter ') && (tag === 'input' || tag === 'select')) {
-      return `Enter the value for ${cleaned.slice(6).replace(/\.\.\.$/, '')} when adding a new row.`;
-    }
-    if (lower.includes('select all visible rows')) {
-      return 'Check or uncheck this box to select or deselect all visible rows in the table.';
-    }
-    if (lower.startsWith('select row ')) {
-      return `Check or uncheck this box to select ${cleaned.replace(/^select /i, '')} for bulk actions.`;
-    }
-
-    // If it already reads like a clear descriptive phrase, ensure it ends with a period
-    if (cleaned.length >= 18) {
-      const sentence = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
-      return /[.!?]$/.test(sentence) ? sentence : `${sentence}.`;
-    }
-
-    if (tag === 'input' || tag === 'textarea') {
-      return `Enter or edit ${cleaned}.`;
-    }
-    if (tag === 'select') {
-      return `Select an option for ${cleaned}.`;
-    }
-    if (tag === 'a') {
-      return `Open ${cleaned}.`;
-    }
-
-    const capitalized = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
-    return /[.!?]$/.test(capitalized)
-      ? capitalized
-      : `Click to ${capitalized.charAt(0).toLowerCase() + capitalized.slice(1)}.`;
+    if (!cleaned) return '';
+    return cleaned;
   }
 
   /**
-   * Automatically inspects hovered cells (td/th) and sidebar nodes (.manage-tree-row / .truncate)
-   * for text overflow tooltips, AND manages the 1-second hover explanation tooltip for all
-   * interactive functionalities and actions (buttons, links, textboxes, dropdowns, tabs, etc.).
+   * Classic Office lightweight hover tooltip:
+   * - Displays text immediately when hovering over a toolbar icon or interactive element.
+   * - Disappears immediately once hover ends (mouse leaves the element).
+   * - Also disappears automatically if hovered continuously for more than 1 second (1000ms).
    */
   public onGlobalMouseOver(event: MouseEvent): void {
     if (!this.isBrowser) return;
@@ -10981,9 +11636,9 @@ export class App implements OnInit, OnDestroy {
     this.lastMouseX = event.clientX;
     this.lastMouseY = event.clientY;
 
-    // 1. Handle 1-second hover explanation tooltip for any interactive functionality or action
+    // 1. Handle lightweight Office hover tooltip (shows on hover, hides on mouse leave OR after 1 second)
     const interactiveEl = rawTarget.closest(
-      'button, a, input, select, textarea, [role="button"], [role="separator"], [data-tooltip], [data-gridario-tip], .excel-sheet-tab, .manage-tree-row, .gridario-col-resizer, .gridpulse-split-handle-horizontal, .gridpulse-split-handle-vertical'
+      '.gridario-toolbar-icon-btn, button, a, input, select, textarea, [role="button"], [role="separator"], [data-office-tip], [data-tooltip], [data-gridario-tip], .excel-sheet-tab, .manage-tree-row, .gridario-col-resizer, .gridpulse-split-handle-horizontal, .gridpulse-split-handle-vertical'
     ) as HTMLElement | null;
 
     if (interactiveEl !== this.hoveredInteractiveEl) {
@@ -10991,28 +11646,44 @@ export class App implements OnInit, OnDestroy {
         clearTimeout(this.actionHoverTimerId);
         this.actionHoverTimerId = null;
       }
-      if (this.actionTooltip().visible) {
-        this.actionTooltip.update((t) => ({ ...t, visible: false }));
-      }
       this.hoveredInteractiveEl = interactiveEl;
 
       if (interactiveEl) {
         const explanation = this.resolveActionTooltipExplanation(interactiveEl);
         if (explanation) {
+          const vw = window.innerWidth || 1280;
+          const vh = window.innerHeight || 800;
+          const rect = interactiveEl.getBoundingClientRect();
+          const isToolbarBtn = Boolean(
+            interactiveEl.classList.contains('gridario-toolbar-icon-btn') ||
+              interactiveEl.closest('.gridario-office-ribbon')
+          );
+          const x = isToolbarBtn
+            ? Math.max(8, Math.min(rect.left, vw - 260))
+            : Math.max(8, Math.min(event.clientX + 10, vw - 280));
+          const y = isToolbarBtn
+            ? Math.max(8, Math.min(rect.bottom + 5, vh - 48))
+            : Math.max(8, Math.min(event.clientY + 18, vh - 48));
+
+          this.actionTooltip.set({
+            visible: true,
+            text: explanation,
+            x,
+            y,
+          });
+
+          // Automatically hide the tooltip if user continues hovering for more than 1 second (1000ms)
           this.actionHoverTimerId = setTimeout(() => {
-            if (this.hoveredInteractiveEl !== interactiveEl) return;
-            const vw = window.innerWidth || 1280;
-            const vh = window.innerHeight || 800;
-            const x = Math.max(12, Math.min(this.lastMouseX + 14, vw - 340));
-            const y = Math.max(12, Math.min(this.lastMouseY + 20, vh - 90));
-            this.actionTooltip.set({
-              visible: true,
-              text: explanation,
-              x,
-              y,
-            });
+            if (this.hoveredInteractiveEl === interactiveEl && this.actionTooltip().visible) {
+              this.actionTooltip.update((t) => ({ ...t, visible: false }));
+            }
+            this.actionHoverTimerId = null;
           }, 1000);
+        } else if (this.actionTooltip().visible) {
+          this.actionTooltip.update((t) => ({ ...t, visible: false }));
         }
+      } else if (this.actionTooltip().visible) {
+        this.actionTooltip.update((t) => ({ ...t, visible: false }));
       }
     }
 
@@ -11092,9 +11763,14 @@ export class App implements OnInit, OnDestroy {
     const vw = this.isBrowser ? window.innerWidth : 1280;
     const vh = this.isBrowser ? window.innerHeight : 800;
 
-    if (this.actionTooltip().visible) {
-      const ax = Math.max(12, Math.min(event.clientX + 14, vw - 340));
-      const ay = Math.max(12, Math.min(event.clientY + 20, vh - 90));
+    if (
+      this.actionTooltip().visible &&
+      this.hoveredInteractiveEl &&
+      !this.hoveredInteractiveEl.classList.contains('gridario-toolbar-icon-btn') &&
+      !this.hoveredInteractiveEl.closest('.gridario-office-ribbon')
+    ) {
+      const ax = Math.max(8, Math.min(event.clientX + 10, vw - 280));
+      const ay = Math.max(8, Math.min(event.clientY + 18, vh - 48));
       this.actionTooltip.update((t) => ({ ...t, x: ax, y: ay }));
     }
 
