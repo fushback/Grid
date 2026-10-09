@@ -2669,8 +2669,8 @@ app.get('/api/workspace', async (req: Request, res: Response) => {
     (requestedDb || requestedTable) &&
     (cloudState.activeDatabaseName !== prevDbName || cloudState.activeTableName !== prevTableName)
   ) {
-    cloudState.updatedAt = new Date().toISOString();
-    await persistWorkspaceState(cloudState);
+    // Read-only active view switch: update local cache file ONLY, never mark PostgreSQL write-behind buffer dirty
+    writeStateFilesToDiskOnly(cloudState);
   }
   const sortedCols = targetTable
     ? [...targetTable.columns].sort((a, b) => a.orderIndex - b.orderIndex)
@@ -5446,13 +5446,34 @@ function processRealtimeCellDeltaBatch(deltas: RealtimeCellDelta[]): {
       continue;
     }
 
-    // Apply winning cell mutation in-memory
+    // Apply winning cell mutation in-memory ONLY if the value actually changed (dirty check)
     const normalizedVal = coerceSingleCellValueForColumn(
       targetCol,
       rawDelta.rawValue,
       targetTable.columns,
       targetRow
     );
+    const prevCellVal =
+      targetRow.cells[targetCol.name] !== undefined
+        ? targetRow.cells[targetCol.name]
+        : targetRow.cells[targetCol.id];
+
+    if (String(prevCellVal ?? '') === String(normalizedVal ?? '')) {
+      // No-op edit: value is identical to current cached state; acknowledge without marking dirty
+      acks.push({
+        mutationId: rawDelta.mutationId || '',
+        accepted: true,
+        databaseName: targetDb.databaseName,
+        tableName: targetTable.tableName,
+        rowId: targetRow.id,
+        columnId: targetCol.id,
+        authoritativeValue: String(normalizedVal),
+        authoritativeTimestampMs: existingLwwTs || clientTs,
+        updatedBy: targetRow.updatedBy || rawDelta.userName || 'Collaborator',
+      });
+      continue;
+    }
+
     targetRow.cells[targetCol.name] = normalizedVal;
     targetRow.cells[targetCol.id] = normalizedVal;
 

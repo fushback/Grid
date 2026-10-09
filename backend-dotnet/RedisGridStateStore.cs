@@ -55,6 +55,13 @@ public sealed class RedisGridStateStore : IRedisGridStateStore
             return { 0, authVal, tostring(currentTs), authUsr }
         end
 
+        -- Dirty-state guard: if the value did not actually mutate, do NOT enqueue into dirtyZSetKey
+        local existingVal = redis.call('HGET', cellKey, colId)
+        if existingVal == newVal then
+            local authUsr = redis.call('HGET', metaKey, userField) or userName
+            return { 1, newVal, tostring(currentTs > 0 and currentTs or incomingTs), authUsr }
+        end
+
         redis.call('HSET', cellKey, colId, newVal)
         redis.call('HSET', metaKey,
             tsField, tostring(incomingTs),
