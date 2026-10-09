@@ -19,15 +19,70 @@ const browserDistFolder = join(import.meta.dirname, '../browser');
 const CLOUD_STORE_FILE = '/tmp/gridpulse-cloud-state-v3.json';
 const PERSISTENT_WORKSPACE_FILE = join(process.cwd(), '.gridpulse-workspace-state.json');
 
-function readConnectionStringFromEnv(): string {
-  const fromEnv = (
-    process.env['SUPABASE_POSTGRES_CONNECTION_STRING'] ||
-    process.env['DATABASE_URL'] ||
-    ''
-  ).trim();
-  if (fromEnv && !fromEnv.includes('YOUR_SUPABASE_PASSWORD')) {
-    return fromEnv;
+const IS_SERVERLESS_HOST = Boolean(
+  process.env['VERCEL'] ||
+    process.env['VERCEL_ENV'] ||
+    process.env['AWS_LAMBDA_FUNCTION_NAME'] ||
+    process.env['NETLIFY']
+);
+
+function normalizePostgresConnectionString(rawInput: string): string {
+  const raw = rawInput.trim().replace(/^["']|["']$/g, '');
+  if (!raw) return '';
+
+  // Convert ADO.NET / Npgsql key-value format ("Host=...;Port=5432;Database=...;Username=...;Password=...")
+  // into standard postgresql:// URI format required by node-postgres (pg)
+  if (!raw.startsWith('postgres://') && !raw.startsWith('postgresql://') && /host\s*=/i.test(raw)) {
+    const kv = new Map<string, string>();
+    for (const part of raw.split(';')) {
+      const eq = part.indexOf('=');
+      if (eq <= 0) continue;
+      const k = part.slice(0, eq).trim().toLowerCase();
+      const v = part.slice(eq + 1).trim();
+      if (k) kv.set(k, v);
+    }
+    const host = kv.get('host') || kv.get('server') || kv.get('data source') || '';
+    const port = kv.get('port') || '5432';
+    const database = kv.get('database') || kv.get('initial catalog') || 'postgres';
+    const user = kv.get('username') || kv.get('user id') || kv.get('uid') || kv.get('user') || 'postgres';
+    const password = kv.get('password') || kv.get('pwd') || '';
+    if (!host || password === 'YOUR_SUPABASE_PASSWORD' || password === 'your_supabase_db_password') {
+      return '';
+    }
+    return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`;
   }
+
+  if (
+    raw.includes('YOUR_SUPABASE_PASSWORD') ||
+    raw.includes('your_supabase_db_password')
+  ) {
+    return '';
+  }
+
+  const m = raw.match(/^(postgres(?:ql)?:\/\/[^:]+:)(.+)(@[^@]+)$/);
+  if (m && m[2].includes('@')) {
+    return m[1] + encodeURIComponent(m[2]) + m[3];
+  }
+  return raw;
+}
+
+function readConnectionStringFromEnv(): string {
+  const envCandidates = [
+    process.env['SUPABASE_POSTGRES_CONNECTION_STRING'],
+    process.env['DATABASE_URL'],
+    process.env['POSTGRES_URL'],
+    process.env['POSTGRES_CONNECTION_STRING'],
+    process.env['POSTGRES_PRISMA_URL'],
+    process.env['POSTGRES_URL_NON_POOLING'],
+  ];
+
+  for (const candidate of envCandidates) {
+    if (candidate) {
+      const normalized = normalizePostgresConnectionString(candidate);
+      if (normalized) return normalized;
+    }
+  }
+
   try {
     const envPath = join(process.cwd(), '.env');
     if (existsSync(envPath)) {
@@ -38,16 +93,16 @@ function readConnectionStringFromEnv(): string {
         const eqIdx = trimmed.indexOf('=');
         if (eqIdx <= 0) continue;
         const key = trimmed.slice(0, eqIdx).trim();
-        const val = trimmed
-          .slice(eqIdx + 1)
-          .trim()
-          .replace(/^["']|["']$/g, '');
+        const val = trimmed.slice(eqIdx + 1).trim();
         if (
-          (key === 'SUPABASE_POSTGRES_CONNECTION_STRING' || key === 'DATABASE_URL') &&
-          val &&
-          !val.includes('YOUR_SUPABASE_PASSWORD')
+          (key === 'SUPABASE_POSTGRES_CONNECTION_STRING' ||
+            key === 'DATABASE_URL' ||
+            key === 'POSTGRES_URL' ||
+            key === 'POSTGRES_CONNECTION_STRING') &&
+          val
         ) {
-          return val;
+          const normalized = normalizePostgresConnectionString(val);
+          if (normalized) return normalized;
         }
       }
     }
@@ -61,20 +116,17 @@ let cachedPgPool: pg.Pool | null = null;
 let cachedPgConnStr = '';
 
 function getPgPool(): pg.Pool | null {
-  let raw = readConnectionStringFromEnv();
+  const raw = readConnectionStringFromEnv();
   if (!raw) return null;
-  const m = raw.match(/^(postgresql:\/\/[^:]+:)(.+)(@[^@]+)$/);
-  if (m && m[2].includes('@')) {
-    raw = m[1] + encodeURIComponent(m[2]) + m[3];
-  }
   if (cachedPgPool && cachedPgConnStr === raw) {
     return cachedPgPool;
   }
   try {
     cachedPgConnStr = raw;
+    const isLocalhost = /@(?:localhost|127\.0\.0\.1)(?::|\/|$)/i.test(raw);
     cachedPgPool = new Pool({
       connectionString: raw,
-      ssl: { rejectUnauthorized: false },
+      ssl: isLocalhost ? false : { rejectUnauthorized: false },
       max: 4,
       connectionTimeoutMillis: 6000,
     });
@@ -2192,8 +2244,11 @@ function parseAndHydrateWorkspaceState(raw: string): CloudWorkspaceState | null 
 }
 
 function loadOrCreateState(): CloudWorkspaceState {
-  // 1. Prefer persistent project workspace state file first (survives /tmp clears and restarts)
-  const candidateFiles = [PERSISTENT_WORKSPACE_FILE, CLOUD_STORE_FILE];
+  // In serverless environments (Vercel/Lambda), process.cwd() is a read-only build bundle,
+  // while /tmp (CLOUD_STORE_FILE) is the writable runtime cache.
+  const candidateFiles = IS_SERVERLESS_HOST
+    ? [CLOUD_STORE_FILE, PERSISTENT_WORKSPACE_FILE]
+    : [PERSISTENT_WORKSPACE_FILE, CLOUD_STORE_FILE];
   let bestState: CloudWorkspaceState | null = null;
 
   for (const filePath of candidateFiles) {
@@ -2216,14 +2271,8 @@ function loadOrCreateState(): CloudWorkspaceState {
   }
 
   if (bestState) {
-    // Keep both files in sync immediately
-    try {
-      const serialized = JSON.stringify(bestState);
-      writeFileSync(PERSISTENT_WORKSPACE_FILE, serialized, 'utf-8');
-      writeFileSync(CLOUD_STORE_FILE, serialized, 'utf-8');
-    } catch {
-      // Ignore write errors
-    }
+    // Keep writable state files in sync
+    writeStateFilesToDiskOnly(bestState);
     return bestState;
   }
 
@@ -4220,6 +4269,7 @@ function collectProjectFiles(
     'bun.lock',
     'package-lock.json',
     '.github-auth-cache.json',
+    '.gridpulse-workspace-state.json',
   ]);
   const results: { path: string; content: string }[] = [];
 
@@ -5226,7 +5276,7 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
     addedColumnNames: syncAddedColumnNames,
     deletedColumnNames: syncDeletedColumnNames,
   });
-  await syncTableToRealDatabase(targetTable, targetDb.databaseName);
+  await syncTableToRealDatabase(targetTable, targetDb.databaseName, IS_SERVERLESS_HOST);
   for (const otherTbl of targetDb.tables) {
     if (
       otherTbl !== targetTable &&
@@ -5236,7 +5286,7 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
           (c.lookupTableName || '').toLowerCase() === targetTable.tableName.toLowerCase()
       )
     ) {
-      await syncTableToRealDatabase(otherTbl, targetDb.databaseName);
+      await syncTableToRealDatabase(otherTbl, targetDb.databaseName, IS_SERVERLESS_HOST);
     }
   }
 
@@ -5248,7 +5298,7 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
     cloudState.rows = targetTable.rows;
   }
 
-  await persistWorkspaceState(cloudState);
+  await persistWorkspaceState(cloudState, IS_SERVERLESS_HOST);
   const currentActiveDb = getTargetDatabase(cloudState, cloudState.activeDatabaseName);
   const currentActiveTbl = getTargetTable(
     cloudState,
@@ -5917,10 +5967,16 @@ app.post('/api/realtime/delta', async (req: Request, res: Response) => {
     : [];
 
   const result = processRealtimeCellDeltaBatch(list);
+  // In serverless environments (e.g., Vercel), background setTimeouts are frozen as soon as res.json() returns.
+  // Flush the write-behind buffer before completing the HTTP response when running on serverless hosts.
+  const finalStatus =
+    IS_SERVERLESS_HOST && result.acceptedDeltas.length > 0
+      ? await flushWriteBehindBufferToPostgres('threshold')
+      : result.status;
   res.json({
     ok: true,
     acks: result.acks,
-    status: result.status,
+    status: finalStatus,
   });
 });
 
