@@ -66,10 +66,12 @@ export interface VersionCommitItem {
 
 type ActiveModalType =
   | 'none'
+  | 'connect_server'
   | 'multi_sort'
   | 'column_filter'
   | 'column_schema'
   | 'new_row'
+  | 'validate_new_row'
   | 'create_database'
   | 'create_table'
   | 'rename_sidebar_item'
@@ -79,6 +81,14 @@ type ActiveModalType =
   | 'github_push'
   | 'postgres_auth'
   | 'version_control';
+
+export interface NewRowValidationIssue {
+  colId: string;
+  colName: string;
+  colType: ColumnType;
+  issueType: 'missing' | 'invalid';
+  errorMessage: string;
+}
 
 export type PasteTargetScope =
   | 'cell'
@@ -104,7 +114,7 @@ export interface SidebarContextMenuState {
   visible: boolean;
   x: number;
   y: number;
-  targetType: 'databases_folder' | 'database' | 'table' | 'field';
+  targetType: 'server' | 'databases_folder' | 'database' | 'table' | 'field';
   databaseName: string;
   tableName: string;
   column: GridColumn | null;
@@ -173,7 +183,7 @@ const ANON_NAMES = [
     '(mousedown)': 'clearActionTooltip()',
     '(mouseover)': 'onGlobalMouseOver($event)',
     '(mousemove)': 'onGlobalMouseMove($event)',
-    '(mouseout)': 'onGlobalMouseOut($event)',
+    '(mouseout)': 'onGlobalMouseOut()',
   },
 })
 export class App implements OnInit, OnDestroy {
@@ -270,6 +280,26 @@ export class App implements OnInit, OnDestroy {
     return result;
   });
 
+  // SQL Server Management Studio (SSMS) Server Login & Instance State (from Database)
+  readonly serverName = signal<string>('');
+  readonly serverEngine = signal<string>('');
+  readonly serverLoginUser = signal<string>('');
+  readonly isServerConnected = signal<boolean>(true);
+  readonly isConnectingToServer = signal<boolean>(false);
+  readonly connectServerErrorMessage = signal<string>('');
+  readonly showServerPassword = signal<boolean>(false);
+  readonly showAuthPassword = signal<boolean>(false);
+  readonly connectServerForm = this.fb.nonNullable.group({
+    serverType: ['Database Engine'],
+    serverName: ['localhost', [Validators.maxLength(240)]],
+    port: ['5432', [Validators.maxLength(10)]],
+    databaseName: ['postgres', [Validators.maxLength(120)]],
+    loginUser: ['postgres', [Validators.maxLength(120)]],
+    password: [''],
+    connectionString: [''],
+    rememberPassword: [true],
+  });
+
   // SQL Server Management Studio (SSMS) / Browser-Style Database Connection Tabs
   // Each tab represents an active Database connection page, and inside each Database Tab
   // the footer hosts the Excel-style Table Sheet Tabs for that specific database.
@@ -281,7 +311,7 @@ export class App implements OnInit, OnDestroy {
     return list.find((t) => t.tabId === id) || list[0] || null;
   });
   readonly hasActiveConnection = computed<boolean>(() => {
-    return this.databaseTabs().length > 0;
+    return this.isServerConnected() && this.databaseTabs().length > 0;
   });
   readonly isCurrentTabAwaitingDbSelection = computed<boolean>(() => {
     const tab = this.activeDatabaseTab();
@@ -504,6 +534,16 @@ export class App implements OnInit, OnDestroy {
   readonly newRowSentinelId = '__new_row__';
   readonly newRowDraftCells = signal<Record<string, CellPrimitive>>({});
   readonly newRowValidationErrors = signal<Record<string, string>>({});
+  readonly newRowValidationModal = signal<{
+    visible: boolean;
+    isValid: boolean;
+    issues: NewRowValidationIssue[];
+  }>({
+    visible: false,
+    isValid: true,
+    issues: [],
+  });
+  readonly animatedRowIds = signal<Set<string>>(new Set<string>());
   readonly editingNewRowColId = signal<string | null>(null);
   readonly newRowCellEditControl = this.fb.nonNullable.control('');
   readonly isAddingRowsOneByOne = signal<boolean>(false);
@@ -685,7 +725,9 @@ export class App implements OnInit, OnDestroy {
         ((r.condition !== 'none' &&
           (r.condition === 'empty' ||
             r.condition === 'not_empty' ||
-            r.queryValue.trim().length > 0)) ||
+            r.queryValue.trim().length > 0 ||
+            ((r.condition === 'date_range' || r.condition === 'between') &&
+              r.queryValueEnd.trim().length > 0))) ||
           r.excludedValues.length > 0);
       const hasHeaderSearch = (headerSearches[col.id] || '').trim().length > 0;
       if (hasRule || hasHeaderSearch) {
@@ -783,16 +825,53 @@ export class App implements OnInit, OnDestroy {
               }
               break;
             case 'between': {
+              const qEnd = rule.queryValueEnd.trim().toLowerCase();
               const qEndNum = Number(rule.queryValueEnd);
-              if (
-                rule.queryValue.trim().length > 0 &&
-                rule.queryValueEnd.trim().length > 0 &&
-                !Number.isNaN(qNum) &&
-                !Number.isNaN(qEndNum) &&
-                !Number.isNaN(vNum)
-              ) {
-                if (vNum < Math.min(qNum, qEndNum) || vNum > Math.max(qNum, qEndNum)) {
-                  return false;
+              if (q.length > 0 && qEnd.length > 0) {
+                if (!Number.isNaN(qNum) && !Number.isNaN(qEndNum) && !Number.isNaN(vNum)) {
+                  if (vNum < Math.min(qNum, qEndNum) || vNum > Math.max(qNum, qEndNum)) {
+                    return false;
+                  }
+                } else {
+                  const minStr = q <= qEnd ? q : qEnd;
+                  const maxStr = q <= qEnd ? qEnd : q;
+                  if (lowerVal < minStr || lowerVal > maxStr) {
+                    return false;
+                  }
+                }
+              }
+              break;
+            }
+            case 'date_range': {
+              const startRaw = rule.queryValue.trim();
+              const endRaw = rule.queryValueEnd.trim();
+              if (startRaw.length > 0 || endRaw.length > 0) {
+                if (strVal.trim().length === 0) return false;
+                const cellTime = Date.parse(strVal.trim());
+                const startTime = startRaw ? Date.parse(startRaw) : Number.NaN;
+                const endTime = endRaw ? Date.parse(endRaw) : Number.NaN;
+                if (!Number.isNaN(cellTime)) {
+                  if (startRaw && !Number.isNaN(startTime) && endRaw && !Number.isNaN(endTime)) {
+                    const minTime = Math.min(startTime, endTime);
+                    const maxTime = Math.max(startTime, endTime);
+                    if (cellTime < minTime || cellTime > maxTime) return false;
+                  } else if (startRaw && !Number.isNaN(startTime)) {
+                    if (cellTime < startTime) return false;
+                  } else if (endRaw && !Number.isNaN(endTime)) {
+                    if (cellTime > endTime) return false;
+                  }
+                } else {
+                  const startLower = startRaw.toLowerCase();
+                  const endLower = endRaw.toLowerCase();
+                  if (startLower && endLower) {
+                    const minD = startLower <= endLower ? startLower : endLower;
+                    const maxD = startLower <= endLower ? endLower : startLower;
+                    if (lowerVal < minD || lowerVal > maxD) return false;
+                  } else if (startLower && lowerVal < startLower) {
+                    return false;
+                  } else if (endLower && lowerVal > endLower) {
+                    return false;
+                  }
                 }
               }
               break;
@@ -1415,6 +1494,11 @@ export class App implements OnInit, OnDestroy {
       for (const col of cols) {
         const val = nextCells[col.name] !== undefined ? nextCells[col.name] : nextCells[col.id];
         if (col.isPrimaryKey || col.isIdentity) {
+          if (col.colType !== 'number' && typeof val === 'string' && val.trim().length > 0) {
+            nextCells[col.name] = val;
+            nextCells[col.id] = val;
+            continue;
+          }
           const numPk = Number(val);
           const resolvedPk =
             Number.isInteger(numPk) && numPk >= 1 ? numPk : ++maxIdentity;
@@ -1580,21 +1664,151 @@ export class App implements OnInit, OnDestroy {
     });
   });
 
-  public refreshObjectExplorerTreeFromDb(): void {
+  private readonly databasesBackupStorageKey = 'gridario_workspace_databases_backup_v1';
+  private readonly serverConnectionStorageKey = 'gridario_server_connection_v1';
+  private isRestoringClientBackup = false;
+
+  private saveDatabasesBackupToStorage(dbs: DbDatabaseSummary[] = this.databases()): void {
+    if (!this.isBrowser || !Array.isArray(dbs) || dbs.length === 0) return;
+    try {
+      const activeDb = this.activeDatabaseName();
+      const activeTbl = this.activeTableName();
+      const currentCols = this.columns();
+      const currentRows = this.rows();
+
+      const enriched = dbs.map((db) => ({
+        ...db,
+        tables: (db.tables || []).map((t) => {
+          const isCurrentActiveTable =
+            db.databaseName.toLowerCase() === activeDb.toLowerCase() &&
+            t.tableName.toLowerCase() === activeTbl.toLowerCase();
+          return {
+            ...t,
+            columns:
+              isCurrentActiveTable && currentCols.length > 0
+                ? currentCols
+                : Array.isArray(t.columns)
+                  ? t.columns
+                  : [],
+            rows:
+              isCurrentActiveTable && currentRows.length > 0
+                ? currentRows.slice(0, 250)
+                : Array.isArray(t.rows)
+                  ? t.rows.slice(0, 250)
+                  : [],
+          };
+        }),
+      }));
+
+      localStorage.setItem(
+        this.databasesBackupStorageKey,
+        JSON.stringify({
+          activeDatabaseName: activeDb,
+          activeTableName: activeTbl,
+          databases: enriched,
+          updatedAt: new Date().toISOString(),
+        })
+      );
+    } catch {
+      // Ignore storage quota errors
+    }
+  }
+
+  private checkAndRestoreClientBackupIfNeeded(serverDbs: DbDatabaseSummary[]): void {
+    if (!this.isBrowser || this.isRestoringClientBackup) return;
+    try {
+      const raw = localStorage.getItem(this.databasesBackupStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        activeDatabaseName?: string;
+        activeTableName?: string;
+        databases?: DbDatabaseSummary[];
+      };
+      if (!Array.isArray(parsed?.databases) || parsed.databases.length === 0) return;
+
+      // Determine if the local backup has any databases or tables that are missing on the server
+      // (e.g. after a container cold-start reset to default single GridPulse_DB)
+      const missingDbsOrTables = parsed.databases.some((bDb) => {
+        const matchDb = serverDbs.find(
+          (sDb) => sDb.databaseName.toLowerCase() === bDb.databaseName.toLowerCase()
+        );
+        if (!matchDb) return true;
+        return (bDb.tables || []).some(
+          (bTbl) =>
+            !(matchDb.tables || []).some(
+              (sTbl) => sTbl.tableName.toLowerCase() === bTbl.tableName.toLowerCase()
+            )
+        );
+      });
+
+      if (!missingDbsOrTables) {
+        this.saveDatabasesBackupToStorage(serverDbs);
+        return;
+      }
+
+      this.isRestoringClientBackup = true;
+      this.http
+        .post<{
+          ok: boolean;
+          restoredAny?: boolean;
+          activeDatabaseName?: string;
+          databases?: DbDatabaseSummary[];
+          activeTableName?: string;
+          tables?: DbTableSummary[];
+          columns?: GridColumn[];
+          rows?: GridRow[];
+        }>('/api/workspace/restore-client-backup', {
+          databases: parsed.databases,
+          activeDatabaseName: parsed.activeDatabaseName || this.activeDatabaseName(),
+          activeTableName: parsed.activeTableName || this.activeTableName(),
+        })
+        .subscribe({
+          next: (res) => {
+            this.isRestoringClientBackup = false;
+            if (res?.ok && Array.isArray(res.databases)) {
+              this.databases.set(res.databases);
+              this.syncTablesSignalForActiveDatabase(res.databases);
+              this.saveDatabasesBackupToStorage(res.databases);
+            }
+          },
+          error: () => {
+            this.isRestoringClientBackup = false;
+          },
+        });
+    } catch {
+      this.isRestoringClientBackup = false;
+    }
+  }
+
+  public refreshObjectExplorerTreeFromDb(forceRefresh = true): void {
     if (!this.isBrowser) return;
+    const url = forceRefresh ? '/api/workspace/tree?refresh=1' : '/api/workspace/tree';
     this.http
       .get<{
         ok: boolean;
+        serverName?: string;
+        serverEngine?: string;
+        serverLoginUser?: string;
+        isServerConnected?: boolean;
         activeDatabaseName?: string;
         activeTableName?: string;
         databases?: DbDatabaseSummary[];
         tables?: DbTableSummary[];
-      }>('/api/workspace/tree')
+      }>(url)
       .subscribe({
         next: (res) => {
-          if (res?.ok && Array.isArray(res.databases)) {
-            this.databases.set(res.databases);
-            this.syncTablesSignalForActiveDatabase(res.databases);
+          if (res?.ok) {
+            if (res.serverName) this.serverName.set(res.serverName);
+            if (res.serverEngine) this.serverEngine.set(res.serverEngine);
+            if (res.serverLoginUser) this.serverLoginUser.set(res.serverLoginUser);
+            if (res.isServerConnected !== undefined) {
+              this.isServerConnected.set(res.isServerConnected);
+            }
+            if (Array.isArray(res.databases)) {
+              this.databases.set(res.databases);
+              this.syncTablesSignalForActiveDatabase(res.databases);
+              this.checkAndRestoreClientBackupIfNeeded(res.databases);
+            }
           }
         },
         error: () => {
@@ -2188,13 +2402,17 @@ export class App implements OnInit, OnDestroy {
 
   public onSidebarContextMenu(
     event: MouseEvent,
-    targetType: 'databases_folder' | 'database' | 'table' | 'field',
+    targetType: 'server' | 'databases_folder' | 'database' | 'table' | 'field',
     databaseName = '',
     tableName = '',
     column: GridColumn | null = null
   ): void {
     event.preventDefault();
     event.stopPropagation();
+    if (this.longPressTimer) {
+      clearTimeout(this.longPressTimer);
+      this.longPressTimer = null;
+    }
     this.openSidebarContextMenuAt(
       event.clientX,
       event.clientY,
@@ -2207,11 +2425,12 @@ export class App implements OnInit, OnDestroy {
 
   public onSidebarTouchStart(
     event: TouchEvent,
-    targetType: 'databases_folder' | 'database' | 'table' | 'field',
+    targetType: 'server' | 'databases_folder' | 'database' | 'table' | 'field',
     databaseName = '',
     tableName = '',
     column: GridColumn | null = null
   ): void {
+    event.stopPropagation();
     if (this.longPressTimer) {
       clearTimeout(this.longPressTimer);
     }
@@ -2253,7 +2472,7 @@ export class App implements OnInit, OnDestroy {
   public openSidebarContextMenuAt(
     clientX: number,
     clientY: number,
-    targetType: 'databases_folder' | 'database' | 'table' | 'field',
+    targetType: 'server' | 'databases_folder' | 'database' | 'table' | 'field',
     databaseName: string,
     tableName: string,
     column: GridColumn | null
@@ -2707,8 +2926,367 @@ export class App implements OnInit, OnDestroy {
   }
 
   // =========================================================================
-  // MULTI-DATABASE ENGINE: CREATE DATABASE, SWITCH DATABASE & DROP DATABASE
+  // SQL SERVER LOGIN TO SERVER & MULTI-DATABASE ENGINE
   // =========================================================================
+
+  public openConnectServerModal(event?: Event): void {
+    event?.stopPropagation();
+    this.closeAllMenus();
+    this.connectServerErrorMessage.set('');
+    this.connectServerForm.patchValue({
+      serverType: 'Database Engine',
+      serverName: this.serverName() || 'localhost',
+      loginUser: this.serverLoginUser() || 'postgres',
+    });
+    this.activeModal.set('connect_server');
+  }
+
+  private parseConnStrIntoFormFields(rawInput: string): void {
+    const raw = rawInput.trim().replace(/^["']|["']$/g, '');
+    if (!raw) return;
+
+    if (
+      !raw.startsWith('postgres://') &&
+      !raw.startsWith('postgresql://') &&
+      /host\s*=/i.test(raw)
+    ) {
+      const kv = new Map<string, string>();
+      for (const part of raw.split(';')) {
+        const eq = part.indexOf('=');
+        if (eq <= 0) continue;
+        const k = part.slice(0, eq).trim().toLowerCase();
+        const v = part.slice(eq + 1).trim();
+        if (k) kv.set(k, v);
+      }
+      const host = kv.get('host') || kv.get('server') || kv.get('data source') || '';
+      const port = kv.get('port') || '5432';
+      const database = kv.get('database') || kv.get('initial catalog') || 'postgres';
+      const user =
+        kv.get('username') || kv.get('user id') || kv.get('uid') || kv.get('user') || 'postgres';
+      const password = kv.get('password') || kv.get('pwd') || '';
+      if (host) {
+        this.connectServerForm.patchValue(
+          {
+            serverName: host,
+            port,
+            databaseName: database,
+            loginUser: user,
+            ...(password ? { password } : {}),
+          },
+          { emitEvent: false }
+        );
+      }
+      return;
+    }
+
+    if (raw.startsWith('postgres://') || raw.startsWith('postgresql://')) {
+      try {
+        const m = raw.match(/^(postgres(?:ql)?:\/\/[^:]+:)(.+)(@[^@]+)$/);
+        const safeUri = m && m[2].includes('@') ? m[1] + encodeURIComponent(m[2]) + m[3] : raw;
+        const u = new URL(safeUri);
+        const host = u.hostname || '';
+        const port = u.port || '5432';
+        const database = decodeURIComponent((u.pathname || '').replace(/^\//, '') || 'postgres');
+        const user = decodeURIComponent(u.username || 'postgres');
+        const password = decodeURIComponent(u.password || '');
+        if (host) {
+          this.connectServerForm.patchValue(
+            {
+              serverName: host,
+              port,
+              databaseName: database,
+              loginUser: user,
+              ...(password ? { password } : {}),
+            },
+            { emitEvent: false }
+          );
+        }
+      } catch {
+        // Ignore partial URI while typing
+      }
+    }
+  }
+
+  public onConnectServerConnStrInput(): void {
+    const connStr = this.connectServerForm.controls.connectionString.value;
+    this.parseConnStrIntoFormFields(connStr);
+  }
+
+  public onConnectServerHostInput(): void {
+    const srv = this.connectServerForm.controls.serverName.value.trim();
+    if (
+      srv.startsWith('postgres://') ||
+      srv.startsWith('postgresql://') ||
+      /host\s*=/i.test(srv)
+    ) {
+      this.connectServerForm.patchValue({ connectionString: srv }, { emitEvent: false });
+      this.parseConnStrIntoFormFields(srv);
+    }
+  }
+
+  public submitConnectServerModal(): void {
+    if (this.isConnectingToServer()) return;
+    this.connectServerErrorMessage.set('');
+    const raw = this.connectServerForm.getRawValue();
+    const serverName = raw.serverName.trim();
+    const connStr = raw.connectionString.trim();
+    if (!serverName && !connStr) {
+      this.connectServerErrorMessage.set(
+        'Please enter a PostgreSQL / Supabase Server host or paste a Connection String.'
+      );
+      return;
+    }
+
+    this.isConnectingToServer.set(true);
+    this.http
+      .post<{
+        ok: boolean;
+        error?: string;
+        serverName?: string;
+        serverEngine?: string;
+        serverLoginUser?: string;
+        isServerConnected?: boolean;
+        activeDatabaseName?: string;
+        databases?: DbDatabaseSummary[];
+        activeTableName?: string;
+        tables?: DbTableSummary[];
+        columns?: GridColumn[];
+        rows?: GridRow[];
+        totalRows?: number;
+        filteredTotalRows?: number;
+        hasMore?: boolean;
+        uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
+        activities?: ActivityLogItem[];
+        stats?: {
+          databaseCount: number;
+          tableCount: number;
+          fieldCount: number;
+          rowCount?: number;
+        };
+      }>('/api/workspace/server/connect', {
+        serverName,
+        port: raw.port.trim() || '5432',
+        databaseName: raw.databaseName.trim() || 'postgres',
+        loginUser: raw.loginUser.trim() || 'postgres',
+        password: raw.password,
+        connectionString: connStr,
+        userName: this.currentUserName(),
+        userColor: this.currentUserColor(),
+      })
+      .subscribe({
+        next: (res) => {
+          this.isConnectingToServer.set(false);
+          if (!res?.ok) {
+            this.connectServerErrorMessage.set(
+              res?.error || 'Could not log in to the specified PostgreSQL / Supabase server.'
+            );
+            return;
+          }
+
+          this.serverName.set(res.serverName || serverName || 'localhost');
+          this.serverEngine.set(res.serverEngine || 'PostgreSQL 16.0');
+          this.serverLoginUser.set(res.serverLoginUser || raw.loginUser.trim() || 'postgres');
+          this.isServerConnected.set(true);
+
+          const allDbs = Array.isArray(res.databases) ? res.databases : [];
+          this.databases.set(allDbs);
+
+          const activeDb =
+            res.activeDatabaseName ||
+            allDbs[0]?.databaseName ||
+            this.activeDatabaseName() ||
+            'postgres';
+          const activeTbl =
+            res.activeTableName ||
+            allDbs.find((d) => d.databaseName.toLowerCase() === activeDb.toLowerCase())
+              ?.tables?.[0]?.tableName ||
+            '';
+
+          this.activeDatabaseName.set(activeDb);
+          this.syncTablesSignalForActiveDatabase(allDbs, activeDb);
+          this.activeTableName.set(activeTbl);
+
+          // Rebuild open table tabs and database tabs to reflect the newly connected server's objects
+          const nextOpenTablesMap: Record<string, string[]> = {};
+          for (const d of allDbs) {
+            const tblNames = (d.tables || []).map((t) => t.tableName);
+            if (tblNames.length > 0) {
+              nextOpenTablesMap[d.databaseName] = tblNames;
+            }
+          }
+          this.openTableTabsByDb.set(nextOpenTablesMap);
+
+          const nextDbTabs: DatabaseWorkspaceTab[] = allDbs.map((d, idx) => ({
+            tabId: `db_tab_${idx}_${d.databaseName}`,
+            databaseName: d.databaseName,
+            activeTableName: d.activeTableName || d.tables?.[0]?.tableName || '',
+          }));
+          if (nextDbTabs.length > 0) {
+            this.databaseTabs.set(nextDbTabs);
+            const activeTab =
+              nextDbTabs.find((t) => t.databaseName.toLowerCase() === activeDb.toLowerCase()) ||
+              nextDbTabs[0];
+            this.activeDatabaseTabId.set(activeTab.tabId);
+          }
+
+          const cols = Array.isArray(res.columns) ? res.columns : [];
+          const rows = Array.isArray(res.rows)
+            ? this.sanitizeClientRowsAgainstColumns(cols, res.rows)
+            : [];
+          this.columns.set(cols);
+          this.rows.set(rows);
+          this.snapshotValidRows(rows);
+          this.dbTotalRows.set(res.totalRows ?? rows.length);
+          this.dbFilteredTotalRows.set(res.filteredTotalRows ?? res.totalRows ?? rows.length);
+          this.dbHasMoreRows.set(Boolean(res.hasMore));
+          this.dbUniqueValuesByColumn.set(res.uniqueValuesByColumn || {});
+          if (Array.isArray(res.activities)) {
+            this.activities.set(res.activities);
+          }
+
+          // Expand server, databases, and tables tree nodes so all retrieved objects are visible
+          const dbSet = new Set<string>();
+          const tblSet = new Set<string>();
+          for (const d of allDbs) {
+            dbSet.add(d.databaseName);
+            for (const t of d.tables || []) {
+              tblSet.add(`${d.databaseName}::${t.tableName}`);
+            }
+          }
+          this.isServerNodeExpanded.set(true);
+          this.isDatabasesFolderExpanded.set(true);
+          this.expandedDatabaseNodes.set(dbSet);
+          this.expandedTableNodes.set(tblSet);
+          this.saveSidebarTreeStateToStorage();
+          this.saveDatabasesBackupToStorage(allDbs);
+          if (this.isBrowser) {
+            try {
+              localStorage.setItem(
+                this.serverConnectionStorageKey,
+                JSON.stringify({
+                  serverName: this.serverName(),
+                  port: raw.port.trim() || '5432',
+                  databaseName: raw.databaseName.trim() || 'postgres',
+                  loginUser: this.serverLoginUser(),
+                })
+              );
+            } catch {
+              // Ignore storage errors
+            }
+          }
+
+          this.activeModal.set('none');
+          const st = res.stats;
+          this.showBanner(
+            'success',
+            st
+              ? `Connected to "${this.serverName()}" (${this.serverLoginUser()}) — retrieved ${st.databaseCount} database(s), ${st.tableCount} table(s), ${st.fieldCount} field(s), and ${st.rowCount ?? rows.length} row(s).`
+              : `Connected to PostgreSQL server "${this.serverName()}".`
+          );
+        },
+        error: () => {
+          this.isConnectingToServer.set(false);
+          this.connectServerErrorMessage.set('Network error while connecting to server.');
+        },
+      });
+  }
+
+  public refreshServerAndRetrieveObjects(event?: Event): void {
+    event?.stopPropagation();
+    this.closeAllMenus();
+    const raw = this.connectServerForm.getRawValue();
+    this.http
+      .post<{
+        ok: boolean;
+        error?: string;
+        serverName?: string;
+        serverEngine?: string;
+        serverLoginUser?: string;
+        activeDatabaseName?: string;
+        databases?: DbDatabaseSummary[];
+        activeTableName?: string;
+        columns?: GridColumn[];
+        rows?: GridRow[];
+        totalRows?: number;
+        filteredTotalRows?: number;
+        hasMore?: boolean;
+        uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
+        stats?: {
+          databaseCount: number;
+          tableCount: number;
+          fieldCount: number;
+          rowCount?: number;
+        };
+      }>('/api/workspace/server/connect', {
+        serverName: this.serverName() || raw.serverName,
+        port: raw.port.trim() || '5432',
+        databaseName: raw.databaseName.trim() || 'postgres',
+        loginUser: this.serverLoginUser() || raw.loginUser,
+        password: raw.password,
+        connectionString: raw.connectionString.trim(),
+        userName: this.currentUserName(),
+        userColor: this.currentUserColor(),
+      })
+      .subscribe({
+        next: (res) => {
+          if (!res?.ok) {
+            this.showBanner(
+              'error',
+              res?.error || 'Could not refresh from PostgreSQL / Supabase server.'
+            );
+            return;
+          }
+          if (Array.isArray(res.databases)) {
+            if (res.serverName) this.serverName.set(res.serverName);
+            if (res.serverEngine) this.serverEngine.set(res.serverEngine);
+            if (res.serverLoginUser) this.serverLoginUser.set(res.serverLoginUser);
+            this.isServerConnected.set(true);
+            this.databases.set(res.databases);
+            this.syncTablesSignalForActiveDatabase(res.databases);
+            if (Array.isArray(res.columns) && Array.isArray(res.rows)) {
+              const sanitized = this.sanitizeClientRowsAgainstColumns(res.columns, res.rows);
+              this.columns.set(res.columns);
+              this.rows.set(sanitized);
+              this.snapshotValidRows(sanitized);
+              this.dbTotalRows.set(res.totalRows ?? sanitized.length);
+              this.dbFilteredTotalRows.set(
+                res.filteredTotalRows ?? res.totalRows ?? sanitized.length
+              );
+              this.dbHasMoreRows.set(Boolean(res.hasMore));
+            }
+            const dbSet = new Set<string>();
+            for (const d of res.databases) {
+              dbSet.add(d.databaseName);
+            }
+            this.isServerNodeExpanded.set(true);
+            this.isDatabasesFolderExpanded.set(true);
+            this.expandedDatabaseNodes.set(dbSet);
+            this.saveSidebarTreeStateToStorage();
+            const st = res.stats;
+            this.showBanner(
+              'success',
+              st
+                ? `Retrieved ${st.databaseCount} database(s), ${st.tableCount} table(s), ${st.fieldCount} field(s), and ${st.rowCount ?? 0} row(s) from "${this.serverName()}".`
+                : `Refreshed server "${this.serverName()}".`
+            );
+          }
+        },
+      });
+  }
+
+  public disconnectServerFromExplorer(event?: Event): void {
+    event?.stopPropagation();
+    this.closeAllMenus();
+    this.http.post('/api/workspace/server/disconnect', {}).subscribe({
+      next: () => {
+        this.isServerConnected.set(false);
+        this.showBanner('info', `Disconnected from server "${this.serverName()}". Click Connect to log in again.`);
+      },
+      error: () => {
+        this.isServerConnected.set(false);
+      },
+    });
+  }
 
   public openCreateDatabaseModal(event?: Event): void {
     event?.stopPropagation();
@@ -2821,6 +3399,15 @@ export class App implements OnInit, OnDestroy {
 
           this.activeModal.set('none');
           this.isManageSidebarOpen.set(true);
+          this.isServerNodeExpanded.set(true);
+          this.isDatabasesFolderExpanded.set(true);
+          this.expandedDatabaseNodes.update((prev) => {
+            const next = new Set(prev);
+            next.add(createdDb);
+            return next;
+          });
+          this.saveSidebarTreeStateToStorage();
+          this.saveDatabasesBackupToStorage(this.databases());
           this.showBanner(
             'success',
             `Created database "${createdDb}" and connected it in a new Database Tab.`
@@ -3228,6 +3815,7 @@ export class App implements OnInit, OnDestroy {
               if (Array.isArray(res.activities)) {
                 this.activities.set(res.activities);
               }
+              this.saveDatabasesBackupToStorage(this.databases());
               this.showBanner('info', `Dropped database "${databaseName}" from backend.`);
             },
             error: () => {
@@ -4524,8 +5112,6 @@ export class App implements OnInit, OnDestroy {
 
           const targetDbName = res.createdInDatabaseName || databaseName;
           const createdTableName = res.createdTableName || tableName;
-          const isTargetActiveDb =
-            targetDbName.toLowerCase() === this.activeDatabaseName().toLowerCase();
 
           if (Array.isArray(res.databases)) {
             this.databases.set(res.databases);
@@ -4589,6 +5175,13 @@ export class App implements OnInit, OnDestroy {
 
           this.editingTableOriginalName.set('');
           this.activeModal.set('none');
+          this.expandedDatabaseNodes.update((prev) => {
+            const next = new Set(prev);
+            next.add(targetDbName);
+            return next;
+          });
+          this.saveSidebarTreeStateToStorage();
+          this.saveDatabasesBackupToStorage(this.databases());
           this.showBanner(
             'success',
             `Created table "${createdTableName}" in database "${targetDbName}".`
@@ -4720,6 +5313,7 @@ export class App implements OnInit, OnDestroy {
               if (Array.isArray(res.activities)) {
                 this.activities.set(res.activities);
               }
+              this.saveDatabasesBackupToStorage(this.databases());
               this.showBanner('info', `Dropped table "${tableName}" from database "${dbName}".`);
             },
             error: () => {
@@ -4734,6 +5328,7 @@ export class App implements OnInit, OnDestroy {
     event?.stopPropagation();
     if (!this.isBrowser) return;
     const el =
+      document.getElementById('database-tabs-scroll-container') ||
       document.getElementById('excel-sheet-tabs-scroll-container') ||
       document.getElementById('sheetTabsScrollContainer');
     if (!el) return;
@@ -4752,8 +5347,16 @@ export class App implements OnInit, OnDestroy {
     colId: string | null,
     rowNumber: number | null = null
   ): void {
+    const targetEl = event.target as HTMLElement | null;
+    if (targetEl?.closest('.manage-sidebar-expanded, .manage-sidebar-collapsed')) {
+      return;
+    }
     event.preventDefault();
     event.stopPropagation();
+    if (this.longPressTimer) {
+      clearTimeout(this.longPressTimer);
+      this.longPressTimer = null;
+    }
     this.openContextMenuAt(event.clientX, event.clientY, targetType, rowId, colId, rowNumber);
   }
 
@@ -4764,6 +5367,10 @@ export class App implements OnInit, OnDestroy {
     colId: string | null,
     rowNumber: number | null = null
   ): void {
+    const targetEl = event.target as HTMLElement | null;
+    if (targetEl?.closest('.manage-sidebar-expanded, .manage-sidebar-collapsed')) {
+      return;
+    }
     if (this.longPressTimer) {
       clearTimeout(this.longPressTimer);
     }
@@ -5156,6 +5763,10 @@ export class App implements OnInit, OnDestroy {
       .executeCrud<{
         workspaceId: string;
         workspaceName: string;
+        serverName?: string;
+        serverEngine?: string;
+        serverLoginUser?: string;
+        isServerConnected?: boolean;
         activeDatabaseName?: string;
         databases?: DbDatabaseSummary[];
         activeTableName?: string;
@@ -5174,6 +5785,12 @@ export class App implements OnInit, OnDestroy {
       .subscribe({
         next: (res) => {
           if (res && Array.isArray(res.columns) && Array.isArray(res.rows)) {
+            if (res.serverName) this.serverName.set(res.serverName);
+            if (res.serverEngine) this.serverEngine.set(res.serverEngine);
+            if (res.serverLoginUser) this.serverLoginUser.set(res.serverLoginUser);
+            if (res.isServerConnected !== undefined) {
+              this.isServerConnected.set(res.isServerConnected);
+            }
             const activeDb =
               requestedDatabaseName || res.activeDatabaseName || this.activeDatabaseName() || 'GridPulse_DB';
             let activeTbl = res.activeTableName ?? '';
@@ -5207,6 +5824,7 @@ export class App implements OnInit, OnDestroy {
             if (Array.isArray(res.databases)) {
               this.databases.set(res.databases);
               this.syncTablesSignalForActiveDatabase(res.databases, activeDb);
+              this.checkAndRestoreClientBackupIfNeeded(res.databases);
             } else if (Array.isArray(res.tables)) {
               this.tables.set(res.tables);
             }
@@ -5362,13 +5980,18 @@ export class App implements OnInit, OnDestroy {
           } else {
             const existingIds = new Set(this.rows().map((r) => r.id));
             const appended = [...this.rows()];
+            const newlyAppendedIds: string[] = [];
             for (const incoming of sanitizedIncoming) {
               if (!existingIds.has(incoming.id)) {
                 appended.push(incoming);
+                newlyAppendedIds.push(incoming.id);
               }
             }
             this.rows.set(appended);
             this.visibleRowLimit.set(appended.length);
+            if (newlyAppendedIds.length > 0) {
+              this.markRowsForFadeIn(newlyAppendedIds);
+            }
           }
 
           this.dbTotalRows.set(res.totalRows);
@@ -6351,7 +6974,7 @@ export class App implements OnInit, OnDestroy {
 
   public onEditableCellBlur(rowId: string, colId: string, event?: FocusEvent): void {
     const el = (event?.target as HTMLElement | null) ?? null;
-    if (el instanceof HTMLSelectElement) {
+    if (el instanceof HTMLSelectElement || (el instanceof HTMLInputElement && el.type === 'date')) {
       return;
     }
     this.commitLiveCellDraft(rowId, colId, el);
@@ -6379,6 +7002,10 @@ export class App implements OnInit, OnDestroy {
       : null;
     // Stage the change in the row only; Redis will save when the user exits the row
     this.stageCellEditInRow(rowId, colId, newValue, selectEl);
+  }
+
+  public onDateCellChange(rowId: string, colId: string, newValue: string): void {
+    this.onSelectCellChange(rowId, colId, newValue);
   }
 
   public onCheckboxCellChange(
@@ -6602,8 +7229,8 @@ export class App implements OnInit, OnDestroy {
     const allCols = this.sortedColumns();
     const colsPool = wrapRowOnTab && editableCols.length > 0 ? editableCols : allCols;
 
-    let rIdx = visRows.findIndex((r) => r.id === currentRowId);
-    let cIdx = colsPool.findIndex((c) => c.id === currentColId);
+    const rIdx = visRows.findIndex((r) => r.id === currentRowId);
+    const cIdx = colsPool.findIndex((c) => c.id === currentColId);
     if (rIdx < 0 || cIdx < 0) return;
 
     let nextRIdx = rIdx + rowDelta;
@@ -6810,7 +7437,7 @@ export class App implements OnInit, OnDestroy {
 
   public onNewRowEditableCellBlur(colId: string, event?: FocusEvent): void {
     const el = (event?.target as HTMLElement | null) ?? null;
-    if (el instanceof HTMLSelectElement) {
+    if (el instanceof HTMLSelectElement || (el instanceof HTMLInputElement && el.type === 'date')) {
       return;
     }
     this.commitNewRowLiveCellDraft(colId, el);
@@ -6823,6 +7450,10 @@ export class App implements OnInit, OnDestroy {
     this.newRowLiveDraftMap.set(colId, newValue);
     this.commitNewRowLiveCellDraft(colId);
     this.formulaBarControl.setValue(newValue ?? '', { emitEvent: false });
+  }
+
+  public onNewRowDateChange(colId: string, newValue: string): void {
+    this.onNewRowSelectChange(colId, newValue);
   }
 
   public commitNewRowLiveCellDraft(colId: string, domEl?: HTMLElement | null): void {
@@ -7087,11 +7718,157 @@ export class App implements OnInit, OnDestroy {
     this.openExcelPasteModal('append_rows');
   }
 
+  public markRowsForFadeIn(rowIds: string[]): void {
+    if (!rowIds || rowIds.length === 0) return;
+    this.animatedRowIds.update((prev) => {
+      const next = new Set(prev);
+      for (const id of rowIds) {
+        if (id) next.add(id);
+      }
+      return next;
+    });
+    if (this.isBrowser) {
+      setTimeout(() => {
+        this.animatedRowIds.update((prev) => {
+          const next = new Set(prev);
+          for (const id of rowIds) {
+            next.delete(id);
+          }
+          return next;
+        });
+      }, 650);
+    }
+  }
+
+  /**
+   * Performs a pre-submission validation check on the First Row's cell values using
+   * the existing `validateCellValue` logic and displays a custom modal alert if any
+   * fields are missing or invalid.
+   */
+  public validateNewRowPreSubmission(event?: Event, silentSuccess = false): boolean {
+    event?.stopPropagation();
+    this.commitAllNewRowLiveDrafts();
+    if (this.editingNewRowColId()) {
+      this.commitNewRowCellEdit(false);
+    }
+
+    const draft = this.newRowDraftCells();
+    const cols = this.sortedColumns();
+    const fieldErrors: Record<string, string> = {};
+    const issues: NewRowValidationIssue[] = [];
+    const editableCols = cols.filter(
+      (c) => !this.isProtectedIdColumn(c) && c.colType !== 'formula'
+    );
+    const hasAnyUserEntry = this.hasNewRowDraftValues();
+
+    for (const col of editableCols) {
+      const rawDraftVal =
+        draft[col.id] !== undefined
+          ? draft[col.id]
+          : draft[col.name] !== undefined
+          ? draft[col.name]
+          : undefined;
+
+      let candidateVal: unknown = rawDraftVal;
+      if (candidateVal === undefined || candidateVal === '') {
+        if (col.defaultValue !== undefined && String(col.defaultValue).trim() !== '') {
+          candidateVal = this.resolveColumnDefaultPrimitive(col, String(col.defaultValue));
+        } else if (col.colType === 'checkbox') {
+          candidateVal = false;
+        } else {
+          candidateVal = '';
+        }
+      }
+
+      const strCandidate =
+        candidateVal === null || candidateVal === undefined ? '' : String(candidateVal).trim();
+      const check = validateCellValue(this.getLiveLookupColumn(col), candidateVal);
+      if (!check.valid) {
+        const isMissing = strCandidate.length === 0;
+        fieldErrors[col.id] = check.errorMessage;
+        issues.push({
+          colId: col.id,
+          colName: col.name,
+          colType: col.colType,
+          issueType: isMissing ? 'missing' : 'invalid',
+          errorMessage: check.errorMessage,
+        });
+      }
+    }
+
+    // If the user explicitly clicked "Validate New Row" while the First Row is completely blank
+    // and no columns had defaults/values, alert that the First Row fields are missing
+    if (!hasAnyUserEntry && issues.length === 0 && editableCols.length > 0 && !silentSuccess) {
+      for (const col of editableCols) {
+        if (col.colType === 'checkbox') continue;
+        const rawDraftVal =
+          draft[col.id] !== undefined ? draft[col.id] : draft[col.name];
+        const hasDef = col.defaultValue !== undefined && String(col.defaultValue).trim() !== '';
+        if ((rawDraftVal === undefined || String(rawDraftVal).trim() === '') && !hasDef) {
+          const msg = `"${col.name}" is empty. Enter a value in the First Row before submitting.`;
+          fieldErrors[col.id] = msg;
+          issues.push({
+            colId: col.id,
+            colName: col.name,
+            colType: col.colType,
+            issueType: 'missing',
+            errorMessage: msg,
+          });
+        }
+      }
+    }
+
+    this.newRowValidationErrors.set(fieldErrors);
+
+    if (issues.length > 0) {
+      this.closeAllMenus();
+      this.newRowValidationModal.set({
+        visible: true,
+        isValid: false,
+        issues,
+      });
+      this.activeModal.set('validate_new_row');
+      return false;
+    }
+
+    this.newRowValidationModal.set({
+      visible: false,
+      isValid: true,
+      issues: [],
+    });
+
+    if (!silentSuccess) {
+      this.closeAllMenus();
+      this.showBanner(
+        'success',
+        `First Row pre-submission validation passed! All ${editableCols.length} field(s) are valid and ready to save.`
+      );
+    }
+    return true;
+  }
+
+  public closeValidateNewRowModal(focusFirstInvalid = false, event?: Event): void {
+    event?.stopPropagation();
+    const issues = this.newRowValidationModal().issues;
+    this.newRowValidationModal.update((prev) => ({ ...prev, visible: false }));
+    if (this.activeModal() === 'validate_new_row') {
+      this.activeModal.set('none');
+    }
+    if (focusFirstInvalid && issues.length > 0) {
+      this.focusFirstRowCellDom(issues[0].colId);
+    }
+  }
+
   public commitFirstRowAddRow(event?: Event): void {
     event?.stopPropagation();
     this.commitAllNewRowLiveDrafts();
     if (this.editingNewRowColId()) {
       this.commitNewRowCellEdit(false);
+    }
+
+    // Perform pre-submission validation check on the First Row's cell values
+    if (!this.validateNewRowPreSubmission(undefined, true)) {
+      return;
     }
 
     const draft = this.newRowDraftCells();
@@ -7160,6 +7937,7 @@ export class App implements OnInit, OnDestroy {
 
     this.recordHistorySnapshot('Add Row from First Row');
     this.rows.update((list) => [...list, createdRow]);
+    this.markRowsForFadeIn([createdRow.id]);
     this.visibleRowLimit.update((limit) => Math.max(this.lazyBatchSize, limit + 1));
     this.dbTotalRows.update((n) => n + 1);
     this.dbFilteredTotalRows.update((n) => n + 1);
@@ -7306,6 +8084,7 @@ export class App implements OnInit, OnDestroy {
     this.visibleRowLimit.update((limit) =>
       Math.max(this.lazyBatchSize, limit + addedRowIds.length, this.rows().length)
     );
+    this.markRowsForFadeIn(addedRowIds);
     this.dbTotalRows.update((n) => n + addedRowIds.length);
     this.dbFilteredTotalRows.update((n) => n + addedRowIds.length);
 
@@ -7785,6 +8564,7 @@ export class App implements OnInit, OnDestroy {
 
         this.recordHistorySnapshot('Add New Row');
         this.rows.update((list) => [newRow, ...list]);
+        this.markRowsForFadeIn([newRow.id]);
         this.visibleRowLimit.update((limit) => Math.max(this.lazyBatchSize, limit + 1));
         this.dbTotalRows.update((n) => n + 1);
         this.dbFilteredTotalRows.update((n) => n + 1);
@@ -7886,6 +8666,7 @@ export class App implements OnInit, OnDestroy {
 
         this.recordHistorySnapshot('Create New Row');
         this.rows.update((list) => [newRow, ...list]);
+        this.markRowsForFadeIn([newRow.id]);
         this.activeModal.set('none');
         this.selectCell(newRow.id, cols[0]?.id || 'ID');
         this.persistToCloud(
@@ -7972,6 +8753,7 @@ export class App implements OnInit, OnDestroy {
         }));
 
         this.rows.set(reindexed);
+        this.markRowsForFadeIn(duplicatedRows.map((r) => r.id));
         this.visibleRowLimit.update((limit) => limit + duplicatedRows.length);
         this.persistToCloud(
           'Rows Duplicated',
@@ -9600,7 +10382,9 @@ export class App implements OnInit, OnDestroy {
       (r.condition !== 'none' &&
         (r.condition === 'empty' ||
           r.condition === 'not_empty' ||
-          r.queryValue.trim().length > 0))
+          r.queryValue.trim().length > 0 ||
+          ((r.condition === 'date_range' || r.condition === 'between') &&
+            r.queryValueEnd.trim().length > 0)))
     );
   }
 
@@ -9669,8 +10453,15 @@ export class App implements OnInit, OnDestroy {
     if (this.visibleRowLimit() < this.filteredAndSortedRows().length) {
       this.isLazyLoadingMore.set(true);
       setTimeout(() => {
-        const nextLimit = this.visibleRowLimit() + this.lazyBatchSize;
+        const prevLimit = this.visibleRowLimit();
+        const nextLimit = prevLimit + this.lazyBatchSize;
+        const newlyRevealedIds = this.filteredAndSortedRows()
+          .slice(prevLimit, nextLimit)
+          .map((r) => r.id);
         this.visibleRowLimit.set(nextLimit);
+        if (newlyRevealedIds.length > 0) {
+          this.markRowsForFadeIn(newlyRevealedIds);
+        }
         this.isLazyLoadingMore.set(false);
         if (nextLimit > this.filteredAndSortedRows().length && this.dbHasMoreRows()) {
           this.queryDatabaseRows(false);
@@ -11576,7 +12367,7 @@ export class App implements OnInit, OnDestroy {
   }
 
   /**
-   * Immediately hides the lightweight hover tooltip and cancels any active 1-second auto-hide timer.
+   * Tooltips are disabled across the application.
    */
   public clearActionTooltip(): void {
     if (this.actionHoverTimerId) {
@@ -11587,142 +12378,11 @@ export class App implements OnInit, OnDestroy {
     if (this.actionTooltip().visible) {
       this.actionTooltip.update((t) => ({ ...t, visible: false }));
     }
+    if (this.overflowTooltip().visible) {
+      this.overflowTooltip.update((t) => ({ ...t, visible: false }));
+    }
   }
 
-  /**
-   * Inspects any hovered toolbar icon or interactive control and returns its lightweight tooltip text.
-   */
-  private resolveActionTooltipExplanation(el: HTMLElement): string {
-    // Preserve native title attribute in data-gridario-tip and strip native title so browser tooltip never conflicts
-    const rawTitle = el.getAttribute('title');
-    if (rawTitle !== null) {
-      if (rawTitle.trim()) {
-        el.setAttribute('data-gridario-tip', rawTitle.trim());
-      }
-      el.removeAttribute('title');
-    }
-    // Also strip ancestor title attributes if present so native browser tooltip never overlaps
-    let parentWithTitle = el.parentElement;
-    while (parentWithTitle) {
-      const pTitle = parentWithTitle.getAttribute('title');
-      if (pTitle !== null) {
-        if (pTitle.trim() && !parentWithTitle.getAttribute('data-gridario-tip')) {
-          parentWithTitle.setAttribute('data-gridario-tip', pTitle.trim());
-        }
-        parentWithTitle.removeAttribute('title');
-      }
-      parentWithTitle = parentWithTitle.parentElement;
-    }
-
-    // If element has a concise Office toolbar tooltip (data-office-tip), return it directly for a lightweight Office tooltip
-    const officeTip = (el.getAttribute('data-office-tip') || '').trim();
-    if (officeTip) {
-      return officeTip;
-    }
-
-    const explicitTip = (
-      el.getAttribute('data-tooltip') ||
-      el.getAttribute('data-gridario-tip') ||
-      el.getAttribute('aria-label') ||
-      ''
-    ).trim();
-
-    if (explicitTip) {
-      if (el.closest('.gridario-office-ribbon')) {
-        return explicitTip;
-      }
-      return this.formatFriendlyActionTooltip(explicitTip, el);
-    }
-
-    const tag = el.tagName.toLowerCase();
-
-    if (tag === 'input') {
-      const inp = el as HTMLInputElement;
-      const inputType = (inp.type || 'text').toLowerCase();
-      if (inputType === 'checkbox') {
-        return 'Toggle option';
-      }
-      if (inputType === 'radio') {
-        return 'Select option';
-      }
-      if (inputType === 'color') {
-        return 'Choose color';
-      }
-      if (inputType === 'number') {
-        return 'Enter numeric value';
-      }
-      if (inputType === 'date') {
-        return 'Select date (YYYY-MM-DD)';
-      }
-      const placeholder = (inp.placeholder || '').trim();
-      if (placeholder) {
-        return placeholder;
-      }
-      return 'Enter text';
-    }
-
-    if (tag === 'textarea') {
-      const ta = el as HTMLTextAreaElement;
-      const placeholder = (ta.placeholder || '').trim();
-      if (placeholder) {
-        return placeholder;
-      }
-      return 'Enter text';
-    }
-
-    if (tag === 'select') {
-      const sel = el as HTMLSelectElement;
-      const selectedOpt = sel.options?.[sel.selectedIndex]?.text?.trim() || '';
-      if (selectedOpt) {
-        return `Select option (${selectedOpt})`;
-      }
-      return 'Choose option';
-    }
-
-    if (tag === 'a') {
-      const linkText = (el.textContent || '').replace(/\s+/g, ' ').trim();
-      if (linkText) {
-        return linkText;
-      }
-      return 'Open link';
-    }
-
-    if (el.classList.contains('gridario-col-resizer')) {
-      return 'Drag to resize column (Double-click to auto-fit)';
-    }
-    if (
-      el.classList.contains('gridpulse-split-handle-horizontal') ||
-      el.classList.contains('gridpulse-split-handle-vertical')
-    ) {
-      return 'Drag to resize panel';
-    }
-
-    // Clone text without material icon ligature names
-    const clone = el.cloneNode(true) as HTMLElement;
-    clone.querySelectorAll('mat-icon, .material-icons').forEach((iconNode) => iconNode.remove());
-    const cleanText = (clone.textContent || '').replace(/\s+/g, ' ').trim();
-    if (cleanText) {
-      return cleanText;
-    }
-
-    return '';
-  }
-
-  /**
-   * Formats raw titles, labels, or placeholders into a concise, lightweight label.
-   */
-  private formatFriendlyActionTooltip(raw: string, _el: HTMLElement): string {
-    const cleaned = raw.replace(/\s+/g, ' ').trim();
-    if (!cleaned) return '';
-    return cleaned;
-  }
-
-  /**
-   * Classic Office lightweight hover tooltip:
-   * - Displays text immediately when hovering over a toolbar icon or interactive element.
-   * - Disappears immediately once hover ends (mouse leaves the element).
-   * - Also disappears automatically if hovered continuously for more than 1 second (1000ms).
-   */
   public onGlobalMouseOver(event: MouseEvent): void {
     if (!this.isBrowser) return;
     const rawTarget = event.target as HTMLElement | null;
@@ -11731,160 +12391,23 @@ export class App implements OnInit, OnDestroy {
     this.lastMouseX = event.clientX;
     this.lastMouseY = event.clientY;
 
-    // 1. Handle lightweight Office hover tooltip (shows on hover, hides on mouse leave OR after 1 second)
-    const interactiveEl = rawTarget.closest(
-      '.gridario-toolbar-icon-btn, button, a, input, select, textarea, [role="button"], [role="separator"], [data-office-tip], [data-tooltip], [data-gridario-tip], .excel-sheet-tab, .manage-tree-row, .gridario-col-resizer, .gridpulse-split-handle-horizontal, .gridpulse-split-handle-vertical'
-    ) as HTMLElement | null;
-
-    if (interactiveEl !== this.hoveredInteractiveEl) {
-      if (this.actionHoverTimerId) {
-        clearTimeout(this.actionHoverTimerId);
-        this.actionHoverTimerId = null;
+    // Strip any native title attributes on hovered element or ancestors so browser tooltips never appear
+    let el: HTMLElement | null = rawTarget;
+    while (el) {
+      if (el.hasAttribute('title')) {
+        el.removeAttribute('title');
       }
-      this.hoveredInteractiveEl = interactiveEl;
-
-      if (interactiveEl) {
-        const explanation = this.resolveActionTooltipExplanation(interactiveEl);
-        if (explanation) {
-          const vw = window.innerWidth || 1280;
-          const vh = window.innerHeight || 800;
-          const rect = interactiveEl.getBoundingClientRect();
-          const isToolbarBtn = Boolean(
-            interactiveEl.classList.contains('gridario-toolbar-icon-btn') ||
-              interactiveEl.closest('.gridario-office-ribbon')
-          );
-          const x = isToolbarBtn
-            ? Math.max(8, Math.min(rect.left, vw - 260))
-            : Math.max(8, Math.min(event.clientX + 10, vw - 280));
-          const y = isToolbarBtn
-            ? Math.max(8, Math.min(rect.bottom + 5, vh - 48))
-            : Math.max(8, Math.min(event.clientY + 18, vh - 48));
-
-          this.actionTooltip.set({
-            visible: true,
-            text: explanation,
-            x,
-            y,
-          });
-
-          // Automatically hide the tooltip if user continues hovering for more than 1 second (1000ms)
-          this.actionHoverTimerId = setTimeout(() => {
-            if (this.hoveredInteractiveEl === interactiveEl && this.actionTooltip().visible) {
-              this.actionTooltip.update((t) => ({ ...t, visible: false }));
-            }
-            this.actionHoverTimerId = null;
-          }, 1000);
-        } else if (this.actionTooltip().visible) {
-          this.actionTooltip.update((t) => ({ ...t, visible: false }));
-        }
-      } else if (this.actionTooltip().visible) {
-        this.actionTooltip.update((t) => ({ ...t, visible: false }));
-      }
-    }
-
-    // 2. Handle smart overflow tooltip for truncated table cells & sidebar items
-    const candidate = rawTarget.closest(
-      'td, th, .manage-tree-row, .ssms-db-selector, .excel-sheet-tab, .truncate'
-    ) as HTMLElement | null;
-    if (!candidate) {
-      if (this.overflowTooltip().visible) {
-        this.overflowTooltip.update((t) => ({ ...t, visible: false }));
-      }
-      return;
-    }
-
-    let fullText = '';
-    let isOverflowing = false;
-
-    // Check if an <input> or <select> inside is overflowing
-    if (rawTarget instanceof HTMLInputElement && rawTarget.type === 'text') {
-      if (rawTarget.scrollWidth > rawTarget.clientWidth + 1 && rawTarget.value.trim()) {
-        isOverflowing = true;
-        fullText = rawTarget.value.trim();
-      }
-    }
-
-    if (!isOverflowing) {
-      // Check candidate and any .truncate child elements inside candidate
-      const truncateNodes: HTMLElement[] = [];
-      if (candidate.classList.contains('truncate')) {
-        truncateNodes.push(candidate);
-      }
-      candidate.querySelectorAll('.truncate').forEach((node) => {
-        if (node instanceof HTMLElement) {
-          truncateNodes.push(node);
-        }
-      });
-
-      for (const el of truncateNodes) {
-        if (el.scrollWidth > el.clientWidth + 1) {
-          isOverflowing = true;
-          const txt = (el.textContent || '').replace(/\s+/g, ' ').trim();
-          if (txt) {
-            fullText = txt;
-            break;
-          }
-        }
-      }
-
-      if (!isOverflowing && candidate.scrollWidth > candidate.clientWidth + 2) {
-        const txt = (candidate.textContent || '').replace(/\s+/g, ' ').trim();
-        if (txt) {
-          isOverflowing = true;
-          fullText = txt;
-        }
-      }
-    }
-
-    if (isOverflowing && fullText) {
-      const vw = window.innerWidth || 1280;
-      const vh = window.innerHeight || 800;
-      const x = Math.max(12, Math.min(event.clientX + 12, vw - 360));
-      const y = Math.max(12, Math.min(event.clientY + 18, vh - 80));
-      this.overflowTooltip.set({
-        visible: true,
-        text: fullText,
-        x,
-        y,
-      });
-    } else if (this.overflowTooltip().visible) {
-      this.overflowTooltip.update((t) => ({ ...t, visible: false }));
+      el = el.parentElement;
     }
   }
 
   public onGlobalMouseMove(event: MouseEvent): void {
     this.lastMouseX = event.clientX;
     this.lastMouseY = event.clientY;
-    const vw = this.isBrowser ? window.innerWidth : 1280;
-    const vh = this.isBrowser ? window.innerHeight : 800;
-
-    if (
-      this.actionTooltip().visible &&
-      this.hoveredInteractiveEl &&
-      !this.hoveredInteractiveEl.classList.contains('gridario-toolbar-icon-btn') &&
-      !this.hoveredInteractiveEl.closest('.gridario-office-ribbon')
-    ) {
-      const ax = Math.max(8, Math.min(event.clientX + 10, vw - 280));
-      const ay = Math.max(8, Math.min(event.clientY + 18, vh - 48));
-      this.actionTooltip.update((t) => ({ ...t, x: ax, y: ay }));
-    }
-
-    if (!this.overflowTooltip().visible) return;
-    const x = Math.max(12, Math.min(event.clientX + 12, vw - 360));
-    const y = Math.max(12, Math.min(event.clientY + 18, vh - 80));
-    this.overflowTooltip.update((t) => ({ ...t, x, y }));
   }
 
-  public onGlobalMouseOut(event: MouseEvent): void {
-    const related = event.relatedTarget as HTMLElement | null;
-    if (this.hoveredInteractiveEl) {
-      if (!related || !this.hoveredInteractiveEl.contains(related)) {
-        this.clearActionTooltip();
-      }
-    }
-    if (!related && this.overflowTooltip().visible) {
-      this.overflowTooltip.update((t) => ({ ...t, visible: false }));
-    }
+  public onGlobalMouseOut(): void {
+    // Tooltips disabled
   }
 }
 

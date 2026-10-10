@@ -10,8 +10,10 @@
     <div
       class="gridario-loader-overlay d-flex align-items-center justify-content-center"
       (click)="$event.stopPropagation(); $event.preventDefault()"
+      (keydown)="$event.stopPropagation(); $event.preventDefault()"
       (mousedown)="$event.stopPropagation(); $event.preventDefault()"
       (contextmenu)="$event.stopPropagation(); $event.preventDefault()"
+      tabindex="-1"
       role="alertdialog"
       aria-busy="true"
       aria-live="polite"
@@ -211,17 +213,17 @@
           <div class="pt-2 mb-2 border-t border-slate-200 d-flex align-items-center justify-content-between gap-2">
             <span class="text-slate-600 font-semibold" style="font-size: 11px">Display mode :</span>
             <div class="d-inline-flex align-items-center gap-2">
-              <button
-                type="button"
+              <mat-icon
+                role="button"
+                tabindex="0"
+                aria-label="Light mode"
                 (click)="setTheme('classic-light', $event)"
-                class="btn btn-sm p-0 border-0 bg-transparent text-xs cursor-pointer"
-                [class.font-bold]="!isDarkMode()"
-                [class.text-slate-900]="!isDarkMode()"
-                [class.text-slate-400]="isDarkMode()"
-                data-office-tip="Switch to Classic Light mode"
+                (keydown.enter)="setTheme('classic-light', $event)"
+                class="cursor-pointer select-none text-amber-600"
+                style="color: #FBBC05 !important; font-size: 18px; width: 18px; height: 18px; min-width: 18px; min-height: 18px"
               >
-                Light
-              </button>
+                light_mode
+              </mat-icon>
 
               <button
                 type="button"
@@ -230,23 +232,22 @@
                 (click)="toggleLightDarkTheme($event)"
                 class="gridario-theme-switch-btn p-0 border-0 position-relative rounded-full cursor-pointer transition-all"
                 [class.is-dark]="isDarkMode()"
-                data-office-tip="Toggle Light or Dark mode"
                 aria-label="Toggle Light or Dark display mode"
               >
                 <span class="gridario-theme-switch-thumb rounded-full"></span>
               </button>
 
-              <button
-                type="button"
+              <mat-icon
+                role="button"
+                tabindex="0"
+                aria-label="Dark mode"
                 (click)="setTheme('classic-dark', $event)"
-                class="btn btn-sm p-0 border-0 bg-transparent text-xs cursor-pointer"
-                [class.font-bold]="isDarkMode()"
-                [class.text-slate-900]="isDarkMode()"
-                [class.text-slate-400]="!isDarkMode()"
-                data-office-tip="Switch to Classic Dark mode"
+                (keydown.enter)="setTheme('classic-dark', $event)"
+                class="cursor-pointer select-none text-blue-600"
+                style="color: #4285F4 !important; font-size: 18px; width: 18px; height: 18px; min-width: 18px; min-height: 18px"
               >
-                Dark
-              </button>
+                dark_mode
+              </mat-icon>
             </div>
           </div>
 
@@ -642,6 +643,17 @@
               <button
                 type="button"
                 data-first-row-reset="true"
+                (click)="clearActionTooltip(); validateNewRowPreSubmission($event)"
+                class="gridario-ribbon-tall-btn"
+                data-office-tip="Validate New Row (Pre-Submission Check on First Row Cell Values)"
+              >
+                <mat-icon style="color: #4285F4">fact_check</mat-icon>
+                <span>Validate New Row</span>
+              </button>
+
+              <button
+                type="button"
+                data-first-row-reset="true"
                 [disabled]="!hasNewRowDraftValues()"
                 (click)="clearActionTooltip(); commitFirstRowAddRow($event)"
                 class="gridario-ribbon-tall-btn is-success"
@@ -979,6 +991,9 @@
     @if (isRibbonPasteMenuOpen() && !isRibbonCollapsed()) {
       <div
         (click)="$event.stopPropagation()"
+        (keydown)="$event.stopPropagation()"
+        tabindex="-1"
+        role="menu"
         class="position-absolute top-100 mt-0.5 rounded-lg bg-white border border-slate-300 shadow-lg py-1.5 z-50"
         style="left: 195px; min-width: 220px"
       >
@@ -1143,22 +1158,35 @@
           <!-- Row 1: Icon Strip (Connect Status | Refresh | Expand All | Collapse All | New DB) + Filter Search -->
           <div class="d-flex align-items-center justify-content-between gap-1">
             <div class="d-flex align-items-center gap-0.5 shrink-0">
-              <span
-                class="ssms-toolbar-btn"
-                title="Connected to Gridario Server Engine"
-                style="cursor: default"
+              <button
+                type="button"
+                (click)="openConnectServerModal($event)"
+                class="ssms-toolbar-btn d-inline-flex align-items-center gap-1 px-1.5"
+                style="width: auto"
+                aria-label="Connect to Server"
               >
-                <mat-icon style="color: #34A853">dns</mat-icon>
-              </span>
+                <mat-icon [style.color]="isServerConnected() ? '#34A853' : '#4285F4'">power</mat-icon>
+                <span class="text-[11px] font-semibold text-slate-900">Connect</span>
+              </button>
+
+              @if (isServerConnected()) {
+                <button
+                  type="button"
+                  (click)="disconnectServerFromExplorer($event)"
+                  class="ssms-toolbar-btn"
+                  aria-label="Disconnect Server"
+                >
+                  <mat-icon style="color: #EA4335">link_off</mat-icon>
+                </button>
+              }
 
               <span class="text-slate-300 mx-0.5" style="font-size: 11px">|</span>
 
               <button
                 type="button"
-                (click)="refreshTableData($event)"
+                (click)="refreshServerAndRetrieveObjects($event)"
                 class="ssms-toolbar-btn"
-                title="Refresh Object Explorer (F5)"
-                aria-label="Refresh Object Explorer"
+                aria-label="Retrieve All Databases, Tables and Fields from Server"
               >
                 <mat-icon style="color: #4285F4">sync</mat-icon>
               </button>
@@ -1167,7 +1195,6 @@
                 type="button"
                 (click)="expandAllManageTree($event)"
                 class="ssms-toolbar-btn"
-                title="Expand All Nodes"
                 aria-label="Expand All Nodes"
               >
                 <mat-icon style="color: #4285F4">unfold_more</mat-icon>
@@ -1177,7 +1204,6 @@
                 type="button"
                 (click)="collapseAllManageTree($event)"
                 class="ssms-toolbar-btn"
-                title="Collapse All Nodes"
                 aria-label="Collapse All Nodes"
               >
                 <mat-icon style="color: #4285F4">unfold_less</mat-icon>
@@ -1189,7 +1215,6 @@
                 type="button"
                 (click)="openCreateDatabaseModal($event)"
                 class="ssms-toolbar-btn"
-                title="New Database..."
                 aria-label="New Database"
               >
                 <mat-icon style="color: #FBBC05">create_new_folder</mat-icon>
@@ -1212,7 +1237,6 @@
                   type="button"
                   (click)="clearManageTreeSearch()"
                   class="btn btn-sm p-0 border-0 bg-transparent text-slate-900 position-absolute end-0 me-1 d-inline-flex align-items-center"
-                  title="Clear object filter"
                 >
                   <mat-icon style="color: #EA4335">close</mat-icon>
                 </button>
@@ -1225,39 +1249,86 @@
         <div
           class="manage-tree-scroll flex-grow-1 min-h-0"
           [class.is-resizing-pane]="isDraggingSidebarHeight()"
+          (contextmenu)="onSidebarContextMenu($event, 'server')"
         >
-          <!-- Root Gridario Server Instance Node -->
+          @if (!isServerConnected()) {
+            <div class="p-3 m-2 rounded-lg border border-slate-300 bg-slate-50 text-center d-flex flex-column align-items-center gap-2">
+              <mat-icon style="font-size: 26px; width: 26px; height: 26px; color: #4285F4">dns</mat-icon>
+              <div class="text-xs font-bold text-slate-800">Not Connected to Server</div>
+              <div class="text-[11px] text-slate-600">
+                Log in to a database server to retrieve its server name, databases, tables, and fields.
+              </div>
+              <button
+                type="button"
+                (click)="openConnectServerModal($event)"
+                class="btn btn-sm btn-primary d-inline-flex align-items-center gap-1 text-xs font-semibold px-3 mt-1"
+              >
+                <mat-icon>power</mat-icon>
+                <span>Connect to Server...</span>
+              </button>
+            </div>
+          } @else {
+          <!-- Root SQL Server Instance Node (Populated from Database after Login) -->
           <div
-            class="manage-tree-row d-flex align-items-center gap-2 text-slate-900 font-semibold cursor-pointer"
+            class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 text-slate-900 font-semibold cursor-pointer"
             style="font-size: 12.5px"
             (click)="toggleServerNode($event)"
             (keydown.enter)="toggleServerNode($event)"
+            (contextmenu)="onSidebarContextMenu($event, 'server')"
+            (touchstart)="onSidebarTouchStart($event, 'server')"
+            (touchend)="onSidebarTouchEndOrMove()"
+            (touchmove)="onSidebarTouchEndOrMove()"
             tabindex="0"
           >
-            <button
-              type="button"
-              (click)="toggleServerNode($event)"
-              class="ssms-expander"
-              [title]="isServerRootNodeExpanded() ? 'Collapse Server' : 'Expand Server'"
-            >
-              {{ isServerRootNodeExpanded() ? '−' : '+' }}
-            </button>
-            <div class="position-relative d-inline-flex align-items-center justify-content-center shrink-0">
-              <mat-icon style="color: #4285F4">dns</mat-icon>
-              <span
-                class="position-absolute bottom-0 end-0 rounded-full"
-                style="width: 6px; height: 6px; background-color: #34A853; border: 1px solid #FFFFFF"
-              ></span>
+            <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
+              <button
+                type="button"
+                (click)="toggleServerNode($event)"
+                class="ssms-expander"
+              >
+                {{ isServerRootNodeExpanded() ? '−' : '+' }}
+              </button>
+              <div class="position-relative d-inline-flex align-items-center justify-content-center shrink-0">
+                <mat-icon style="color: #4285F4">dns</mat-icon>
+                <span
+                  class="position-absolute bottom-0 end-0 rounded-full"
+                  style="width: 6px; height: 6px; background-color: #34A853; border: 1px solid #FFFFFF"
+                ></span>
+              </div>
+              <span class="truncate">
+                {{ serverName() || 'localhost' }}
+                <span class="font-normal">
+                  ({{ serverEngine() || 'PostgreSQL 16.0' }}{{ serverLoginUser() ? ' - ' + serverLoginUser() : '' }})
+                </span>
+              </span>
             </div>
-            <span class="truncate" title="Gridario Server Instance (Connected)">
-              GRIDARIOSERVER <span class="font-normal">(Gridario Server 16.0)</span>
-            </span>
+            <div class="manage-node-actions d-flex align-items-center gap-1 shrink-0">
+              <button
+                type="button"
+                (click)="refreshServerAndRetrieveObjects($event)"
+                class="ssms-action-icon-btn ssms-action-edit"
+                aria-label="Retrieve all databases, tables, and fields from server"
+              >
+                <mat-icon>sync</mat-icon>
+              </button>
+              <button
+                type="button"
+                (click)="openConnectServerModal($event)"
+                class="ssms-action-icon-btn ssms-action-add"
+                aria-label="Connect or switch database server"
+              >
+                <mat-icon>power</mat-icon>
+              </button>
+            </div>
           </div>
 
           <!-- Level 1 Branch under Server Instance: Databases Folder -->
           @if (isServerRootNodeExpanded()) {
             <div class="manage-tree-branch mt-1">
-              <div class="ssms-tree-node-wrapper">
+              <div
+                class="ssms-tree-node-wrapper"
+                (contextmenu)="onSidebarContextMenu($event, 'databases_folder')"
+              >
                 <div
                   class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
                   (click)="toggleDatabasesFolderNode($event)"
@@ -1273,7 +1344,6 @@
                       type="button"
                       (click)="toggleDatabasesFolderNode($event)"
                       class="ssms-expander"
-                      [title]="isDatabasesFolderNodeExpanded() ? 'Collapse Databases folder' : 'Expand Databases folder'"
                     >
                       {{ isDatabasesFolderNodeExpanded() ? '−' : '+' }}
                     </button>
@@ -1291,7 +1361,6 @@
                     type="button"
                     (click)="openCreateDatabaseModal($event)"
                     class="ssms-action-icon-btn ssms-action-add shrink-0"
-                    title="New Database..."
                     aria-label="New Database"
                   >
                     <mat-icon>add</mat-icon>
@@ -1304,7 +1373,10 @@
                     @for (db of filteredManageDatabases(); track db.databaseName) {
                   @let isDbActive = db.databaseName.toLowerCase() === activeDatabaseName().toLowerCase();
                   @let isDbExpanded = isDatabaseNodeExpanded(db.databaseName);
-                  <div class="ssms-tree-node-wrapper">
+                  <div
+                    class="ssms-tree-node-wrapper"
+                    (contextmenu)="onSidebarContextMenu($event, 'database', db.databaseName)"
+                  >
                     <!-- Database Node Row -->
                     <div
                       class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
@@ -1322,7 +1394,6 @@
                           type="button"
                           (click)="toggleDatabaseNode(db.databaseName, $event)"
                           class="ssms-expander"
-                          [title]="isDbExpanded ? 'Collapse ' + db.databaseName : 'Expand ' + db.databaseName"
                         >
                           {{ isDbExpanded ? '−' : '+' }}
                         </button>
@@ -1336,7 +1407,6 @@
                           class="truncate"
                           [class.font-bold]="isDbActive"
                           style="font-size: 12.5px"
-                          [title]="'Database: ' + db.databaseName + ' (Right-click or long-press for options)'"
                         >
                           {{ db.databaseName }}
                         </span>
@@ -1347,7 +1417,6 @@
                           type="button"
                           (click)="openCreateTableForDatabaseFromTree(db.databaseName, $event)"
                           class="ssms-action-icon-btn ssms-action-add"
-                          [title]="'New Table in ' + db.databaseName"
                         >
                           <mat-icon>add</mat-icon>
                         </button>
@@ -1355,7 +1424,6 @@
                           type="button"
                           (click)="openRenameSidebarModal('database', db.databaseName, '', null, $event)"
                           class="ssms-action-icon-btn ssms-action-edit"
-                          [title]="'Rename database ' + db.databaseName"
                         >
                           <mat-icon>edit</mat-icon>
                         </button>
@@ -1364,7 +1432,6 @@
                             type="button"
                             (click)="deleteDatabase(db.databaseName, $event)"
                             class="ssms-action-icon-btn ssms-action-danger"
-                            [title]="'Delete database ' + db.databaseName"
                           >
                             <mat-icon>delete_outline</mat-icon>
                           </button>
@@ -1379,7 +1446,10 @@
                           @let isTblActive = isDbActive && tbl.tableName.toLowerCase() === activeTableName().toLowerCase();
                           @let isTblExpanded = isTableNodeExpanded(db.databaseName, tbl.tableName);
                           @let tblCols = getColumnsForManageTable(db.databaseName, tbl);
-                          <div class="ssms-tree-node-wrapper">
+                          <div
+                            class="ssms-tree-node-wrapper"
+                            (contextmenu)="onSidebarContextMenu($event, 'table', db.databaseName, tbl.tableName)"
+                          >
                             <!-- Table Node Row -->
                             <div
                               class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
@@ -1388,7 +1458,7 @@
                               (dblclick)="selectTableFromContextMenu(db.databaseName, tbl.tableName, $event)"
                               (keydown.enter)="selectTableFromTree(db.databaseName, tbl.tableName, $event)"
                               (contextmenu)="onSidebarContextMenu($event, 'table', db.databaseName, tbl.tableName)"
-                              (touchstart)="onTouchStart($event, 'table', db.databaseName, tbl.tableName)"
+                              (touchstart)="onSidebarTouchStart($event, 'table', db.databaseName, tbl.tableName)"
                               (touchend)="onSidebarTouchEndOrMove()"
                               (touchmove)="onSidebarTouchEndOrMove()"
                               tabindex="0"
@@ -1398,7 +1468,6 @@
                                   type="button"
                                   (click)="toggleTableNode(db.databaseName, tbl.tableName, $event)"
                                   class="ssms-expander"
-                                  [title]="isTblExpanded ? 'Collapse columns' : 'Expand columns'"
                                 >
                                   {{ isTblExpanded ? '−' : '+' }}
                                 </button>
@@ -1411,7 +1480,6 @@
                                 <span
                                   class="truncate"
                                   style="font-size: 12.5px"
-                                  [title]="'Table: ' + tbl.tableName + ' (' + tbl.rowCount + ' rows) — Right-click or long-press for options'"
                                 >
                                   {{ tbl.tableName }}
                                 </span>
@@ -1422,7 +1490,6 @@
                                   type="button"
                                   (click)="openAddColumnForTableFromTree(db.databaseName, tbl.tableName, $event)"
                                   class="ssms-action-icon-btn ssms-action-add"
-                                  [title]="'Add Field to ' + tbl.tableName"
                                 >
                                   <mat-icon>add</mat-icon>
                                 </button>
@@ -1430,7 +1497,6 @@
                                   type="button"
                                   (click)="openRenameSidebarModal('table', db.databaseName, tbl.tableName, null, $event)"
                                   class="ssms-action-icon-btn ssms-action-edit"
-                                  [title]="'Edit table ' + tbl.tableName"
                                 >
                                   <mat-icon>edit</mat-icon>
                                 </button>
@@ -1438,7 +1504,6 @@
                                   type="button"
                                   (click)="deleteTable(tbl.tableName, $event, db.databaseName)"
                                   class="ssms-action-icon-btn ssms-action-danger"
-                                  [title]="'Drop table ' + tbl.tableName"
                                 >
                                   <mat-icon>delete_outline</mat-icon>
                                 </button>
@@ -1451,17 +1516,23 @@
                                 @for (col of tblCols; track col.id) {
                                   @let isColSelected = isTblActive && selectedColumnId() === col.id;
                                   @let isColIdLocked = isIdPrimaryKeyColumn(col);
-                                  <div class="ssms-tree-node-wrapper">
+                                  <div
+                                    class="ssms-tree-node-wrapper"
+                                    (contextmenu)="onSidebarContextMenu($event, 'field', db.databaseName, tbl.tableName, col)"
+                                  >
                                     <div
                                       class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
                                       [class.ssms-node-selected]="isColSelected"
+                                      tabindex="0"
+                                      role="treeitem"
+                                      [attr.aria-selected]="isColSelected"
                                       (click)="selectColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
+                                      (keydown.enter)="selectColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
                                       (dblclick)="!isColIdLocked ? openEditColumnFromTree(db.databaseName, tbl.tableName, col, $event) : null"
                                       (contextmenu)="onSidebarContextMenu($event, 'field', db.databaseName, tbl.tableName, col)"
                                       (touchstart)="onSidebarTouchStart($event, 'field', db.databaseName, tbl.tableName, col)"
                                       (touchend)="onSidebarTouchEndOrMove()"
                                       (touchmove)="onSidebarTouchEndOrMove()"
-                                      [title]="isColIdLocked ? col.name + ' ' + formatColumnManageTreeMeta(col) + ' — Locked Primary Key (cannot be edited or deleted until table is deleted)' : col.name + ' ' + formatColumnManageTreeMeta(col) + ' — Right-click or long-press for options'"
                                     >
                                       <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
                                         <mat-icon
@@ -1473,7 +1544,7 @@
                                         <span class="truncate font-mono-tabular" style="font-size: 12px">
                                           <span class="text-slate-900 font-semibold">{{ col.name }}</span>
                                           @if (isColumnNotNull(col)) {
-                                            <span class="gridario-not-null-star" title="Mandatory field (NOT NULL)">*</span>
+                                            <span class="gridario-not-null-star">*</span>
                                           }
                                           <span class="ms-1" style="color: #000000">{{ formatColumnManageTreeMeta(col) }}</span>
                                         </span>
@@ -1485,7 +1556,6 @@
                                             type="button"
                                             (click)="openEditColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
                                             class="ssms-action-icon-btn ssms-action-edit"
-                                            [title]="'Edit field ' + col.name"
                                           >
                                             <mat-icon>edit</mat-icon>
                                           </button>
@@ -1493,14 +1563,12 @@
                                             type="button"
                                             (click)="deleteColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
                                             class="ssms-action-icon-btn ssms-action-danger"
-                                            [title]="'Delete field ' + col.name"
                                           >
                                             <mat-icon>close</mat-icon>
                                           </button>
                                         } @else {
                                           <span
                                             class="d-inline-flex align-items-center px-1 text-slate-400"
-                                            title="ID primary key field cannot be edited or deleted until the table is deleted"
                                           >
                                             <mat-icon style="font-size: 13px; width: 13px; height: 13px">lock</mat-icon>
                                           </span>
@@ -1521,6 +1589,7 @@
             }
           </div>
         </div>
+      }
       }
     </div>
 
@@ -1588,56 +1657,55 @@
     <!-- Right-Side Column: SQL Server Design Database Tabs Bar + Active Database Tab Page (with Excel Table Sheet Tabs inside) -->
     <div class="flex-grow-1 d-flex flex-column overflow-hidden min-w-0 min-h-0 h-100 bg-slate-100">
       <!-- ===================================================================== -->
-      <!-- SQL SERVER DESIGN / BROWSER-STYLE DATABASE TABS BAR (TOP OF WORKSPACE)-->
-      <!-- Treated as the header of the Database Tab workspace, with the Excel   -->
-      <!-- sheet tabs fixed in the footer of this Database Tab below the table.  -->
-      <!-- ===================================================================== -->
-      <!-- ===================================================================== -->
-      <!-- SQL SERVER DESIGN / BROWSER-STYLE DATABASE TABS BAR (TOP OF WORKSPACE)-->
-      <!-- Displays the active Database Name e.g. [DatabaseName] with close icon -->
+      <!-- OPEN TABLE TABS BAR (TOP OF WORKSPACE)                                -->
+      <!-- Displays the open Table Tabs for the active Database                  -->
       <!-- ===================================================================== -->
       <div class="bg-slate-200 border-b border-slate-300 px-2 py-0.5 d-flex align-items-center justify-content-between gap-1.5 select-none shrink-0" style="min-height: 28px">
-        <div class="excel-sheet-tabs-strip d-flex align-items-center gap-1 overflow-x-auto flex-grow-1 py-0.5">
-          @for (dbTab of databaseTabs(); track dbTab.tabId; let tIdx = $index) {
-            @let isCurrentDbTab = dbTab.tabId === activeDatabaseTabId();
+        <div
+          id="excel-sheet-tabs-scroll-container"
+          class="excel-sheet-tabs-strip d-flex align-items-center gap-1 overflow-x-auto flex-grow-1 py-0.5"
+        >
+          @for (tbl of openTablesForActiveDatabase(); track tbl.tableName) {
+            @let isActiveTab = tbl.tableName === activeTableName();
             <div
-              class="excel-top-tab excel-sheet-tab d-inline-flex align-items-center gap-1.5 rounded-top border cursor-pointer whitespace-nowrap select-none transition-all"
-              [class.excel-top-tab-active]="isCurrentDbTab"
-              [class.excel-sheet-tab-active]="isCurrentDbTab"
-              [class.bg-white]="isCurrentDbTab"
-              [class.text-emerald-800]="isCurrentDbTab"
-              [class.font-bold]="isCurrentDbTab"
-              [class.border-slate-300]="isCurrentDbTab"
-              [class.bg-slate-100]="!isCurrentDbTab"
-              [class.text-slate-600]="!isCurrentDbTab"
-              [class.border-slate-300]="!isCurrentDbTab"
-              (click)="selectDatabaseTab(dbTab.tabId, $event)"
-              (keydown.enter)="selectDatabaseTab(dbTab.tabId, $event)"
+              class="excel-top-tab excel-sheet-tab d-inline-flex align-items-center gap-1.5 border cursor-pointer whitespace-nowrap select-none transition-all"
+              [class.excel-top-tab-active]="isActiveTab"
+              [class.excel-sheet-tab-active]="isActiveTab"
+              [class.bg-white]="isActiveTab"
+              [class.text-emerald-800]="isActiveTab"
+              [class.font-bold]="isActiveTab"
+              [class.border-slate-300]="isActiveTab"
+              [class.bg-slate-100]="!isActiveTab"
+              [class.text-slate-600]="!isActiveTab"
+              [class.border-slate-300]="!isActiveTab"
+              (click)="switchTable(tbl.tableName, $event)"
+              (keydown.enter)="switchTable(tbl.tableName, $event)"
               tabindex="0"
-              [title]="dbTab.databaseName ? 'Database Connection: ' + dbTab.databaseName : 'New Database Tab'"
             >
-              <span
-                class="rounded-full shrink-0"
-                style="width: 6px; height: 6px"
-                [style.background-color]="isCurrentDbTab ? '#34A853' : dbTab.databaseName ? '#94a3b8' : '#FBBC05'"
-                [title]="dbTab.databaseName ? 'Connected to ' + dbTab.databaseName : 'Awaiting database selection'"
-              ></span>
               <mat-icon
-                [class.text-emerald-600]="isCurrentDbTab"
-                [class.text-slate-400]="!isCurrentDbTab"
+                [class.text-emerald-600]="isActiveTab"
+                [class.text-slate-400]="!isActiveTab"
                 style="font-size: 15px; width: 15px; height: 15px; min-width: 15px; min-height: 15px"
               >
-                storage
+                grid_on
               </mat-icon>
-              <span class="font-mono-tabular">
-                {{ getDatabaseTabDisplayTableName(dbTab) }}
+              <span>{{ tbl.tableName }}</span>
+              <span
+                class="px-1.5 py-0 rounded font-mono-tabular"
+                style="font-size: 10.5px"
+                [class.bg-emerald-100]="isActiveTab"
+                [class.text-emerald-800]="isActiveTab"
+                [class.bg-slate-200]="!isActiveTab"
+                [class.text-slate-600]="!isActiveTab"
+              >
+                {{ tbl.rowCount }}
               </span>
+
               <button
                 type="button"
-                (click)="closeDatabaseTab(dbTab.tabId, $event)"
+                (click)="closeTableTab(tbl.tableName, $event)"
                 class="btn btn-sm p-0 ms-0.5 border-0 bg-transparent text-slate-400 hover:text-red-600 d-inline-flex align-items-center gridario-icon-only-btn"
-                [title]="'Close connection for ' + getDatabaseTabDisplayTableName(dbTab)"
-                aria-label="Close database connection tab"
+                aria-label="Close table tab"
               >
                 <mat-icon style="font-size: 14px; width: 14px; height: 14px; min-width: 14px; min-height: 14px">close</mat-icon>
               </button>
@@ -1860,9 +1928,12 @@
                 <div
                   class="gridario-col-resizer"
                   [class.col-resizing]="resizingColId() === col.id"
+                  tabindex="0"
+                  role="separator"
                   (mousedown)="startColumnWidthResize(col, $event)"
                   (touchstart)="startColumnWidthResize(col, $event)"
                   (dblclick)="autoFitColumnWidth(col, $event)"
+                  (keydown.enter)="autoFitColumnWidth(col, $event)"
                   (click)="$event.stopPropagation()"
                   title="Drag left/right to expand or contract column width like in Excel (Double-click to auto-fit)"
                 ></div>
@@ -1893,17 +1964,29 @@
               <!-- First Row Action / Commit Column -->
               <td
                 class="sticky-col-check text-center bg-emerald-50/70 p-0"
+                data-first-row-reset="true"
                 (contextmenu)="onContextMenu($event, 'new_row', newRowSentinelId, null, 1)"
                 (touchstart)="onTouchStart($event, 'new_row', newRowSentinelId, null, 1)"
                 (touchend)="onTouchEndOrMove()"
                 (touchmove)="onTouchEndOrMove()"
               >
-                <div class="d-flex align-items-center justify-content-center h-100 px-1 gap-0.5">
+                <div class="d-flex align-items-center justify-content-center h-100 px-0.5 gap-0.5" data-first-row-reset="true">
+                  <button
+                    type="button"
+                    data-first-row-reset="true"
+                    (click)="validateNewRowPreSubmission($event)"
+                    class="btn btn-sm p-0 border-0 bg-transparent text-blue-600 hover:text-blue-800 d-inline-flex align-items-center gridario-icon-only-btn"
+                    title="Validate New Row (Pre-submission check on First Row cell values)"
+                    aria-label="Validate New Row"
+                  >
+                    <mat-icon style="font-size: 15px; width: 15px; height: 15px">fact_check</mat-icon>
+                  </button>
                   @if (hasNewRowDraftValues()) {
                     <button
                       type="button"
+                      data-first-row-reset="true"
                       (click)="commitFirstRowAddRow($event)"
-                      class="btn btn-sm p-0 border-0 bg-transparent text-emerald-700 hover:text-emerald-900 d-inline-flex align-items-center"
+                      class="btn btn-sm p-0 border-0 bg-transparent text-emerald-700 hover:text-emerald-900 d-inline-flex align-items-center gridario-icon-only-btn"
                       title="Save & Insert New Row (Enter)"
                       aria-label="Save New Row"
                     >
@@ -2050,6 +2133,21 @@
                         </option>
                       }
                     </select>
+                  } @else if (col.colType === 'date') {
+                    <input
+                      [id]="'new-row-inline-input-' + col.id"
+                      type="date"
+                      class="excel-cell-input font-mono-tabular text-slate-900 cursor-pointer"
+                      [value]="getNewRowEditableCellDomText(col)"
+                      (click)="$event.stopPropagation()"
+                      (focus)="onNewRowCellFocus(col.id, $event)"
+                      (contextmenu)="onContextMenu($event, 'new_row', newRowSentinelId, col.id, 1)"
+                      (change)="onNewRowDateChange(col.id, $any($event.target).value)"
+                      (input)="onNewRowDateChange(col.id, $any($event.target).value)"
+                      (blur)="onNewRowEditableCellBlur(col.id, $event)"
+                      (keydown)="onNewRowCellKeydown($event, col.id)"
+                      [attr.aria-label]="'New row ' + col.name"
+                    />
                   } @else {
                     <div
                       [id]="'new-row-inline-input-' + col.id"
@@ -2057,10 +2155,10 @@
                       spellcheck="false"
                       role="textbox"
                       [attr.aria-label]="'New row ' + col.name"
-                      [attr.data-placeholder]="newRowErr ? '(Required)' : 'Add ' + col.name + (isColumnNotNull(col) ? ' *' : '') + (col.colType === 'date' ? ' (YYYY-MM-DD)' : '')"
+                      [attr.data-placeholder]="newRowErr ? '(Required)' : 'Add ' + col.name + (isColumnNotNull(col) ? ' *' : '')"
                       class="excel-cell-editable text-slate-900"
                       [class.text-end]="col.colType === 'number'"
-                      [class.font-mono-tabular]="col.colType === 'number' || col.colType === 'date' || col.colType === 'lookup'"
+                      [class.font-mono-tabular]="col.colType === 'number' || col.colType === 'lookup'"
                       [textContent]="getNewRowEditableCellDomText(col)"
                       (focus)="onNewRowCellFocus(col.id, $event)"
                       (input)="onNewRowContentEditableInput(col.id, $event)"
@@ -2077,7 +2175,9 @@
             @let rowHasError = isRowInvalid(row.id);
             @let visualRowNum = rIdx + 2;
             <tr
+              class="gridario-row-fade-in"
               [attr.data-row-id]="row.id"
+              [class.gridario-row-newly-added]="animatedRowIds().has(row.id)"
               [class.row-selected]="selectedRowIds().has(row.id)"
               [class.row-invalid]="rowHasError"
               [class.clipboard-copy-row]="isRowInClipboard(row.id, 'copy')"
@@ -2266,6 +2366,21 @@
                         </option>
                       }
                     </select>
+                  } @else if (col.colType === 'date') {
+                    <input
+                      [id]="'grid-cell-' + row.id + '-' + col.id"
+                      type="date"
+                      class="excel-cell-input font-mono-tabular text-slate-900 cursor-pointer"
+                      [value]="getEditableCellDomText(row, col)"
+                      (click)="$event.stopPropagation()"
+                      (focus)="onCellFocus(row.id, col.id, $event)"
+                      (contextmenu)="onContextMenu($event, 'cell', row.id, col.id, visualRowNum)"
+                      (change)="onDateCellChange(row.id, col.id, $any($event.target).value)"
+                      (input)="onDateCellChange(row.id, col.id, $any($event.target).value)"
+                      (blur)="onEditableCellBlur(row.id, col.id, $event)"
+                      (keydown)="onAlwaysEditableCellKeydown($event, row.id, col.id)"
+                      [attr.aria-label]="col.name"
+                    />
                   } @else {
                     <div
                       [id]="'grid-cell-' + row.id + '-' + col.id"
@@ -2276,7 +2391,7 @@
                       [attr.data-placeholder]="isInvalid ? '(Empty / Invalid)' : ''"
                       class="excel-cell-editable text-slate-900"
                       [class.text-end]="col.colType === 'number'"
-                      [class.font-mono-tabular]="col.colType === 'number' || col.colType === 'date' || col.colType === 'lookup'"
+                      [class.font-mono-tabular]="col.colType === 'number' || col.colType === 'lookup'"
                       [textContent]="getEditableCellDomText(row, col)"
                       (focus)="onCellFocus(row.id, col.id, $event)"
                       (input)="onContentEditableCellInput(row.id, col.id, $event)"
@@ -2338,9 +2453,10 @@
     </div>
         }
   </main>
+      }
 
   <!-- ===================================================================== -->
-  <!-- EXCEL SHEET TABS FOOTER BAR (Open Tables from Sidebar for Active DB)  -->
+  <!-- DATABASE TABS FOOTER BAR (Bottom of Workspace)                        -->
   <!-- ===================================================================== -->
   <footer class="excel-sheet-footer bg-slate-200 border-t border-slate-300 px-2 py-0.5 shrink-0 z-30" style="min-height: 28px">
     <div class="d-flex align-items-center justify-content-between gap-2">
@@ -2351,8 +2467,7 @@
           (click)="scrollTabsBar('left', $event)"
           class="btn btn-sm p-0.5 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 d-inline-flex align-items-center justify-content-center rounded gridario-icon-only-btn"
           style="width: 21px; height: 21px"
-          title="Scroll sheet tabs left"
-          aria-label="Scroll sheet tabs left"
+          aria-label="Scroll database tabs left"
         >
           <mat-icon style="font-size: 15px; width: 15px; height: 15px; min-width: 15px; min-height: 15px">chevron_left</mat-icon>
         </button>
@@ -2361,60 +2476,53 @@
           (click)="scrollTabsBar('right', $event)"
           class="btn btn-sm p-0.5 bg-white border border-slate-300 text-slate-700 hover:bg-slate-100 d-inline-flex align-items-center justify-content-center rounded gridario-icon-only-btn"
           style="width: 21px; height: 21px"
-          title="Scroll sheet tabs right"
-          aria-label="Scroll sheet tabs right"
+          aria-label="Scroll database tabs right"
         >
           <mat-icon style="font-size: 15px; width: 15px; height: 15px; min-width: 15px; min-height: 15px">chevron_right</mat-icon>
         </button>
       </div>
 
-      <!-- Horizontally Scrollable Open Table Tabs Strip -->
+      <!-- Horizontally Scrollable Database Tabs Strip -->
       <div
-        id="excel-sheet-tabs-scroll-container"
+        id="database-tabs-scroll-container"
         class="excel-sheet-tabs-strip d-flex align-items-center gap-1 overflow-x-auto flex-grow-1 py-0.5"
       >
-        @for (tbl of openTablesForActiveDatabase(); track tbl.tableName) {
-          @let isActiveTab = tbl.tableName === activeTableName();
+        @for (dbTab of databaseTabs(); track dbTab.tabId; let tIdx = $index) {
+          @let isCurrentDbTab = dbTab.tabId === activeDatabaseTabId();
           <div
-            class="excel-sheet-tab d-inline-flex align-items-center gap-1.5 rounded-top border cursor-pointer whitespace-nowrap select-none transition-all"
-            [class.excel-sheet-tab-active]="isActiveTab"
-            [class.bg-white]="isActiveTab"
-            [class.text-emerald-800]="isActiveTab"
-            [class.font-bold]="isActiveTab"
-            [class.border-slate-300]="isActiveTab"
-            [class.bg-slate-100]="!isActiveTab"
-            [class.text-slate-600]="!isActiveTab"
-            [class.border-slate-300]="!isActiveTab"
-            (click)="switchTable(tbl.tableName, $event)"
-            (keydown.enter)="switchTable(tbl.tableName, $event)"
+            class="excel-sheet-tab d-inline-flex align-items-center gap-1.5 border cursor-pointer whitespace-nowrap select-none transition-all"
+            [class.excel-sheet-tab-active]="isCurrentDbTab"
+            [class.bg-white]="isCurrentDbTab"
+            [class.text-emerald-800]="isCurrentDbTab"
+            [class.font-bold]="isCurrentDbTab"
+            [class.border-slate-300]="isCurrentDbTab"
+            [class.bg-slate-100]="!isCurrentDbTab"
+            [class.text-slate-600]="!isCurrentDbTab"
+            [class.border-slate-300]="!isCurrentDbTab"
+            (click)="selectDatabaseTab(dbTab.tabId, $event)"
+            (keydown.enter)="selectDatabaseTab(dbTab.tabId, $event)"
             tabindex="0"
-            [title]="'Open Table Tab: ' + tbl.tableName + ' (' + tbl.rowCount + ' rows, ' + tbl.columnCount + ' columns)'"
           >
+            <span
+              class="rounded-full shrink-0"
+              style="width: 6px; height: 6px"
+              [style.background-color]="isCurrentDbTab ? '#34A853' : dbTab.databaseName ? '#94a3b8' : '#FBBC05'"
+            ></span>
             <mat-icon
-              [class.text-emerald-600]="isActiveTab"
-              [class.text-slate-400]="!isActiveTab"
+              [class.text-emerald-600]="isCurrentDbTab"
+              [class.text-slate-400]="!isCurrentDbTab"
               style="font-size: 15px; width: 15px; height: 15px; min-width: 15px; min-height: 15px"
             >
-              grid_on
+              storage
             </mat-icon>
-            <span>{{ tbl.tableName }}</span>
-            <span
-              class="px-1.5 py-0 rounded font-mono-tabular"
-              style="font-size: 10.5px"
-              [class.bg-emerald-100]="isActiveTab"
-              [class.text-emerald-800]="isActiveTab"
-              [class.bg-slate-200]="!isActiveTab"
-              [class.text-slate-600]="!isActiveTab"
-            >
-              {{ tbl.rowCount }}
+            <span class="font-mono-tabular">
+              {{ getDatabaseTabDisplayTableName(dbTab) }}
             </span>
-
             <button
               type="button"
-              (click)="closeTableTab(tbl.tableName, $event)"
+              (click)="closeDatabaseTab(dbTab.tabId, $event)"
               class="btn btn-sm p-0 ms-0.5 border-0 bg-transparent text-slate-400 hover:text-red-600 d-inline-flex align-items-center gridario-icon-only-btn"
-              [title]="'Close ' + tbl.tableName + ' tab'"
-              aria-label="Close table tab"
+              aria-label="Close database connection tab"
             >
               <mat-icon style="font-size: 14px; width: 14px; height: 14px; min-width: 14px; min-height: 14px">close</mat-icon>
             </button>
@@ -2422,7 +2530,7 @@
         }
       </div>
 
-      <!-- Right Side Table Schema Summary (Inside Database Tab) -->
+      <!-- Right Side Table Schema Summary -->
       <div class="d-none d-md-flex align-items-center gap-1.5 shrink-0 text-[11.5px] text-slate-600 font-mono-tabular pe-1">
         <span>DB Tab: <strong>{{ activeDatabaseName() }}</strong></span>
         <span>·</span>
@@ -2434,7 +2542,6 @@
       </div>
     </div>
   </footer>
-      }
       </div>
     </div>
   </div>
@@ -2670,6 +2777,20 @@
         <div class="px-3 pt-1 pb-0.5 text-emerald-700 font-semibold" style="font-size: 10px">
           Add Row (First Row) Options
         </div>
+
+        <button
+          type="button"
+          data-first-row-reset="true"
+          (click)="validateNewRowPreSubmission($event)"
+          class="w-100 text-start px-3 py-1.5 bg-blue-50/70 border-0 hover:bg-blue-100 text-blue-800 font-semibold d-flex align-items-center justify-content-between"
+          title="Perform a pre-submission validation check on the First Row cell values"
+        >
+          <span class="d-inline-flex align-items-center gap-2">
+            <mat-icon class="text-blue-600">fact_check</mat-icon>
+            <span>Validate New Row</span>
+          </span>
+          <span class="text-blue-700 font-mono-tabular">Check</span>
+        </button>
 
         <button
           type="button"
@@ -2978,7 +3099,9 @@
       <!-- Sidebar Context Header -->
       <div class="px-3 py-1.5 bg-slate-50 border-b border-slate-200 d-flex align-items-center justify-content-between">
         <span class="font-bold text-slate-800 truncate">
-          @if (sidebarContextMenu().targetType === 'databases_folder') {
+          @if (sidebarContextMenu().targetType === 'server') {
+            Server: {{ serverName() || 'localhost\\SQLEXPRESS' }}
+          } @else if (sidebarContextMenu().targetType === 'databases_folder') {
             Databases Folder
           } @else if (sidebarContextMenu().targetType === 'database') {
             Database: {{ sidebarContextMenu().databaseName }}
@@ -2990,7 +3113,67 @@
         </span>
       </div>
 
+      @if (sidebarContextMenu().targetType === 'server') {
+        <button
+          type="button"
+          (click)="openConnectServerModal($event); closeAllMenus()"
+          class="w-100 text-start px-3 py-1.5 bg-blue-50/70 border-0 hover:bg-blue-100 d-flex align-items-center justify-content-between gap-2 font-semibold text-blue-800"
+        >
+          <span class="d-inline-flex align-items-center gap-2">
+            <mat-icon style="color: #4285F4">power</mat-icon>
+            <span>Connect to Server...</span>
+          </span>
+          <span class="px-1.5 py-0 rounded bg-blue-100 text-blue-800 font-mono-tabular" style="font-size: 10px">Login</span>
+        </button>
+
+        <button
+          type="button"
+          (click)="refreshServerAndRetrieveObjects($event); closeAllMenus()"
+          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 font-medium text-slate-800"
+        >
+          <mat-icon style="color: #34A853">sync</mat-icon>
+          <span>Retrieve Databases, Tables &amp; Fields</span>
+        </button>
+
+        <button
+          type="button"
+          (click)="openCreateDatabaseModal($event); closeAllMenus()"
+          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 font-medium text-slate-800"
+        >
+          <mat-icon style="color: #FBBC05">create_new_folder</mat-icon>
+          <span>New Database...</span>
+        </button>
+
+        @if (isServerConnected()) {
+          <div class="border-t border-slate-100 my-1"></div>
+          <button
+            type="button"
+            (click)="disconnectServerFromExplorer($event); closeAllMenus()"
+            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-red-50 text-red-600 d-flex align-items-center gap-2"
+          >
+            <mat-icon style="color: #EA4335">link_off</mat-icon>
+            <span>Disconnect Server</span>
+          </button>
+        }
+      }
+
       @if (sidebarContextMenu().targetType === 'databases_folder') {
+        <button
+          type="button"
+          (click)="openConnectServerModal($event); closeAllMenus()"
+          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 font-medium text-slate-800"
+        >
+          <mat-icon style="color: #4285F4">power</mat-icon>
+          <span>Connect to Server...</span>
+        </button>
+        <button
+          type="button"
+          (click)="refreshServerAndRetrieveObjects($event); closeAllMenus()"
+          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 font-medium text-slate-800"
+        >
+          <mat-icon style="color: #34A853">sync</mat-icon>
+          <span>Retrieve All Databases, Tables &amp; Fields</span>
+        </button>
         <button
           type="button"
           (click)="openCreateDatabaseModal($event); closeAllMenus()"
@@ -3413,6 +3596,9 @@
                 class="form-select form-select-sm text-xs"
               >
                 <option value="none">None (All Conditions)</option>
+                @if (filterCol.colType === 'date') {
+                  <option value="date_range">Date Range</option>
+                }
                 <option value="contains">Contains</option>
                 <option value="not_contains">Does not contain</option>
                 <option value="equals">Equals</option>
@@ -3430,27 +3616,55 @@
               filterConditionControl.value !== 'empty' &&
               filterConditionControl.value !== 'not_empty'
             ) {
-              <div class="col-12 col-sm-7 d-flex align-items-center gap-1.5">
-                <input
-                  type="text"
-                  [formControl]="filterValueControl"
-                  (input)="onFilterConditionInput()"
-                  placeholder="Value..."
-                  class="form-control form-control-sm text-xs"
-                  aria-label="Filter condition value"
-                />
-                @if (filterConditionControl.value === 'between') {
-                  <span class="text-xs text-slate-400">and</span>
+              @if (filterConditionControl.value === 'date_range') {
+                <div class="col-12 col-sm-7 d-flex align-items-center gap-1.5">
                   <input
-                    type="text"
+                    type="date"
+                    [formControl]="filterValueControl"
+                    (input)="onFilterConditionInput()"
+                    (change)="onFilterConditionInput()"
+                    title="Start Date"
+                    class="form-control form-control-sm font-mono-tabular text-xs"
+                    aria-label="Filter start date"
+                  />
+                  <span class="text-xs text-slate-400">to</span>
+                  <input
+                    type="date"
                     [formControl]="filterValueEndControl"
                     (input)="onFilterConditionInput()"
-                    placeholder="Max..."
-                    class="form-control form-control-sm text-xs"
-                    aria-label="Filter condition end value"
+                    (change)="onFilterConditionInput()"
+                    title="End Date"
+                    class="form-control form-control-sm font-mono-tabular text-xs"
+                    aria-label="Filter end date"
                   />
-                }
-              </div>
+                </div>
+              } @else {
+                <div class="col-12 col-sm-7 d-flex align-items-center gap-1.5">
+                  <input
+                    [type]="filterCol.colType === 'date' ? 'date' : 'text'"
+                    [formControl]="filterValueControl"
+                    (input)="onFilterConditionInput()"
+                    (change)="onFilterConditionInput()"
+                    placeholder="Value..."
+                    class="form-control form-control-sm text-xs"
+                    [class.font-mono-tabular]="filterCol.colType === 'date'"
+                    aria-label="Filter condition value"
+                  />
+                  @if (filterConditionControl.value === 'between') {
+                    <span class="text-xs text-slate-400">and</span>
+                    <input
+                      [type]="filterCol.colType === 'date' ? 'date' : 'text'"
+                      [formControl]="filterValueEndControl"
+                      (input)="onFilterConditionInput()"
+                      (change)="onFilterConditionInput()"
+                      placeholder="Max..."
+                      class="form-control form-control-sm text-xs"
+                      [class.font-mono-tabular]="filterCol.colType === 'date'"
+                      aria-label="Filter condition end value"
+                    />
+                  }
+                </div>
+              }
             }
           </div>
         </div>
@@ -3749,7 +3963,7 @@
                 } @else {
                   <input
                     id="col-default-input"
-                    type="text"
+                    [type]="schemaModalColType() === 'date' ? 'date' : 'text'"
                     formControlName="defaultValue"
                     [placeholder]="
                       schemaModalColType() === 'checkbox'
@@ -3757,6 +3971,7 @@
                         : 'Default value...'
                     "
                     class="form-control form-control-sm text-xs"
+                    [class.font-mono-tabular]="schemaModalColType() === 'date'"
                   />
                 }
               </div>
@@ -3892,6 +4107,7 @@
                     class="form-control form-control-sm font-mono-tabular text-xs"
                     [value]="newRowValues()[col.id]"
                     (input)="updateNewRowField(col.id, $any($event.target).value)"
+                    (change)="updateNewRowField(col.id, $any($event.target).value)"
                   />
                 } @else if (col.colType === 'number') {
                   <input
@@ -3932,6 +4148,98 @@
           >
             <mat-icon>add_task</mat-icon>
             <span>Validate &amp; Save Row</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 4-PRE: VALIDATE NEW ROW PRE-SUBMISSION CUSTOM MODAL ALERT       -->
+  <!-- ===================================================================== -->
+  @if (activeModal() === 'validate_new_row' || newRowValidationModal().visible) {
+    <div
+      class="fixed inset-0 bg-slate-900/40 z-50 d-flex align-items-center justify-content-center p-2 sm:p-3 gridpulse-modal-backdrop"
+      data-first-row-reset="true"
+      (click)="closeValidateNewRowModal(false, $event)"
+      (keydown.escape)="closeValidateNewRowModal(false, $event)"
+      tabindex="0"
+    >
+      <div
+        class="bg-white rounded-xl border border-red-300 shadow-md w-100 p-4 gridpulse-popup-card"
+        style="max-width: 520px"
+        data-first-row-reset="true"
+        (click)="$event.stopPropagation()"
+        (keydown.escape)="closeValidateNewRowModal(false, $event)"
+        tabindex="0"
+        role="alertdialog"
+        aria-labelledby="validate-new-row-modal-title"
+      >
+        <div class="d-flex align-items-center justify-content-between pb-3 border-b border-slate-200">
+          <div class="d-flex align-items-center gap-2">
+            <div class="p-1.5 rounded-lg bg-red-50 border border-red-200 d-inline-flex align-items-center justify-content-center">
+              <mat-icon class="text-red-600">gpp_maybe</mat-icon>
+            </div>
+            <div>
+              <h2 id="validate-new-row-modal-title" class="text-base font-bold text-slate-900 m-0">
+                First Row Validation Alert
+              </h2>
+              <p class="text-xs text-slate-500 m-0 mt-0.5">
+                {{ newRowValidationModal().issues.length }} field(s) in the First Row are missing or invalid.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            (click)="closeValidateNewRowModal(false, $event)"
+            class="btn btn-sm border-0 bg-transparent text-slate-400 hover:text-slate-700 gridario-icon-only-btn"
+            aria-label="Close validation alert"
+          >
+            <mat-icon>close</mat-icon>
+          </button>
+        </div>
+
+        <div class="py-3 d-flex flex-column gap-2" style="max-height: 300px; overflow-y: auto">
+          @for (issue of newRowValidationModal().issues; track issue.colId) {
+            <div class="p-2.5 rounded-lg bg-red-50 border border-red-200 d-flex align-items-start justify-content-between gap-2">
+              <div class="d-flex align-items-start gap-2">
+                <mat-icon class="text-red-600 shrink-0 mt-0.5" style="font-size: 16px; width: 16px; height: 16px">
+                  error_outline
+                </mat-icon>
+                <div>
+                  <div class="d-flex align-items-center gap-1.5 flex-wrap">
+                    <span class="text-xs font-bold text-slate-900">{{ issue.colName }}</span>
+                    <span class="px-1.5 py-0 rounded bg-white border border-slate-300 font-mono-tabular text-slate-600" style="font-size: 10px">
+                      {{ issue.colType }}
+                    </span>
+                    <span class="px-1.5 py-0 rounded bg-red-600 text-white font-semibold" style="font-size: 10px">
+                      {{ issue.issueType === 'missing' ? 'Missing' : 'Invalid' }}
+                    </span>
+                  </div>
+                  <div class="text-xs text-red-700 mt-1">
+                    {{ issue.errorMessage }}
+                  </div>
+                </div>
+              </div>
+            </div>
+          }
+        </div>
+
+        <div class="d-flex align-items-center justify-content-end gap-2 pt-3 border-t border-slate-200">
+          <button
+            type="button"
+            (click)="closeValidateNewRowModal(false, $event)"
+            class="btn btn-sm btn-outline-secondary text-xs"
+          >
+            Dismiss
+          </button>
+          <button
+            type="button"
+            (click)="closeValidateNewRowModal(true, $event)"
+            class="btn btn-sm btn-primary d-inline-flex align-items-center gap-1 text-xs font-semibold px-3"
+          >
+            <mat-icon>edit</mat-icon>
+            <span>Focus &amp; Fix in First Row</span>
           </button>
         </div>
       </div>
@@ -5606,13 +5914,26 @@
             <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="pg-password">
               Password *
             </label>
-            <input
-              id="pg-password"
-              type="password"
-              formControlName="password"
-              class="form-control form-control-sm font-mono-tabular text-xs"
-              placeholder="••••••••"
-            />
+            <div class="position-relative d-flex align-items-center">
+              <input
+                id="pg-password"
+                [type]="showAuthPassword() ? 'text' : 'password'"
+                formControlName="password"
+                class="form-control form-control-sm font-mono-tabular text-xs pe-4"
+                placeholder="••••••••"
+              />
+              <button
+                type="button"
+                (click)="showAuthPassword.set(!showAuthPassword())"
+                class="btn btn-sm p-0 border-0 bg-transparent position-absolute end-0 me-2 d-inline-flex align-items-center justify-content-center text-slate-500 hover:text-slate-800"
+                [attr.aria-label]="showAuthPassword() ? 'Hide password' : 'Show password'"
+                [title]="showAuthPassword() ? 'Hide password' : 'Show password'"
+              >
+                <mat-icon style="font-size: 16px; width: 16px; height: 16px">
+                  {{ showAuthPassword() ? 'visibility_off' : 'visibility' }}
+                </mat-icon>
+              </button>
+            </div>
           </div>
 
           @if (authErrorMessage()) {
@@ -5753,34 +6074,181 @@
   }
 
   <!-- ===================================================================== -->
-  <!-- 1-SECOND HOVER ACTION & FUNCTIONALITY EXPLANATION TOOLTIP             -->
-  <!-- Appears when hovering over any interactive control for > 1 second     -->
-  <!-- and disappears immediately upon leaving the hovered element.          -->
+  <!-- SQL SERVER MANAGEMENT STUDIO (SSMS) "CONNECT TO SERVER" LOGIN MODAL   -->
   <!-- ===================================================================== -->
-  @if (actionTooltip().visible) {
+  @if (activeModal() === 'connect_server') {
     <div
-      class="gridario-action-tooltip"
-      [style.left.px]="actionTooltip().x"
-      [style.top.px]="actionTooltip().y"
-      role="tooltip"
+      class="fixed inset-0 bg-slate-900/40 z-50 d-flex align-items-center justify-content-center p-2 sm:p-3 gridpulse-modal-backdrop"
+      (click)="activeModal.set('none')"
+      (keydown.escape)="activeModal.set('none')"
+      tabindex="0"
     >
-      {{ actionTooltip().text }}
+      <div
+        class="bg-white rounded-xl border border-slate-300 shadow-md w-100 overflow-hidden gridpulse-popup-card"
+        style="max-width: 460px"
+        (click)="$event.stopPropagation()"
+        (keydown.escape)="activeModal.set('none')"
+        tabindex="0"
+      >
+        <!-- SSMS Connect to Server Banner Header -->
+        <div class="px-4 py-3 bg-slate-900 text-white d-flex align-items-center justify-content-between border-b border-slate-800">
+          <div class="d-flex align-items-center gap-2.5">
+            <div class="p-1.5 rounded bg-slate-800 d-inline-flex align-items-center justify-content-center">
+              <mat-icon style="color: #FBBC05; font-size: 22px; width: 22px; height: 22px">dns</mat-icon>
+            </div>
+            <div>
+              <h2 class="text-sm font-bold text-white m-0">Connect to Server</h2>
+              <div class="text-[11px] text-slate-300">PostgreSQL / Supabase Database Engine</div>
+            </div>
+          </div>
+          <button
+            type="button"
+            (click)="activeModal.set('none')"
+            class="btn btn-sm p-0 border-0 bg-transparent text-slate-300 hover:text-white gridario-icon-only-btn"
+            aria-label="Close Connect to Server modal"
+          >
+            <mat-icon style="color: #EA4335">close</mat-icon>
+          </button>
+        </div>
+
+        <form [formGroup]="connectServerForm" (ngSubmit)="submitConnectServerModal()" class="p-4 d-flex flex-column gap-3 text-xs">
+          @if (connectServerErrorMessage()) {
+            <div class="p-2.5 rounded bg-red-50 border border-red-200 text-red-800 d-flex align-items-center gap-2">
+              <mat-icon style="color: #EA4335">error_outline</mat-icon>
+              <span>{{ connectServerErrorMessage() }}</span>
+            </div>
+          }
+
+          <!-- Server Host / Name -->
+          <div class="row align-items-center g-2">
+            <label class="col-4 font-semibold text-slate-700" for="ssmsServerName">Server / Host:</label>
+            <div class="col-8">
+              <input
+                id="ssmsServerName"
+                type="text"
+                formControlName="serverName"
+                (input)="onConnectServerHostInput()"
+                placeholder="e.g. aws-0-ap-southeast-1.pooler.supabase.com"
+                class="form-control form-control-sm text-xs font-mono-tabular"
+              />
+            </div>
+          </div>
+
+          <!-- Port & Database -->
+          <div class="row align-items-center g-2">
+            <label class="col-4 font-semibold text-slate-700" for="ssmsPort">Port / Database:</label>
+            <div class="col-3">
+              <input
+                id="ssmsPort"
+                type="text"
+                formControlName="port"
+                placeholder="5432"
+                class="form-control form-control-sm text-xs font-mono-tabular"
+              />
+            </div>
+            <div class="col-5">
+              <input
+                id="ssmsDatabaseName"
+                type="text"
+                formControlName="databaseName"
+                placeholder="postgres"
+                class="form-control form-control-sm text-xs font-mono-tabular"
+              />
+            </div>
+          </div>
+
+          <!-- Login -->
+          <div class="row align-items-center g-2">
+            <label class="col-4 font-semibold text-slate-700" for="ssmsLoginUser">Login / User:</label>
+            <div class="col-8">
+              <input
+                id="ssmsLoginUser"
+                type="text"
+                formControlName="loginUser"
+                placeholder="postgres or postgres.projectref"
+                class="form-control form-control-sm text-xs font-mono-tabular"
+              />
+            </div>
+          </div>
+
+          <!-- Password -->
+          <div class="row align-items-center g-2">
+            <label class="col-4 font-semibold text-slate-700" for="ssmsPassword">Password:</label>
+            <div class="col-8">
+              <div class="position-relative d-flex align-items-center">
+                <input
+                  id="ssmsPassword"
+                  [type]="showServerPassword() ? 'text' : 'password'"
+                  formControlName="password"
+                  placeholder="Enter PostgreSQL / Supabase password"
+                  class="form-control form-control-sm text-xs font-mono-tabular pe-4"
+                />
+                <button
+                  type="button"
+                  (click)="showServerPassword.set(!showServerPassword())"
+                  class="btn btn-sm p-0 border-0 bg-transparent position-absolute end-0 me-2 d-inline-flex align-items-center justify-content-center text-slate-500 hover:text-slate-800"
+                  [attr.aria-label]="showServerPassword() ? 'Hide password' : 'Show password'"
+                  [title]="showServerPassword() ? 'Hide password' : 'Show password'"
+                >
+                  <mat-icon style="font-size: 16px; width: 16px; height: 16px">
+                    {{ showServerPassword() ? 'visibility_off' : 'visibility' }}
+                  </mat-icon>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="row align-items-center g-2">
+            <div class="col-4"></div>
+            <div class="col-8">
+              <label class="d-inline-flex align-items-center gap-1.5 text-slate-700 cursor-pointer">
+                <input
+                  type="checkbox"
+                  formControlName="rememberPassword"
+                  class="form-check-input m-0"
+                />
+                <span>Remember password</span>
+              </label>
+            </div>
+          </div>
+
+          <!-- Optional Connection String -->
+          <div class="d-flex flex-column gap-1.5 pt-1 border-t border-slate-100">
+            <label class="font-semibold text-slate-700" for="ssmsConnStr">
+              Or Paste Connection String (PostgreSQL / Supabase URI or Key-Value):
+            </label>
+            <textarea
+              id="ssmsConnStr"
+              rows="2"
+              formControlName="connectionString"
+              (input)="onConnectServerConnStrInput()"
+              placeholder="postgresql://postgres:password@host:5432/postgres&#10;or Host=...;Port=5432;Database=postgres;Username=postgres;Password=..."
+              class="form-control form-control-sm text-xs font-mono-tabular"
+            ></textarea>
+          </div>
+
+          <div class="d-flex align-items-center justify-content-end gap-2 pt-3 border-t border-slate-200 mt-1">
+            <button
+              type="submit"
+              [disabled]="isConnectingToServer()"
+              class="btn btn-sm btn-primary d-inline-flex align-items-center gap-1.5 text-xs font-semibold px-3"
+            >
+              <mat-icon>power</mat-icon>
+              <span>{{ isConnectingToServer() ? 'Connecting...' : 'Connect' }}</span>
+            </button>
+            <button
+              type="button"
+              (click)="activeModal.set('none')"
+              class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1 text-xs px-3"
+            >
+              <mat-icon>close</mat-icon>
+              <span>Cancel</span>
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   }
 
-  <!-- ===================================================================== -->
-  <!-- SMART OVERFLOW HOVER TOOLTIP (For Table Cells & Sidebar Truncated Text)-->
-  <!-- Automatically appears when hovering over any cell or sidebar node     -->
-  <!-- whose text content is not completely visible due to width contraction.-->
-  <!-- ===================================================================== -->
-  @if (overflowTooltip().visible && !actionTooltip().visible) {
-    <div
-      class="gridario-overflow-tooltip"
-      [style.left.px]="overflowTooltip().x"
-      [style.top.px]="overflowTooltip().y"
-      role="tooltip"
-    >
-      {{ overflowTooltip().text }}
-    </div>
-  }
 </div>
+

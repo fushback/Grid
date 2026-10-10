@@ -3,16 +3,11 @@ const eslint = require('@eslint/js');
 const {defineConfig} = require('eslint/config');
 const tseslint = require('typescript-eslint');
 const angular = require('angular-eslint');
-const firebaseRulesPluginRaw = require('@firebase/eslint-plugin-security-rules');
-const firebaseRulesPlugin = firebaseRulesPluginRaw.default || firebaseRulesPluginRaw;
 
 module.exports = defineConfig([
   {
     ignores: ['dist/**/*', '.angular/**/*'],
   },
-  ...(firebaseRulesPlugin.configs && firebaseRulesPlugin.configs['flat/recommended']
-    ? [firebaseRulesPlugin.configs['flat/recommended']]
-    : []),
   {
     files: ['**/*.ts'],
     extends: [

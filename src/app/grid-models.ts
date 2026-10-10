@@ -92,6 +92,7 @@ export type FilterConditionType =
   | 'gt'
   | 'lt'
   | 'between'
+  | 'date_range'
   | 'empty'
   | 'not_empty';
 

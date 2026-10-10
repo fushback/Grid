@@ -237,6 +237,7 @@ $cell-error-bg: #fca5a5;
 
 .excel-sheet-tab,
 .excel-top-tab {
+  border-radius: 5px !important;
   border-top: 2px solid transparent;
   border-bottom: 3px solid transparent;
   position: relative;

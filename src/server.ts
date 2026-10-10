@@ -18,6 +18,8 @@ const { Pool } = pg;
 const browserDistFolder = join(import.meta.dirname, '../browser');
 const CLOUD_STORE_FILE = '/tmp/gridpulse-cloud-state-v3.json';
 const PERSISTENT_WORKSPACE_FILE = join(process.cwd(), '.gridpulse-workspace-state.json');
+const CLOUD_PG_CONN_FILE = '/tmp/gridpulse-pg-connection.json';
+const PERSISTENT_PG_CONN_FILE = join(process.cwd(), '.gridpulse-pg-connection.json');
 
 const IS_SERVERLESS_HOST = Boolean(
   process.env['VERCEL'] ||
@@ -25,6 +27,39 @@ const IS_SERVERLESS_HOST = Boolean(
     process.env['AWS_LAMBDA_FUNCTION_NAME'] ||
     process.env['NETLIFY']
 );
+
+const SUPABASE_POOLER_HOST_CACHE = new Map<string, string>([
+  ['cjiqsovtljzpvlnncpuh', 'aws-0-ap-southeast-2.pooler.supabase.com'],
+]);
+
+const SUPABASE_AWS_REGIONS = [
+  'ap-southeast-2',
+  'ap-southeast-1',
+  'us-east-1',
+  'us-east-2',
+  'us-west-1',
+  'us-west-2',
+  'eu-west-1',
+  'eu-west-2',
+  'eu-west-3',
+  'eu-central-1',
+  'eu-central-2',
+  'eu-north-1',
+  'ap-south-1',
+  'ap-northeast-1',
+  'ap-northeast-2',
+  'sa-east-1',
+  'ca-central-1',
+];
+
+function sanitizeRawPassword(rawPass: string): string {
+  let p = rawPass.trim();
+  // Strip accidental surrounding square brackets e.g. [MyPass] from Supabase template
+  if (p.startsWith('[') && p.endsWith(']') && p.length > 2) {
+    p = p.slice(1, -1);
+  }
+  return p;
+}
 
 function normalizePostgresConnectionString(rawInput: string): string {
   const raw = rawInput.trim().replace(/^["']|["']$/g, '');
@@ -45,11 +80,13 @@ function normalizePostgresConnectionString(rawInput: string): string {
     const port = kv.get('port') || '5432';
     const database = kv.get('database') || kv.get('initial catalog') || 'postgres';
     const user = kv.get('username') || kv.get('user id') || kv.get('uid') || kv.get('user') || 'postgres';
-    const password = kv.get('password') || kv.get('pwd') || '';
+    const password = sanitizeRawPassword(kv.get('password') || kv.get('pwd') || '');
     if (!host || password === 'YOUR_SUPABASE_PASSWORD' || password === 'your_supabase_db_password') {
       return '';
     }
-    return `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`;
+    return normalizePostgresConnectionString(
+      `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(password)}@${host}:${port}/${encodeURIComponent(database)}`
+    );
   }
 
   if (
@@ -59,11 +96,119 @@ function normalizePostgresConnectionString(rawInput: string): string {
     return '';
   }
 
-  const m = raw.match(/^(postgres(?:ql)?:\/\/[^:]+:)(.+)(@[^@]+)$/);
-  if (m && m[2].includes('@')) {
-    return m[1] + encodeURIComponent(m[2]) + m[3];
+  let normalizedUri = raw;
+  const protoMatch = normalizedUri.match(/^(postgres(?:ql)?:\/\/)/i);
+  if (protoMatch) {
+    const proto = protoMatch[1];
+    const rest = normalizedUri.slice(proto.length);
+    const atIdx = rest.lastIndexOf('@');
+    if (atIdx > 0) {
+      const userPassPart = rest.slice(0, atIdx);
+      const hostAndPathPart = rest.slice(atIdx + 1);
+      const colonIdx = userPassPart.indexOf(':');
+      if (colonIdx > 0) {
+        const rawUser = userPassPart.slice(0, colonIdx);
+        let decodedUser = rawUser;
+        try {
+          decodedUser = decodeURIComponent(rawUser);
+        } catch {
+          decodedUser = rawUser;
+        }
+        const rawPass = userPassPart.slice(colonIdx + 1);
+        let decodedPass = rawPass;
+        try {
+          decodedPass = decodeURIComponent(rawPass);
+        } catch {
+          decodedPass = rawPass;
+        }
+        const cleanPass = sanitizeRawPassword(decodedPass);
+        normalizedUri = `${proto}${encodeURIComponent(decodedUser)}:${encodeURIComponent(cleanPass)}@${hostAndPathPart}`;
+      }
+    }
   }
-  return raw;
+
+  // Automatically upgrade direct IPv6-only Supabase host (db.<ref>.supabase.co)
+  // to IPv4-compatible Supavisor pooler host when known in SUPABASE_POOLER_HOST_CACHE
+  try {
+    const u = new URL(normalizedUri);
+    const directMatch = u.hostname.match(/^db\.([a-z0-9]+)\.supabase\.co$/i);
+    if (directMatch) {
+      const projectRef = directMatch[1].toLowerCase();
+      const poolerHost = SUPABASE_POOLER_HOST_CACHE.get(projectRef);
+      if (poolerHost) {
+        u.hostname = poolerHost;
+        const currentUser = decodeURIComponent(u.username || 'postgres');
+        if (!currentUser.endsWith(`.${projectRef}`)) {
+          u.username = encodeURIComponent(`${currentUser}.${projectRef}`);
+        }
+        normalizedUri = u.toString();
+      }
+    } else if (/\.pooler\.supabase\.com$/i.test(u.hostname)) {
+      const currentUser = decodeURIComponent(u.username || '');
+      const dotIdx = currentUser.lastIndexOf('.');
+      if (dotIdx > 0) {
+        const ref = currentUser.slice(dotIdx + 1).toLowerCase();
+        if (ref) {
+          SUPABASE_POOLER_HOST_CACHE.set(ref, u.hostname);
+        }
+      }
+    }
+  } catch {
+    // Ignore URL parse issues
+  }
+
+  return normalizedUri;
+}
+
+async function resolveSupabaseIpv4PoolerConnectionString(connStr: string): Promise<string> {
+  try {
+    const u = new URL(connStr);
+    const directMatch = u.hostname.match(/^db\.([a-z0-9]+)\.supabase\.co$/i);
+    if (!directMatch) return connStr;
+    const projectRef = directMatch[1].toLowerCase();
+    const cachedHost = SUPABASE_POOLER_HOST_CACHE.get(projectRef);
+    const baseUser = decodeURIComponent(u.username || 'postgres').replace(
+      new RegExp(`\\.${projectRef}$`, 'i'),
+      ''
+    );
+
+    if (cachedHost) {
+      u.hostname = cachedHost;
+      u.username = encodeURIComponent(`${baseUser}.${projectRef}`);
+      return u.toString();
+    }
+
+    for (const region of SUPABASE_AWS_REGIONS) {
+      const candidateHost = `aws-0-${region}.pooler.supabase.com`;
+      const testUrl = new URL(connStr);
+      testUrl.hostname = candidateHost;
+      testUrl.port = '5432';
+      testUrl.username = encodeURIComponent(`${baseUser}.${projectRef}`);
+      const testPool = new Pool({
+        connectionString: testUrl.toString(),
+        ssl: { rejectUnauthorized: false },
+        max: 1,
+        connectionTimeoutMillis: 3500,
+      });
+      try {
+        await testPool.query('SELECT 1');
+        await testPool.end().catch(() => null);
+        SUPABASE_POOLER_HOST_CACHE.set(projectRef, candidateHost);
+        return testUrl.toString();
+      } catch (err) {
+        await testPool.end().catch(() => null);
+        const msg = err instanceof Error ? err.message : String(err);
+        if (!/tenant or user not found/i.test(msg)) {
+          // Found the exact regional pooler for this Supabase project!
+          SUPABASE_POOLER_HOST_CACHE.set(projectRef, candidateHost);
+          return testUrl.toString();
+        }
+      }
+    }
+  } catch {
+    // Ignore resolution errors
+  }
+  return connStr;
 }
 
 function readConnectionStringFromEnv(): string {
@@ -114,22 +259,78 @@ function readConnectionStringFromEnv(): string {
 
 let cachedPgPool: pg.Pool | null = null;
 let cachedPgConnStr = '';
+let runtimeCustomConnStr = '';
+let pgConnectionVerified = false;
+let lastPgConnectionError = '';
+
+function loadSavedRuntimeConnectionString(): string {
+  const candidates = IS_SERVERLESS_HOST
+    ? [CLOUD_PG_CONN_FILE, PERSISTENT_PG_CONN_FILE]
+    : [PERSISTENT_PG_CONN_FILE, CLOUD_PG_CONN_FILE];
+  for (const filePath of candidates) {
+    try {
+      if (existsSync(filePath)) {
+        const parsed = JSON.parse(readFileSync(filePath, 'utf-8')) as { connectionString?: string };
+        if (parsed?.connectionString) {
+          const norm = normalizePostgresConnectionString(parsed.connectionString);
+          if (norm) return norm;
+        }
+      }
+    } catch {
+      // Ignore read errors
+    }
+  }
+  return '';
+}
+
+function saveRuntimePostgresConnectionString(connStr: string): void {
+  const norm = normalizePostgresConnectionString(connStr);
+  runtimeCustomConnStr = norm;
+  const payload = JSON.stringify({ connectionString: norm, updatedAt: new Date().toISOString() });
+  try {
+    writeFileSync(PERSISTENT_PG_CONN_FILE, payload, 'utf-8');
+  } catch {
+    // Ignore write errors in read-only environments
+  }
+  try {
+    writeFileSync(CLOUD_PG_CONN_FILE, payload, 'utf-8');
+  } catch {
+    // Ignore write errors
+  }
+}
+
+function getEffectiveConnectionString(): string {
+  if (runtimeCustomConnStr) {
+    const normalized = normalizePostgresConnectionString(runtimeCustomConnStr);
+    if (normalized) return normalized;
+  }
+  const savedDisk = loadSavedRuntimeConnectionString();
+  if (savedDisk) {
+    runtimeCustomConnStr = savedDisk;
+    return savedDisk;
+  }
+  return readConnectionStringFromEnv();
+}
+
+function createPgPoolForConnectionString(connStr: string): pg.Pool {
+  const isLocalhost = /@(?:localhost|127\.0\.0\.1)(?::|\/|$)/i.test(connStr);
+  return new Pool({
+    connectionString: connStr,
+    ssl: isLocalhost ? false : { rejectUnauthorized: false },
+    max: 4,
+    connectionTimeoutMillis: 8000,
+  });
+}
 
 function getPgPool(): pg.Pool | null {
-  const raw = readConnectionStringFromEnv();
+  const raw = getEffectiveConnectionString();
   if (!raw) return null;
   if (cachedPgPool && cachedPgConnStr === raw) {
     return cachedPgPool;
   }
   try {
     cachedPgConnStr = raw;
-    const isLocalhost = /@(?:localhost|127\.0\.0\.1)(?::|\/|$)/i.test(raw);
-    cachedPgPool = new Pool({
-      connectionString: raw,
-      ssl: isLocalhost ? false : { rejectUnauthorized: false },
-      max: 4,
-      connectionTimeoutMillis: 6000,
-    });
+    cachedPgPool = createPgPoolForConnectionString(raw);
     return cachedPgPool;
   } catch {
     return null;
@@ -297,6 +498,7 @@ interface ServerColumnFilterRule {
     | 'gt'
     | 'lt'
     | 'between'
+    | 'date_range'
     | 'empty'
     | 'not_empty';
   queryValue: string;
@@ -304,9 +506,22 @@ interface ServerColumnFilterRule {
   excludedValues: string[];
 }
 
+interface ServerConnectionInfo {
+  serverName: string;
+  serverEngine: string;
+  loginUser: string;
+  host: string;
+  port: number;
+  database: string;
+  isLivePostgres: boolean;
+  isConnected: boolean;
+  connectedAt: string;
+}
+
 interface CloudWorkspaceState {
   workspaceId: string;
   workspaceName: string;
+  serverInfo?: ServerConnectionInfo;
   activeDatabaseName: string;
   databases: ServerDatabase[];
   activeTableName: string;
@@ -538,19 +753,20 @@ function ensurePrimaryKeyIdentityColumn(columns: ServerColumn[]): ServerColumn[]
   const existingPk = columns.find(
     (c) => c.isPrimaryKey || c.isIdentity || c.id.toLowerCase() === 'id' || c.name.toLowerCase() === 'id'
   );
+  const pkName = existingPk?.name || existingPk?.id || 'ID';
   const pkCol: ServerColumn = {
-    id: 'ID',
-    name: 'ID',
-    colType: 'number',
+    id: pkName,
+    name: pkName,
+    colType: existingPk?.colType || 'number',
     orderIndex: 0,
     width: existingPk?.width || 90,
     required: true,
     isNullable: false,
     isPrimaryKey: true,
-    isIdentity: true,
+    isIdentity: existingPk?.isIdentity ?? true,
     identitySeed: existingPk?.identitySeed ?? 1,
     identityIncrement: existingPk?.identityIncrement ?? 1,
-    defaultValue: '',
+    defaultValue: existingPk?.defaultValue ?? '',
     formula: '',
     optionsCsv: '',
   };
@@ -559,8 +775,8 @@ function ensurePrimaryKeyIdentityColumn(columns: ServerColumn[]): ServerColumn[]
       c !== existingPk &&
       !c.isPrimaryKey &&
       !c.isIdentity &&
-      c.id.toLowerCase() !== 'id' &&
-      c.name.toLowerCase() !== 'id'
+      c.id.toLowerCase() !== pkName.toLowerCase() &&
+      c.name.toLowerCase() !== pkName.toLowerCase()
   );
   return [
     pkCol,
@@ -655,11 +871,20 @@ function sanitizeRowsAgainstSchema(columns: ServerColumn[], rows: ServerRow[]): 
     }
   }
 
-  const assignedPkByRowId = new Map<string, number>();
+  const assignedPkByRowId = new Map<string, string | number>();
   if (pkCol) {
-    const seenInPass = new Set<number>();
+    const seenInPass = new Set<string | number>();
     for (const r of rows) {
-      const rawPk = r.cells?.[pkCol.name] ?? r.cells?.[pkCol.id];
+      const rawPk =
+        r.cells?.[pkCol.name] ??
+        r.cells?.[pkCol.id] ??
+        r.cells?.['ID'] ??
+        r.cells?.['id'];
+      if (pkCol.colType !== 'number' && typeof rawPk === 'string' && rawPk.trim().length > 0 && !seenInPass.has(rawPk.trim())) {
+        seenInPass.add(rawPk.trim());
+        assignedPkByRowId.set(r.id, rawPk.trim());
+        continue;
+      }
       const numPk = Number(rawPk);
       if (Number.isInteger(numPk) && numPk >= 1 && !seenInPass.has(numPk)) {
         seenInPass.add(numPk);
@@ -1080,16 +1305,53 @@ function executeDatabaseQuery(
             }
             break;
           case 'between': {
+            const qEnd = (rule.queryValueEnd || '').trim().toLowerCase();
             const qEndNum = Number(rule.queryValueEnd);
-            if (
-              (rule.queryValue || '').trim().length > 0 &&
-              (rule.queryValueEnd || '').trim().length > 0 &&
-              !Number.isNaN(qNum) &&
-              !Number.isNaN(qEndNum) &&
-              !Number.isNaN(vNum)
-            ) {
-              if (vNum < Math.min(qNum, qEndNum) || vNum > Math.max(qNum, qEndNum)) {
-                return false;
+            if (q.length > 0 && qEnd.length > 0) {
+              if (!Number.isNaN(qNum) && !Number.isNaN(qEndNum) && !Number.isNaN(vNum)) {
+                if (vNum < Math.min(qNum, qEndNum) || vNum > Math.max(qNum, qEndNum)) {
+                  return false;
+                }
+              } else {
+                const minStr = q <= qEnd ? q : qEnd;
+                const maxStr = q <= qEnd ? qEnd : q;
+                if (lowerVal < minStr || lowerVal > maxStr) {
+                  return false;
+                }
+              }
+            }
+            break;
+          }
+          case 'date_range': {
+            const startRaw = (rule.queryValue || '').trim();
+            const endRaw = (rule.queryValueEnd || '').trim();
+            if (startRaw.length > 0 || endRaw.length > 0) {
+              if (strVal.trim().length === 0) return false;
+              const cellTime = Date.parse(strVal.trim());
+              const startTime = startRaw ? Date.parse(startRaw) : Number.NaN;
+              const endTime = endRaw ? Date.parse(endRaw) : Number.NaN;
+              if (!Number.isNaN(cellTime)) {
+                if (startRaw && !Number.isNaN(startTime) && endRaw && !Number.isNaN(endTime)) {
+                  const minTime = Math.min(startTime, endTime);
+                  const maxTime = Math.max(startTime, endTime);
+                  if (cellTime < minTime || cellTime > maxTime) return false;
+                } else if (startRaw && !Number.isNaN(startTime)) {
+                  if (cellTime < startTime) return false;
+                } else if (endRaw && !Number.isNaN(endTime)) {
+                  if (cellTime > endTime) return false;
+                }
+              } else {
+                const startLower = startRaw.toLowerCase();
+                const endLower = endRaw.toLowerCase();
+                if (startLower && endLower) {
+                  const minD = startLower <= endLower ? startLower : endLower;
+                  const maxD = startLower <= endLower ? endLower : startLower;
+                  if (lowerVal < minD || lowerVal > maxD) return false;
+                } else if (startLower && lowerVal < startLower) {
+                  return false;
+                } else if (endLower && lowerVal > endLower) {
+                  return false;
+                }
               }
             }
             break;
@@ -1230,10 +1492,23 @@ let debouncedWriteBehindTimer: ReturnType<typeof setTimeout> | null = null;
 async function execCreateDatabaseInPostgres(databaseName: string): Promise<void> {
   const pool = getPgPool();
   if (!pool || !databaseName) return;
+  const cleanDb = stripDboPrefix(databaseName);
+  if (!cleanDb) return;
   try {
-    await pool.query(`CREATE SCHEMA IF NOT EXISTS ${quoteSqlIdent(databaseName)}`);
+    await pool.query(`CREATE SCHEMA IF NOT EXISTS ${quoteSqlIdent(cleanDb)}`);
   } catch {
     // Ignore schema creation errors
+  }
+  try {
+    const dbExists = await pool.query(
+      `SELECT 1 FROM pg_database WHERE LOWER(datname) = LOWER($1) LIMIT 1`,
+      [cleanDb]
+    );
+    if (dbExists.rows.length === 0) {
+      await pool.query(`CREATE DATABASE ${quoteSqlIdent(cleanDb)}`);
+    }
+  } catch {
+    // Ignore CREATE DATABASE errors on managed poolers where schemas represent logical databases
   }
 }
 
@@ -1253,15 +1528,31 @@ async function execRenameDatabaseInPostgres(
   } catch {
     await execCreateDatabaseInPostgres(cleanNew);
   }
+  try {
+    await pool.query(
+      `ALTER DATABASE ${quoteSqlIdent(cleanOld)} RENAME TO ${quoteSqlIdent(cleanNew)}`
+    );
+  } catch {
+    // Ignore if database rename is not supported or active
+  }
 }
 
 async function execDropDatabaseFromPostgres(databaseName: string): Promise<void> {
   const pool = getPgPool();
   if (!pool || !databaseName) return;
+  const cleanDb = stripDboPrefix(databaseName);
+  if (!cleanDb) return;
   try {
-    await pool.query(`DROP SCHEMA IF EXISTS ${quoteSqlIdent(databaseName)} CASCADE`);
+    await pool.query(`DROP SCHEMA IF EXISTS ${quoteSqlIdent(cleanDb)} CASCADE`);
   } catch {
     // Ignore schema drop errors
+  }
+  if (!['postgres', 'defaultdb', 'supabase'].includes(cleanDb.toLowerCase())) {
+    try {
+      await pool.query(`DROP DATABASE IF EXISTS ${quoteSqlIdent(cleanDb)}`);
+    } catch {
+      // Ignore database drop errors
+    }
   }
 }
 
@@ -1549,6 +1840,77 @@ function getDatabaseSummaries(state: CloudWorkspaceState): DbDatabaseSummary[] {
     createdAt: db.createdAt,
     updatedAt: db.updatedAt,
   }));
+}
+
+function parseConnStrHostAndUser(connStr: string): {
+  host: string;
+  port: number;
+  user: string;
+  database: string;
+} | null {
+  if (!connStr) return null;
+  try {
+    const u = new URL(connStr);
+    return {
+      host: u.hostname || 'localhost',
+      port: Number(u.port || 5432),
+      user: decodeURIComponent(u.username || 'postgres'),
+      database: decodeURIComponent((u.pathname || '').replace(/^\//, '') || 'postgres'),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function resolveServerConnectionInfo(state: CloudWorkspaceState): ServerConnectionInfo {
+  const activeConnStr = getEffectiveConnectionString();
+  const parsedPg = parseConnStrHostAndUser(activeConnStr);
+  const existing = state.serverInfo;
+  const cleanExistingName =
+    existing?.serverName && existing.serverName !== 'localhost\\SQLEXPRESS'
+      ? existing.serverName
+      : '';
+  const cleanExistingEngine =
+    existing?.serverEngine && !existing.serverEngine.includes('SQL Server')
+      ? existing.serverEngine
+      : '';
+  const cleanExistingUser =
+    existing?.loginUser && existing.loginUser !== 'WINDOWS\\Admin'
+      ? existing.loginUser
+      : '';
+
+  if (parsedPg) {
+    const info: ServerConnectionInfo = {
+      serverName: cleanExistingName || parsedPg.host,
+      serverEngine: cleanExistingEngine || 'PostgreSQL 16.0',
+      loginUser: cleanExistingUser || parsedPg.user || 'postgres',
+      host: parsedPg.host,
+      port: parsedPg.port,
+      database: parsedPg.database || state.activeDatabaseName || 'GridPulse_DB',
+      isLivePostgres: pgConnectionVerified,
+      isConnected:
+        existing?.isConnected !== undefined
+          ? existing.isConnected
+          : pgConnectionVerified || !lastPgConnectionError,
+      connectedAt: existing?.connectedAt || state.updatedAt || new Date().toISOString(),
+    };
+    state.serverInfo = info;
+    return info;
+  }
+
+  const fallbackInfo: ServerConnectionInfo = {
+    serverName: cleanExistingName || 'localhost',
+    serverEngine: cleanExistingEngine || 'PostgreSQL 16.0',
+    loginUser: cleanExistingUser || 'postgres',
+    host: existing?.host || 'localhost',
+    port: existing?.port || 5432,
+    database: existing?.database || state.activeDatabaseName || 'GridPulse_DB',
+    isLivePostgres: Boolean(existing?.isLivePostgres && pgConnectionVerified),
+    isConnected: existing?.isConnected !== undefined ? existing.isConnected : true,
+    connectedAt: existing?.connectedAt || state.updatedAt || new Date().toISOString(),
+  };
+  state.serverInfo = fallbackInfo;
+  return fallbackInfo;
 }
 
 function extractLookupTemplateTokens(rawTemplate?: string): string[] {
@@ -2407,236 +2769,683 @@ const cloudState: CloudWorkspaceState = loadOrCreateState();
 let pgHydrationPromise: Promise<void> | null = null;
 let pgHasHydrated = false;
 
-async function ensurePostgresHydrated(): Promise<void> {
-  if (pgHasHydrated) return;
+const SYSTEM_EXCLUDED_SCHEMAS = [
+  'pg_catalog',
+  'information_schema',
+  'pg_toast',
+  'auth',
+  'storage',
+  'extensions',
+  'realtime',
+  'graphql',
+  'graphql_public',
+  'vault',
+  'pgbouncer',
+  'supabase_functions',
+  'supabase_migrations',
+  '_realtime',
+  'net',
+  'pgsodium',
+  'pgsodium_masks',
+  'cron',
+  'supabase_url',
+];
+
+function formatPgCellValue(
+  rawVal: unknown,
+  colType: ServerColumn['colType']
+): string | number | boolean {
+  if (rawVal === null || rawVal === undefined) {
+    return colType === 'checkbox' ? false : '';
+  }
+  if (colType === 'checkbox') {
+    if (typeof rawVal === 'boolean') return rawVal;
+    const lower = String(rawVal).trim().toLowerCase();
+    return lower === 'true' || lower === 't' || lower === '1' || lower === 'yes';
+  }
+  if (colType === 'number') {
+    const num = Number(rawVal);
+    return Number.isFinite(num) ? num : 0;
+  }
+  if (rawVal instanceof Date) {
+    return colType === 'date'
+      ? rawVal.toISOString().slice(0, 10)
+      : rawVal.toISOString().replace('T', ' ').slice(0, 19);
+  }
+  if (typeof rawVal === 'object') {
+    try {
+      return JSON.stringify(rawVal);
+    } catch {
+      return String(rawVal);
+    }
+  }
+  return String(rawVal);
+}
+
+function mapPgDataTypeToColType(dataType: string, udtName = ''): ServerColumn['colType'] {
+  const dt = `${dataType || ''} ${udtName || ''}`.toLowerCase();
+  if (
+    dt.includes('int') ||
+    dt.includes('numeric') ||
+    dt.includes('decimal') ||
+    dt.includes('real') ||
+    dt.includes('double') ||
+    dt.includes('float') ||
+    dt.includes('money')
+  ) {
+    return 'number';
+  }
+  if (dt.includes('bool')) {
+    return 'checkbox';
+  }
+  if (dt.includes('date') || dt.includes('timestamp') || dt.includes('time')) {
+    return 'date';
+  }
+  if (dt.includes('varchar') || dt.includes('character varying')) {
+    return 'varchar_max';
+  }
+  return 'text';
+}
+
+let lastPgIntrospectTimestampMs = 0;
+
+const SYSTEM_EXCLUDED_DATABASES = new Set([
+  'template0',
+  'template1',
+  'rdsadmin',
+  'cloudsqladmin',
+  'azure_maintenance',
+  'azure_sys',
+  'supabase_admin',
+]);
+
+async function introspectSinglePostgresPoolSchemas(
+  pool: pg.Pool,
+  excludedSqlList: string,
+  defaultDbLabel: string,
+  isSecondaryCatalogDb: boolean,
+  savedMetaState: CloudWorkspaceState | null,
+  state: CloudWorkspaceState,
+  metaUser: string,
+  nowIso: string,
+  pgExistingTablesSet: Set<string>
+): Promise<{ databases: ServerDatabase[]; rowCount: number }> {
+  const schemasRes = await pool
+    .query<{ schema_name: string }>(`
+      SELECT schema_name
+      FROM information_schema.schemata
+      WHERE schema_name NOT IN (${excludedSqlList})
+        AND schema_name NOT LIKE 'pg_%'
+      ORDER BY schema_name ASC
+    `)
+    .catch(() => ({ rows: [] as { schema_name: string }[] }));
+
+  const pkRes = await pool
+    .query<{ table_schema: string; table_name: string; column_name: string }>(`
+      SELECT
+        tc.table_schema,
+        tc.table_name,
+        kcu.column_name
+      FROM information_schema.table_constraints tc
+      INNER JOIN information_schema.key_column_usage kcu
+        ON tc.constraint_name = kcu.constraint_name
+       AND tc.table_schema = kcu.table_schema
+       AND tc.table_name = kcu.table_name
+      WHERE tc.constraint_type = 'PRIMARY KEY'
+        AND tc.table_schema NOT IN (${excludedSqlList})
+        AND tc.table_schema NOT LIKE 'pg_%'
+    `)
+    .catch(() => ({ rows: [] as { table_schema: string; table_name: string; column_name: string }[] }));
+
+  const pkByTable = new Map<string, Set<string>>();
+  for (const pk of pkRes.rows) {
+    const key = `${pk.table_schema.toLowerCase()}::${pk.table_name.toLowerCase()}`;
+    if (!pkByTable.has(key)) pkByTable.set(key, new Set());
+    pkByTable.get(key)!.add(pk.column_name.toLowerCase());
+  }
+
+  // Use LEFT JOIN on information_schema.columns so even tables with 0 columns or newly created tables are discovered
+  const allColsRes = await pool
+    .query<{
+      table_schema: string;
+      table_name: string;
+      column_name: string | null;
+      data_type: string | null;
+      udt_name: string | null;
+      is_nullable: string | null;
+      column_default: string | null;
+      is_identity: string | null;
+      ordinal_position: number | null;
+    }>(`
+      SELECT
+        t.table_schema,
+        t.table_name,
+        c.column_name,
+        c.data_type,
+        c.udt_name,
+        c.is_nullable,
+        c.column_default,
+        c.is_identity,
+        c.ordinal_position
+      FROM information_schema.tables t
+      LEFT JOIN information_schema.columns c
+        ON t.table_schema = c.table_schema
+       AND t.table_name = c.table_name
+      WHERE t.table_type IN ('BASE TABLE', 'VIEW', 'FOREIGN', 'PARTITIONED TABLE')
+        AND t.table_schema NOT IN (${excludedSqlList})
+        AND t.table_schema NOT LIKE 'pg_%'
+        AND t.table_name NOT LIKE '__gridpulse%'
+        AND t.table_name NOT LIKE 'pg_%'
+      ORDER BY t.table_schema ASC, t.table_name ASC, c.ordinal_position ASC
+    `)
+    .catch(() => ({ rows: [] }));
+
+  const grouped = new Map<
+    string,
+    Map<
+      string,
+      {
+        column_name: string;
+        data_type: string;
+        udt_name: string;
+        is_nullable: string;
+        column_default: string | null;
+        is_identity: string | null;
+        ordinal_position: number;
+      }[]
+    >
+  >();
+
+  for (const s of schemasRes.rows) {
+    if (s.schema_name && !grouped.has(s.schema_name)) {
+      grouped.set(s.schema_name, new Map());
+    }
+  }
+
+  for (const r of allColsRes.rows) {
+    if (!r.table_schema || !r.table_name) continue;
+    let tblMap = grouped.get(r.table_schema);
+    if (!tblMap) {
+      tblMap = new Map();
+      grouped.set(r.table_schema, tblMap);
+    }
+    let colList = tblMap.get(r.table_name);
+    if (!colList) {
+      colList = [];
+      tblMap.set(r.table_name, colList);
+    }
+    if (r.column_name) {
+      colList.push({
+        column_name: r.column_name,
+        data_type: r.data_type || 'text',
+        udt_name: r.udt_name || 'text',
+        is_nullable: r.is_nullable || 'YES',
+        column_default: r.column_default,
+        is_identity: r.is_identity,
+        ordinal_position: r.ordinal_position || colList.length + 1,
+      });
+    }
+  }
+
+  const discoveredDatabases: ServerDatabase[] = [];
+  let totalRowsRetrieved = 0;
+
+  for (const [schemaName, tblMap] of grouped.entries()) {
+    // If this is a secondary catalog database (e.g. created via CREATE DATABASE mydb),
+    // map its 'public' schema directly to the catalog database name so it appears in the tree as 'mydb'!
+    const effectiveDbName =
+      isSecondaryCatalogDb && schemaName.toLowerCase() === 'public'
+        ? defaultDbLabel
+        : isSecondaryCatalogDb
+          ? `${defaultDbLabel}_${schemaName}`
+          : schemaName;
+
+    if (
+      !isSecondaryCatalogDb &&
+      schemaName.toLowerCase() === 'public' &&
+      tblMap.size === 0 &&
+      grouped.size > 1
+    ) {
+      // Only skip empty 'public' on primary connection if the user didn't explicitly have 'public' in state
+      const hadPublicExplicitly =
+        savedMetaState?.databases?.some((d) => d.databaseName.toLowerCase() === 'public') ||
+        state.databases.some((d) => d.databaseName.toLowerCase() === 'public');
+      if (!hadPublicExplicitly) {
+        continue;
+      }
+    }
+
+    const existingDb =
+      savedMetaState?.databases?.find(
+        (d) => d.databaseName.toLowerCase() === effectiveDbName.toLowerCase()
+      ) ||
+      state.databases.find((d) => d.databaseName.toLowerCase() === effectiveDbName.toLowerCase());
+
+    const dbTables: ServerTable[] = [];
+
+    for (const [tblName, colRows] of tblMap.entries()) {
+      pgExistingTablesSet.add(`${effectiveDbName.toLowerCase()}::${tblName.toLowerCase()}`);
+      pgExistingTablesSet.add(`${schemaName.toLowerCase()}::${tblName.toLowerCase()}`);
+
+      const existingTbl = existingDb?.tables?.find(
+        (t) => t.tableName.toLowerCase() === tblName.toLowerCase()
+      );
+      const tableKey = `${schemaName.toLowerCase()}::${tblName.toLowerCase()}`;
+      const pkSet = pkByTable.get(tableKey);
+
+      const builtCols: ServerColumn[] = colRows.map((c, idx) => {
+        const prevCol = existingTbl?.columns?.find(
+          (ec) => ec.name.toLowerCase() === c.column_name.toLowerCase()
+        );
+        const isPk = pkSet
+          ? pkSet.has(c.column_name.toLowerCase())
+          : c.column_name.toLowerCase() === 'id' || idx === 0;
+        const isIdent =
+          isPk ||
+          c.is_identity === 'YES' ||
+          String(c.column_default || '').toLowerCase().includes('nextval');
+        const mappedType = mapPgDataTypeToColType(c.data_type, c.udt_name);
+
+        if (prevCol) {
+          return {
+            ...prevCol,
+            id: c.column_name,
+            name: c.column_name,
+            orderIndex: idx,
+            isPrimaryKey: isPk,
+            isIdentity: isIdent,
+            required: c.is_nullable === 'NO',
+            isNullable: c.is_nullable !== 'NO',
+          };
+        }
+
+        return {
+          id: c.column_name,
+          name: c.column_name,
+          colType: mappedType,
+          orderIndex: idx,
+          width: isPk ? 95 : 160,
+          required: c.is_nullable === 'NO',
+          isNullable: c.is_nullable !== 'NO',
+          isPrimaryKey: isPk,
+          isIdentity: isIdent,
+          identitySeed: 1,
+          identityIncrement: 1,
+          defaultValue: '',
+          formula: '',
+          optionsCsv: '',
+        };
+      });
+
+      if (existingTbl?.columns) {
+        for (const ec of existingTbl.columns) {
+          if (
+            ec.colType === 'formula' &&
+            !builtCols.some((bc) => bc.name.toLowerCase() === ec.name.toLowerCase())
+          ) {
+            builtCols.push({ ...ec, orderIndex: builtCols.length });
+          }
+        }
+      }
+
+      const quotedSchemaTbl = `${quoteSqlIdent(schemaName)}.${quoteSqlIdent(tblName)}`;
+      const liveDataRes = await pool
+        .query<Record<string, unknown>>(
+          `SELECT * FROM ${quotedSchemaTbl} ORDER BY 1 ASC LIMIT 5000`
+        )
+        .catch(() => null);
+
+      const liveRows: ServerRow[] = (liveDataRes?.rows || []).map((r, rIdx) => {
+        const cells: Record<string, string | number | boolean> = {};
+        for (const col of builtCols) {
+          if (col.colType === 'formula') continue;
+          const rawVal = r[col.name] !== undefined ? r[col.name] : r[col.id];
+          const norm = formatPgCellValue(rawVal, col.colType);
+          cells[col.name] = norm;
+          cells[col.id] = norm;
+        }
+        const pkCol = builtCols.find((c) => c.isPrimaryKey || c.isIdentity);
+        const pkVal =
+          (pkCol ? cells[pkCol.name] ?? cells[pkCol.id] : undefined) ??
+          cells['ID'] ??
+          cells['id'] ??
+          rIdx + 1;
+        return {
+          id: `row_pg_${String(pkVal).replace(/[^a-zA-Z0-9_-]/g, '_')}_${rIdx}`,
+          orderIndex: (rIdx + 1) * 10,
+          cells,
+          updatedBy: metaUser || 'PostgreSQL',
+          updatedAt: nowIso,
+        };
+      });
+
+      totalRowsRetrieved += liveRows.length;
+
+      const hydratedTbl = normalizeServerTable({
+        tableName: tblName,
+        columns: builtCols,
+        rows: liveRows,
+        identitySeed: existingTbl?.identitySeed || 1,
+        identityIncrement: existingTbl?.identityIncrement || 1,
+        nextIdentityValue: computeNextIdentityValue(builtCols, liveRows),
+        createdAt: existingTbl?.createdAt || nowIso,
+        updatedAt: nowIso,
+      });
+      dbTables.push(hydratedTbl);
+    }
+
+    // Preserve any tables in existingDb from metadata that haven't been flushed to PG yet
+    if (existingDb?.tables) {
+      for (const metaTbl of existingDb.tables) {
+        if (!dbTables.some((t) => t.tableName.toLowerCase() === metaTbl.tableName.toLowerCase())) {
+          dbTables.push(normalizeServerTable(metaTbl));
+        }
+      }
+    }
+
+    discoveredDatabases.push({
+      databaseName: effectiveDbName,
+      activeTableName:
+        existingDb?.activeTableName &&
+        dbTables.some(
+          (t) => t.tableName.toLowerCase() === existingDb.activeTableName.toLowerCase()
+        )
+          ? existingDb.activeTableName
+          : dbTables[0]?.tableName || '',
+      tables: dbTables,
+      createdAt: existingDb?.createdAt || nowIso,
+      updatedAt: nowIso,
+    });
+  }
+
+  return { databases: discoveredDatabases, rowCount: totalRowsRetrieved };
+}
+
+async function introspectAndHydrateFromPostgresPool(
+  pool: pg.Pool,
+  state: CloudWorkspaceState,
+  options: { replaceAllDatabases?: boolean; baseConnectionString?: string } = {}
+): Promise<{
+  serverDatabase: string;
+  loginUser: string;
+  serverVersion: string;
+  databaseCount: number;
+  tableCount: number;
+  fieldCount: number;
+  rowCount: number;
+  pgExistingTablesSet: Set<string>;
+}> {
+  const metaQuery = await pool.query<{
+    db: string;
+    usr: string;
+    ver: string;
+  }>(`SELECT current_database() AS db, current_user AS usr, current_setting('server_version') AS ver`);
+
+  const metaRow = metaQuery.rows[0] || { db: 'postgres', usr: 'postgres', ver: '16.0' };
+  pgConnectionVerified = true;
+  lastPgConnectionError = '';
+
+  await pool
+    .query(`
+      CREATE TABLE IF NOT EXISTS "public"."__gridpulse_workspace_state" (
+        "workspace_id" TEXT PRIMARY KEY,
+        "state_json" TEXT NOT NULL,
+        "updated_at" TIMESTAMPTZ DEFAULT NOW()
+      )
+    `)
+    .catch(() => null);
+
+  const metaRes = await pool
+    .query<{ state_json: string }>(
+      `SELECT "state_json" FROM "public"."__gridpulse_workspace_state" WHERE "workspace_id" = $1 LIMIT 1`,
+      ['ws_gridpulse_main']
+    )
+    .catch(() => ({ rows: [] as { state_json: string }[] }));
+
+  let savedMetaState: CloudWorkspaceState | null = null;
+  if (metaRes.rows.length > 0 && metaRes.rows[0].state_json) {
+    savedMetaState = parseAndHydrateWorkspaceState(metaRes.rows[0].state_json);
+    if (savedMetaState && !options.replaceAllDatabases) {
+      const isDiskFreshInit =
+        state.activities?.length === 1 && state.activities[0]?.id === 'act_init';
+      const pgTime = Date.parse(savedMetaState.updatedAt || '') || 0;
+      const localTime = Date.parse(state.updatedAt || '') || 0;
+      if (isDiskFreshInit || pgTime >= localTime) {
+        Object.assign(state, savedMetaState);
+        ensureDatabasesHierarchy(state);
+      }
+    }
+  }
+
+  const excludedSqlList = SYSTEM_EXCLUDED_SCHEMAS.map((s) => `'${s}'`).join(', ');
+  const nowIso = new Date().toISOString();
+  const pgExistingTablesSet = new Set<string>();
+  const discoveredDatabases: ServerDatabase[] = [];
+  let totalRowsRetrieved = 0;
+
+  // 1. Introspect all schemas & tables in the primary connected PostgreSQL database
+  const primaryResult = await introspectSinglePostgresPoolSchemas(
+    pool,
+    excludedSqlList,
+    metaRow.db || 'postgres',
+    false,
+    savedMetaState,
+    state,
+    metaRow.usr || 'postgres',
+    nowIso,
+    pgExistingTablesSet
+  );
+  discoveredDatabases.push(...primaryResult.databases);
+  totalRowsRetrieved += primaryResult.rowCount;
+
+  // 2. Also query pg_database for any additional user-created catalog databases on the same server
+  const catalogDbsRes = await pool
+    .query<{ datname: string }>(`
+      SELECT datname
+      FROM pg_database
+      WHERE datistemplate = false
+        AND datallowconn = true
+      ORDER BY datname ASC
+    `)
+    .catch(() => ({ rows: [] as { datname: string }[] }));
+
+  const activeConnStr = options.baseConnectionString || getEffectiveConnectionString();
+  for (const dbRow of catalogDbsRes.rows) {
+    const datName = (dbRow.datname || '').trim();
+    if (!datName) continue;
+    const lowerDat = datName.toLowerCase();
+    if (
+      SYSTEM_EXCLUDED_DATABASES.has(lowerDat) ||
+      lowerDat === (metaRow.db || 'postgres').toLowerCase()
+    ) {
+      continue;
+    }
+
+    // If this catalog database is not the primary connected database, try connecting to it to fetch its tables & fields
+    let secondaryTables: ServerTable[] = [];
+    if (activeConnStr) {
+      try {
+        const u = new URL(activeConnStr);
+        u.pathname = `/${encodeURIComponent(datName)}`;
+        const secPool = createPgPoolForConnectionString(u.toString());
+        try {
+          const secResult = await introspectSinglePostgresPoolSchemas(
+            secPool,
+            excludedSqlList,
+            datName,
+            true,
+            savedMetaState,
+            state,
+            metaRow.usr || 'postgres',
+            nowIso,
+            pgExistingTablesSet
+          );
+          for (const secDb of secResult.databases) {
+            if (secDb.databaseName.toLowerCase() === lowerDat) {
+              secondaryTables = secDb.tables;
+            } else if (
+              !discoveredDatabases.some(
+                (d) => d.databaseName.toLowerCase() === secDb.databaseName.toLowerCase()
+              )
+            ) {
+              discoveredDatabases.push(secDb);
+            }
+          }
+          totalRowsRetrieved += secResult.rowCount;
+        } finally {
+          await secPool.end().catch(() => null);
+        }
+      } catch {
+        // Ignore if pooler only routes to default database
+      }
+    }
+
+    if (!discoveredDatabases.some((d) => d.databaseName.toLowerCase() === lowerDat)) {
+      const existingCatalogDb =
+        savedMetaState?.databases?.find((d) => d.databaseName.toLowerCase() === lowerDat) ||
+        state.databases.find((d) => d.databaseName.toLowerCase() === lowerDat);
+      const mergedTables =
+        secondaryTables.length > 0 ? secondaryTables : existingCatalogDb?.tables || [];
+      discoveredDatabases.push({
+        databaseName: datName,
+        activeTableName:
+          existingCatalogDb?.activeTableName || mergedTables[0]?.tableName || '',
+        tables: mergedTables,
+        createdAt: existingCatalogDb?.createdAt || nowIso,
+        updatedAt: nowIso,
+      });
+    }
+  }
+
+  // 3. Also preserve any databases recorded in savedMetaState (e.g. empty databases created in UI)
+  if (savedMetaState?.databases) {
+    for (const metaDb of savedMetaState.databases) {
+      if (
+        !discoveredDatabases.some(
+          (d) => d.databaseName.toLowerCase() === metaDb.databaseName.toLowerCase()
+        )
+      ) {
+        discoveredDatabases.push(metaDb);
+      }
+    }
+  }
+
+  if (options.replaceAllDatabases) {
+    if (discoveredDatabases.length > 0) {
+      // Also preserve any custom user-created databases in memory that are not the default single 'GridPulse_DB'
+      for (const localDb of state.databases) {
+        const isDefaultUntouched =
+          localDb.databaseName === 'GridPulse_DB' &&
+          localDb.tables.length === 1 &&
+          localDb.tables[0].tableName === 'Initiatives';
+        if (
+          !isDefaultUntouched &&
+          !discoveredDatabases.some(
+            (d) => d.databaseName.toLowerCase() === localDb.databaseName.toLowerCase()
+          )
+        ) {
+          discoveredDatabases.push(localDb);
+        }
+      }
+      state.databases = discoveredDatabases;
+      const firstDbWithTables =
+        discoveredDatabases.find((d) => d.tables.length > 0) || discoveredDatabases[0];
+      state.activeDatabaseName = firstDbWithTables.databaseName;
+      state.activeTableName =
+        firstDbWithTables.activeTableName || firstDbWithTables.tables[0]?.tableName || '';
+    }
+  } else {
+    for (const discDb of discoveredDatabases) {
+      const targetDbIdx = state.databases.findIndex(
+        (d) => d.databaseName.toLowerCase() === discDb.databaseName.toLowerCase()
+      );
+      if (targetDbIdx === -1) {
+        state.databases.push(discDb);
+      } else {
+        const currentDb = state.databases[targetDbIdx];
+        for (const discTbl of discDb.tables) {
+          const tblIdx = currentDb.tables.findIndex(
+            (t) => t.tableName.toLowerCase() === discTbl.tableName.toLowerCase()
+          );
+          if (tblIdx === -1) {
+            currentDb.tables.push(discTbl);
+          } else {
+            const curTbl = currentDb.tables[tblIdx];
+            if (
+              discTbl.columns.length > curTbl.columns.length ||
+              (curTbl.rows.length === 0 && discTbl.rows.length > 0)
+            ) {
+              currentDb.tables[tblIdx] = discTbl;
+            }
+          }
+        }
+        if (!currentDb.activeTableName && currentDb.tables.length > 0) {
+          currentDb.activeTableName = currentDb.tables[0].tableName;
+        }
+      }
+    }
+  }
+
+  ensureDatabasesHierarchy(state);
+  getTargetTable(state, state.activeTableName, state.activeDatabaseName);
+  lastPgIntrospectTimestampMs = Date.now();
+
+  const allDbs = state.databases || [];
+  const tableCount = allDbs.reduce((acc, d) => acc + (d.tables?.length || 0), 0);
+  const fieldCount = allDbs.reduce(
+    (acc, d) => acc + (d.tables || []).reduce((tAcc, t) => tAcc + (t.columns?.length || 0), 0),
+    0
+  );
+
+  return {
+    serverDatabase: metaRow.db || 'postgres',
+    loginUser: metaRow.usr || 'postgres',
+    serverVersion: metaRow.ver || '16.0',
+    databaseCount: allDbs.length,
+    tableCount,
+    fieldCount,
+    rowCount: totalRowsRetrieved,
+    pgExistingTablesSet,
+  };
+}
+
+async function ensurePostgresHydrated(forceRefresh = false): Promise<void> {
+  const now = Date.now();
+  // Re-introspect if forced or if more than 15 seconds have elapsed since last introspection
+  if (pgHasHydrated && !forceRefresh && now - lastPgIntrospectTimestampMs < 15000) {
+    return;
+  }
   if (pgHydrationPromise) return pgHydrationPromise;
 
   pgHydrationPromise = (async () => {
-    const pool = getPgPool();
+    let connStr = getEffectiveConnectionString();
+    if (!connStr) {
+      pgHasHydrated = true;
+      pgHydrationPromise = null;
+      return;
+    }
+
+    connStr = await resolveSupabaseIpv4PoolerConnectionString(connStr);
+    if (connStr !== cachedPgConnStr) {
+      cachedPgConnStr = connStr;
+      if (cachedPgPool) {
+        await cachedPgPool.end().catch(() => null);
+      }
+      cachedPgPool = createPgPoolForConnectionString(connStr);
+    }
+
+    const pool = cachedPgPool || getPgPool();
     if (!pool) {
       pgHasHydrated = true;
+      pgHydrationPromise = null;
       return;
     }
 
     try {
-      await pool.query(`
-        CREATE TABLE IF NOT EXISTS "public"."__gridpulse_workspace_state" (
-          "workspace_id" TEXT PRIMARY KEY,
-          "state_json" TEXT NOT NULL,
-          "updated_at" TIMESTAMPTZ DEFAULT NOW()
-        )
-      `);
-
-      const metaRes = await pool
-        .query<{ state_json: string }>(
-          `SELECT "state_json" FROM "public"."__gridpulse_workspace_state" WHERE "workspace_id" = $1 LIMIT 1`,
-          ['ws_gridpulse_main']
-        )
-        .catch(() => ({ rows: [] as { state_json: string }[] }));
-
-      const isDiskFreshInit =
-        cloudState.activities?.length === 1 && cloudState.activities[0]?.id === 'act_init';
-
-      if (metaRes.rows.length > 0 && metaRes.rows[0].state_json) {
-        const pgState = parseAndHydrateWorkspaceState(metaRes.rows[0].state_json);
-        if (pgState) {
-          const pgTime = Date.parse(pgState.updatedAt || '') || 0;
-          const localTime = Date.parse(cloudState.updatedAt || '') || 0;
-
-          if (isDiskFreshInit || pgTime >= localTime) {
-            Object.assign(cloudState, pgState);
-            ensureDatabasesHierarchy(cloudState);
-            getTargetTable(
-              cloudState,
-              cloudState.activeTableName,
-              cloudState.activeDatabaseName
-            );
-            writeStateFilesToDiskOnly(cloudState);
-          }
-        }
-      }
-
-      // Single fast query to introspect all user schemas, tables, and columns in PostgreSQL
-      const allColsRes = await pool
-        .query<{
-          table_schema: string;
-          table_name: string;
-          column_name: string;
-          data_type: string;
-          is_nullable: string;
-          ordinal_position: number;
-        }>(`
-          SELECT table_schema, table_name, column_name, data_type, is_nullable, ordinal_position
-          FROM information_schema.columns
-          WHERE table_schema NOT IN ('pg_catalog', 'information_schema', 'pg_toast', 'public', 'auth', 'storage', 'extensions', 'realtime', 'graphql', 'graphql_public', 'vault', 'pgbouncer', 'supabase_functions', 'supabase_migrations', '_realtime', 'net', 'pgsodium', 'pgsodium_masks')
-            AND table_schema NOT LIKE 'pg_%'
-            AND table_name NOT LIKE '__gridpulse%'
-          ORDER BY table_schema ASC, table_name ASC, ordinal_position ASC
-        `)
-        .catch(() => null);
-
-      const pgExistingTablesSet = new Set<string>();
-
-      if (allColsRes && allColsRes.rows.length > 0) {
-        const grouped = new Map<
-          string,
-          Map<
-            string,
-            {
-              column_name: string;
-              data_type: string;
-              is_nullable: string;
-              ordinal_position: number;
-            }[]
-          >
-        >();
-
-        for (const r of allColsRes.rows) {
-          if (!r.table_schema || !r.table_name) continue;
-          pgExistingTablesSet.add(
-            `${r.table_schema.toLowerCase()}::${r.table_name.toLowerCase()}`
-          );
-          let tblMap = grouped.get(r.table_schema);
-          if (!tblMap) {
-            tblMap = new Map();
-            grouped.set(r.table_schema, tblMap);
-          }
-          let colList = tblMap.get(r.table_name);
-          if (!colList) {
-            colList = [];
-            tblMap.set(r.table_name, colList);
-          }
-          colList.push(r);
-        }
-
-        for (const [schemaName, tblMap] of grouped.entries()) {
-          let dbEntry = cloudState.databases.find(
-            (d) => d.databaseName.toLowerCase() === schemaName.toLowerCase()
-          );
-          if (!dbEntry) {
-            const nowIso = new Date().toISOString();
-            dbEntry = {
-              databaseName: schemaName,
-              activeTableName: '',
-              tables: [],
-              createdAt: nowIso,
-              updatedAt: nowIso,
-            };
-            cloudState.databases.push(dbEntry);
-          }
-
-          for (const [tblName, colRows] of tblMap.entries()) {
-            const existingTbl = dbEntry.tables.find(
-              (t) => t.tableName.toLowerCase() === tblName.toLowerCase()
-            );
-
-            // Hydrate if table is not in cloudState OR if existingTbl only had a 1-column stub while PostgreSQL has more columns
-            if (!existingTbl || colRows.length > existingTbl.columns.length) {
-              const nowIso = new Date().toISOString();
-              const builtCols: ServerColumn[] = colRows.map((c, idx) => {
-                const prevCol = existingTbl?.columns.find(
-                  (ec) => ec.name.toLowerCase() === c.column_name.toLowerCase()
-                );
-                if (prevCol) {
-                  return { ...prevCol, orderIndex: idx };
-                }
-                const isPk = c.column_name.toLowerCase() === 'id' || idx === 0;
-                const dt = (c.data_type || '').toLowerCase();
-                let colType: ServerColumn['colType'] = 'text';
-                if (
-                  dt.includes('int') ||
-                  dt.includes('numeric') ||
-                  dt.includes('decimal') ||
-                  dt.includes('real') ||
-                  dt.includes('double')
-                ) {
-                  colType = 'number';
-                } else if (dt.includes('bool')) {
-                  colType = 'checkbox';
-                } else if (dt.includes('char')) {
-                  colType = 'varchar_max';
-                }
-                return {
-                  id: c.column_name,
-                  name: c.column_name,
-                  colType,
-                  orderIndex: idx,
-                  width: isPk ? 95 : 160,
-                  required: c.is_nullable === 'NO',
-                  isNullable: c.is_nullable !== 'NO',
-                  isPrimaryKey: isPk,
-                  isIdentity: isPk,
-                  identitySeed: 1,
-                  identityIncrement: 1,
-                  defaultValue: '',
-                  formula: '',
-                  optionsCsv: '',
-                };
-              });
-
-              const quotedSchemaTbl = `${quoteSqlIdent(schemaName)}.${quoteSqlIdent(tblName)}`;
-              const liveDataRes = await pool
-                .query<Record<string, unknown>>(`SELECT * FROM ${quotedSchemaTbl} ORDER BY 1 ASC LIMIT 5000`)
-                .catch(() => null);
-              const liveRows: ServerRow[] = (liveDataRes?.rows || []).map((r, rIdx) => {
-                const cells: Record<string, string | number | boolean> = {};
-                for (const col of builtCols) {
-                  const rawVal = r[col.name] ?? r[col.id];
-                  const norm: string | number | boolean =
-                    rawVal === null || rawVal === undefined
-                      ? col.colType === 'checkbox'
-                        ? false
-                        : ''
-                      : col.colType === 'number'
-                      ? Number(rawVal)
-                      : col.colType === 'checkbox'
-                      ? Boolean(rawVal)
-                      : String(rawVal);
-                  cells[col.name] = norm;
-                  cells[col.id] = norm;
-                }
-                const pkVal = cells['ID'] ?? cells['id'] ?? rIdx + 1;
-                return {
-                  id: `row_pg_${pkVal}_${rIdx}`,
-                  orderIndex: (rIdx + 1) * 10,
-                  cells,
-                  updatedBy: 'PostgreSQL',
-                  updatedAt: nowIso,
-                };
-              });
-
-              if (!existingTbl) {
-                const hydratedTbl = normalizeServerTable({
-                  tableName: tblName,
-                  columns: builtCols,
-                  rows: liveRows,
-                  identitySeed: 1,
-                  identityIncrement: 1,
-                  nextIdentityValue: computeNextIdentityValue(builtCols, liveRows),
-                  createdAt: nowIso,
-                  updatedAt: nowIso,
-                });
-                dbEntry.tables.push(hydratedTbl);
-                if (!dbEntry.activeTableName) {
-                  dbEntry.activeTableName = hydratedTbl.tableName;
-                }
-              } else {
-                existingTbl.columns = builtCols;
-                if (liveRows.length > 0 && existingTbl.rows.length === 0) {
-                  existingTbl.rows = sanitizeRowsAgainstSchema(builtCols, liveRows);
-                }
-                existingTbl.nextIdentityValue = computeNextIdentityValue(
-                  existingTbl.columns,
-                  existingTbl.rows
-                );
-              }
-            }
-          }
-        }
-      }
-
-      ensureDatabasesHierarchy(cloudState);
-      getTargetTable(cloudState, cloudState.activeTableName, cloudState.activeDatabaseName);
+      const result = await introspectAndHydrateFromPostgresPool(pool, cloudState, {
+        replaceAllDatabases: false,
+        baseConnectionString: connStr,
+      });
       await persistWorkspaceState(cloudState, true);
 
       // Sync any tables in cloudState that do not yet exist in PostgreSQL in the background
@@ -2645,23 +3454,25 @@ async function ensurePostgresHydrated(): Promise<void> {
           await createDatabaseInRealBackend(db.databaseName, true);
           for (const tbl of db.tables) {
             const key = `${db.databaseName.toLowerCase()}::${tbl.tableName.toLowerCase()}`;
-            if (!pgExistingTablesSet.has(key)) {
+            if (!result.pgExistingTablesSet.has(key)) {
               await syncTableToRealDatabase(tbl, db.databaseName, true);
             }
           }
         }
       })();
-    } catch {
-      // Ignore PostgreSQL hydration errors when offline
+    } catch (err) {
+      pgConnectionVerified = false;
+      lastPgConnectionError = err instanceof Error ? err.message : String(err);
     } finally {
       pgHasHydrated = true;
+      pgHydrationPromise = null;
     }
   })();
 
   return pgHydrationPromise;
 }
 
-void ensurePostgresHydrated();
+void ensurePostgresHydrated(true);
 
 // Connected SSE clients for real-time collaboration
 const sseClients = new Set<Response>();
@@ -2783,9 +3594,16 @@ app.get('/api/workspace', async (req: Request, res: Response) => {
     columnCount: v.columnCount,
   }));
 
+  const srvInfo = resolveServerConnectionInfo(cloudState);
+
   res.json({
     workspaceId: cloudState.workspaceId,
     workspaceName: targetTable ? targetTable.tableName : targetDb.databaseName,
+    serverName: srvInfo.serverName,
+    serverEngine: srvInfo.serverEngine,
+    serverLoginUser: srvInfo.loginUser,
+    isServerConnected: srvInfo.isConnected,
+    serverInfo: srvInfo,
     activeDatabaseName: targetDb.databaseName,
     databases: getDatabaseSummaries(cloudState),
     activeTableName: targetTable ? targetTable.tableName : '',
@@ -2804,18 +3622,380 @@ app.get('/api/workspace', async (req: Request, res: Response) => {
 });
 
 /**
- * GET /api/workspace/tree — normal REST API endpoint for Sidebar Object Explorer tree
- * (Fetches database list, table list, field list, and nodes without using Redis or realtime streams)
+ * GET /api/workspace/tree — authoritative REST API endpoint for Sidebar Object Explorer tree
+ * (Fetches server info, all databases, tables, fields, and nodes)
  */
-app.get('/api/workspace/tree', async (_req: Request, res: Response) => {
-  await ensurePostgresHydrated();
+app.get('/api/workspace/tree', async (req: Request, res: Response) => {
+  const forceRefresh = req.query['refresh'] === '1' || req.query['refresh'] === 'true';
+  await ensurePostgresHydrated(forceRefresh);
+  ensureDatabasesHierarchy(cloudState);
   const targetDb = findDatabase(cloudState, cloudState.activeDatabaseName);
+  const srvInfo = resolveServerConnectionInfo(cloudState);
   res.status(200).json({
     ok: true,
+    serverName: srvInfo.serverName,
+    serverEngine: srvInfo.serverEngine,
+    serverLoginUser: srvInfo.loginUser,
+    isServerConnected: srvInfo.isConnected,
+    serverInfo: srvInfo,
     activeDatabaseName: targetDb.databaseName,
     activeTableName: cloudState.activeTableName || targetDb.activeTableName || '',
     databases: getDatabaseSummaries(cloudState),
     tables: getTableSummaries(cloudState, targetDb),
+    updatedAt: cloudState.updatedAt,
+  });
+});
+
+/**
+ * POST /api/workspace/restore-client-backup — restores client-side persisted databases/tables/fields/rows
+ * into the server state and syncs them to PostgreSQL if the container restarted with a fresh default state.
+ */
+app.post('/api/workspace/restore-client-backup', async (req: Request, res: Response) => {
+  try {
+    await ensurePostgresHydrated();
+    const body = (req.body || {}) as {
+      databases?: ServerDatabase[];
+      activeDatabaseName?: string;
+      activeTableName?: string;
+    };
+
+    if (!Array.isArray(body.databases) || body.databases.length === 0) {
+      res.status(200).json({ ok: false, error: 'No client backup databases provided.' });
+      return;
+    }
+
+    ensureDatabasesHierarchy(cloudState);
+    let restoredAny = false;
+    const nowIso = new Date().toISOString();
+
+    for (const backupDb of body.databases) {
+      const cleanDbName = stripDboPrefix(backupDb.databaseName || '').trim();
+      if (!cleanDbName) continue;
+
+      let existingDb = cloudState.databases.find(
+        (d) => d.databaseName.toLowerCase() === cleanDbName.toLowerCase()
+      );
+      if (!existingDb) {
+        const normalizedTables = (backupDb.tables || []).map((t) =>
+          normalizeServerTable({
+            ...t,
+            rows: Array.isArray(t.rows) ? t.rows : [],
+          })
+        );
+        existingDb = {
+          databaseName: cleanDbName,
+          activeTableName: backupDb.activeTableName || normalizedTables[0]?.tableName || '',
+          tables: normalizedTables,
+          createdAt: backupDb.createdAt || nowIso,
+          updatedAt: nowIso,
+        };
+        cloudState.databases.push(existingDb);
+        restoredAny = true;
+        void createDatabaseInRealBackend(cleanDbName, true);
+        for (const tbl of existingDb.tables) {
+          void syncTableToRealDatabase(tbl, cleanDbName, true);
+        }
+      } else {
+        for (const backupTbl of backupDb.tables || []) {
+          const cleanTblName = stripDboPrefix(backupTbl.tableName || '').trim();
+          if (!cleanTblName) continue;
+          const hasTbl = existingDb.tables.some(
+            (t) => t.tableName.toLowerCase() === cleanTblName.toLowerCase()
+          );
+          if (!hasTbl) {
+            const normTbl = normalizeServerTable({
+              ...backupTbl,
+              tableName: cleanTblName,
+              rows: Array.isArray(backupTbl.rows) ? backupTbl.rows : [],
+            });
+            existingDb.tables.push(normTbl);
+            restoredAny = true;
+            void syncTableToRealDatabase(normTbl, cleanDbName, true);
+          }
+        }
+      }
+    }
+
+    if (restoredAny) {
+      if (
+        body.activeDatabaseName &&
+        cloudState.databases.some(
+          (d) => d.databaseName.toLowerCase() === body.activeDatabaseName!.toLowerCase()
+        )
+      ) {
+        cloudState.activeDatabaseName = body.activeDatabaseName;
+      }
+      cloudState.updatedAt = nowIso;
+      await persistWorkspaceState(cloudState, true);
+    }
+
+    const targetDb = getTargetDatabase(cloudState, cloudState.activeDatabaseName);
+    const targetTable = getTargetTable(
+      cloudState,
+      body.activeTableName || targetDb.activeTableName || targetDb.tables[0]?.tableName,
+      targetDb.databaseName
+    );
+    const sortedCols = targetTable
+      ? [...targetTable.columns].sort((a, b) => a.orderIndex - b.orderIndex)
+      : [];
+    const queryResult = executeDatabaseQuery(sortedCols, targetTable ? targetTable.rows : [], {
+      offset: 0,
+      limit: 10,
+    });
+
+    res.status(200).json({
+      ok: true,
+      restoredAny,
+      activeDatabaseName: targetDb.databaseName,
+      databases: getDatabaseSummaries(cloudState),
+      activeTableName: targetTable ? targetTable.tableName : '',
+      tables: getTableSummaries(cloudState, targetDb),
+      columns: sortedCols,
+      rows: queryResult.rows,
+      totalRows: queryResult.totalRows,
+      filteredTotalRows: queryResult.filteredTotalRows,
+      hasMore: queryResult.hasMore,
+      uniqueValuesByColumn: queryResult.uniqueValuesByColumn,
+    });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Failed to restore client backup.',
+    });
+  }
+});
+
+/**
+ * POST /api/workspace/server/connect — Connects to a live PostgreSQL or Supabase server
+ * using either a Connection String (URI / ADO.NET Key-Value) or Server Host + Port + Database + Login + Password,
+ * verifies the connection, and retrieves all Databases (schemas & catalog dbs), Tables, Fields (columns), and Data (rows).
+ */
+app.post('/api/workspace/server/connect', async (req: Request, res: Response) => {
+  try {
+    const body = (req.body || {}) as {
+      serverName?: string;
+      loginUser?: string;
+      password?: string;
+      connectionString?: string;
+      host?: string;
+      port?: number | string;
+      databaseName?: string;
+      userName?: string;
+      userColor?: string;
+    };
+
+    const rawConnInput = (body.connectionString || '').trim();
+    const rawServerInput = (body.serverName || body.host || '').trim();
+    const rawUserInput = (body.loginUser || '').trim();
+    const rawPasswordInput = sanitizeRawPassword(body.password ?? '');
+    const existingConnStr = getEffectiveConnectionString();
+    const existingParsed = parseConnStrHostAndUser(existingConnStr);
+
+    let candidateConnStr = '';
+
+    if (rawConnInput) {
+      candidateConnStr = normalizePostgresConnectionString(rawConnInput);
+      if (!candidateConnStr) {
+        res.status(200).json({
+          ok: false,
+          error:
+            'Invalid connection string format. Use postgresql://user:password@host:5432/postgres or Host=...;Port=5432;Database=postgres;Username=...;Password=...',
+        });
+        return;
+      }
+    } else if (
+      rawServerInput.startsWith('postgres://') ||
+      rawServerInput.startsWith('postgresql://') ||
+      /host\s*=/i.test(rawServerInput)
+    ) {
+      candidateConnStr = normalizePostgresConnectionString(rawServerInput);
+      if (!candidateConnStr) {
+        res.status(200).json({
+          ok: false,
+          error: 'Invalid connection string entered in Server name.',
+        });
+        return;
+      }
+    } else if (rawServerInput) {
+      // Parse host, optional :port, and optional /database from rawServerInput
+      const stripped = rawServerInput.replace(/^https?:\/\//i, '');
+      const [hostPortPart, pathDbPart] = stripped.split('/');
+      const [parsedHost, parsedPortStr] = (hostPortPart || '').split(':');
+      const host = (parsedHost || '').trim();
+      const port = Number(body.port || parsedPortStr || existingParsed?.port || 5432) || 5432;
+      const dbName =
+        (body.databaseName || pathDbPart || existingParsed?.database || 'postgres').trim() ||
+        'postgres';
+      const user = rawUserInput || existingParsed?.user || 'postgres';
+
+      // If password was omitted (e.g. Refresh or reconnect to current server) and existing connection matches host, reuse existing connection string
+      if (
+        !rawPasswordInput &&
+        existingConnStr &&
+        existingParsed &&
+        (existingParsed.host.toLowerCase() === host.toLowerCase() || host.toLowerCase() === 'localhost')
+      ) {
+        candidateConnStr = existingConnStr;
+      } else {
+        candidateConnStr = normalizePostgresConnectionString(
+          `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(
+            rawPasswordInput
+          )}@${host}:${port}/${encodeURIComponent(dbName)}`
+        );
+      }
+    } else if (existingConnStr) {
+      candidateConnStr = existingConnStr;
+    }
+
+    if (!candidateConnStr) {
+      res.status(200).json({
+        ok: false,
+        error:
+          'Please enter your Supabase / PostgreSQL Server host, Login, and Password, or paste a Connection String.',
+      });
+      return;
+    }
+
+    // Automatically resolve IPv6-only Supabase direct hosts (db.<ref>.supabase.co) to IPv4 Supavisor pooler
+    candidateConnStr = await resolveSupabaseIpv4PoolerConnectionString(candidateConnStr);
+
+    const testPool = createPgPoolForConnectionString(candidateConnStr);
+    let introspected: Awaited<ReturnType<typeof introspectAndHydrateFromPostgresPool>>;
+    try {
+      introspected = await introspectAndHydrateFromPostgresPool(testPool, cloudState, {
+        replaceAllDatabases: true,
+        baseConnectionString: candidateConnStr,
+      });
+    } catch (pgErr) {
+      await testPool.end().catch(() => null);
+      const errMsg =
+        pgErr instanceof Error ? pgErr.message : 'Unable to reach PostgreSQL / Supabase server.';
+      res.status(200).json({
+        ok: false,
+        error: `PostgreSQL / Supabase connection failed: ${errMsg}`,
+      });
+      return;
+    }
+
+    // Connection & introspection succeeded! Persist the verified connection string and pool
+    saveRuntimePostgresConnectionString(candidateConnStr);
+    if (cachedPgPool && cachedPgPool !== testPool) {
+      await cachedPgPool.end().catch(() => null);
+    }
+    cachedPgPool = testPool;
+    cachedPgConnStr = candidateConnStr;
+    pgHasHydrated = true;
+    pgHydrationPromise = null;
+
+    const parsedConnected = parseConnStrHostAndUser(candidateConnStr);
+    const resolvedServerName =
+      parsedConnected?.host ||
+      rawServerInput.split('/')[0] ||
+      cloudState.serverInfo?.serverName ||
+      'localhost';
+    const resolvedEngine = `PostgreSQL ${introspected.serverVersion || '16.0'}`;
+    const resolvedLoginUser =
+      introspected.loginUser || parsedConnected?.user || rawUserInput || 'postgres';
+
+    const nowIso = new Date().toISOString();
+    const srvInfo: ServerConnectionInfo = {
+      serverName: resolvedServerName,
+      serverEngine: resolvedEngine,
+      loginUser: resolvedLoginUser,
+      host: parsedConnected?.host || resolvedServerName,
+      port: parsedConnected?.port || Number(body.port || 5432),
+      database: introspected.serverDatabase || parsedConnected?.database || 'postgres',
+      isLivePostgres: true,
+      isConnected: true,
+      connectedAt: nowIso,
+    };
+
+    cloudState.serverInfo = srvInfo;
+    ensureDatabasesHierarchy(cloudState);
+    const targetDb = getTargetDatabase(cloudState, cloudState.activeDatabaseName);
+    const targetTable = getTargetTable(
+      cloudState,
+      targetDb.activeTableName || targetDb.tables[0]?.tableName,
+      targetDb.databaseName
+    );
+    cloudState.updatedAt = nowIso;
+
+    const allDbs = getDatabaseSummaries(cloudState);
+    const totalTablesCount = allDbs.reduce((acc, d) => acc + (d.tables?.length || 0), 0);
+    const totalFieldsCount = allDbs.reduce(
+      (acc, d) =>
+        acc + (d.tables || []).reduce((tAcc, t) => tAcc + (t.columns?.length || 0), 0),
+      0
+    );
+    const totalRowsCount = (cloudState.databases || []).reduce(
+      (acc, d) => acc + (d.tables || []).reduce((tAcc, t) => tAcc + (t.rows?.length || 0), 0),
+      0
+    );
+
+    recordActivity(
+      body.userName || resolvedLoginUser,
+      body.userColor || '#4285F4',
+      'PostgreSQL Connected',
+      `Connected to "${srvInfo.serverName}" (${srvInfo.loginUser}) — retrieved ${allDbs.length} database(s), ${totalTablesCount} table(s), ${totalFieldsCount} field(s), and ${totalRowsCount} row(s)`
+    );
+    await persistWorkspaceState(cloudState, true);
+
+    const sortedCols = targetTable
+      ? [...targetTable.columns].sort((a, b) => a.orderIndex - b.orderIndex)
+      : [];
+    const queryResult = executeDatabaseQuery(sortedCols, targetTable ? targetTable.rows : [], {
+      offset: 0,
+      limit: 10,
+    });
+
+    res.status(200).json({
+      ok: true,
+      serverName: srvInfo.serverName,
+      serverEngine: srvInfo.serverEngine,
+      serverLoginUser: srvInfo.loginUser,
+      isServerConnected: true,
+      serverInfo: srvInfo,
+      activeDatabaseName: targetDb.databaseName,
+      databases: allDbs,
+      activeTableName: targetTable ? targetTable.tableName : '',
+      tables: getTableSummaries(cloudState, targetDb),
+      columns: sortedCols,
+      rows: queryResult.rows,
+      totalRows: queryResult.totalRows,
+      filteredTotalRows: queryResult.filteredTotalRows,
+      hasMore: queryResult.hasMore,
+      uniqueValuesByColumn: queryResult.uniqueValuesByColumn,
+      activities: cloudState.activities,
+      stats: {
+        databaseCount: allDbs.length,
+        tableCount: totalTablesCount,
+        fieldCount: totalFieldsCount,
+        rowCount: totalRowsCount,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      error: err instanceof Error ? err.message : 'Failed to connect to PostgreSQL server.',
+    });
+  }
+});
+
+/**
+ * POST /api/workspace/server/disconnect — disconnects the Object Explorer server session
+ */
+app.post('/api/workspace/server/disconnect', async (_req: Request, res: Response) => {
+  const srvInfo = resolveServerConnectionInfo(cloudState);
+  srvInfo.isConnected = false;
+  cloudState.serverInfo = srvInfo;
+  writeStateFilesToDiskOnly(cloudState);
+  res.status(200).json({
+    ok: true,
+    serverName: srvInfo.serverName,
+    serverEngine: srvInfo.serverEngine,
+    serverLoginUser: srvInfo.loginUser,
+    isServerConnected: false,
+    serverInfo: srvInfo,
   });
 });
 
@@ -6238,22 +7418,6 @@ app.use('/api', (req, _res, next) => {
     return;
   }
   next();
-});
-
-/**
- * GET /api/workspace/tree — returns authoritative databases, tables, and columns schema directly from the backend database without changing activeDatabaseName
- */
-app.get('/api/workspace/tree', async (_req: Request, res: Response) => {
-  await ensurePostgresHydrated();
-  ensureDatabasesHierarchy(cloudState);
-  const activeDb = findDatabase(cloudState, cloudState.activeDatabaseName);
-  res.json({
-    ok: true,
-    activeDatabaseName: activeDb.databaseName,
-    databases: getDatabaseSummaries(cloudState),
-    tables: getTableSummaries(cloudState, activeDb),
-    updatedAt: cloudState.updatedAt,
-  });
 });
 
 /**
