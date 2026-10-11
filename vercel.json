@@ -4,7 +4,8 @@
   "outputDirectory": "dist/app/browser",
   "functions": {
     "api/index.mjs": {
-      "includeFiles": "dist/app/**"
+      "includeFiles": "{dist/app/**,dotnet-backend/**}",
+      "maxDuration": 60
     }
   },
   "rewrites": [

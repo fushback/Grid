@@ -26,7 +26,9 @@ const IS_SERVERLESS_HOST = Boolean(
     process.env['NETLIFY']
 );
 
-const SUPABASE_POOLER_HOST_CACHE = new Map<string, string>();
+const SUPABASE_POOLER_HOST_CACHE = new Map<string, string>([
+  ['cjiqsovtljzpvlnncpuh', 'aws-0-ap-southeast-2.pooler.supabase.com'],
+]);
 
 const SUPABASE_AWS_REGIONS = [
   'ap-southeast-2',
@@ -193,52 +195,62 @@ async function resolveSupabaseIpv4PoolerConnectionString(connStr: string): Promi
       }
     }
 
-    const directPool = new Pool({
-      connectionString: connStr,
-      ssl: { rejectUnauthorized: false },
-      max: 1,
-      connectionTimeoutMillis: 1500,
-    });
-    try {
-      await directPool.query('SELECT 1');
-      await directPool.end().catch(() => null);
-      RESOLVED_CONN_STR_CACHE.set(connStr, connStr);
-      return connStr;
-    } catch {
-      await directPool.end().catch(() => null);
-    }
-
-    if (cachedHost) {
-      RESOLVED_CONN_STR_CACHE.set(connStr, connStr);
-      return connStr;
-    }
-
-    for (const region of SUPABASE_AWS_REGIONS) {
-      const candidateHost = `aws-0-${region}.pooler.supabase.com`;
-      const testUrl = new URL(connStr);
-      testUrl.hostname = candidateHost;
-      testUrl.port = '5432';
-      testUrl.username = encodeURIComponent(`${baseUser}.${projectRef}`);
-      const testPool = new Pool({
-        connectionString: testUrl.toString(),
+    if (!IS_SERVERLESS_HOST) {
+      const directPool = new Pool({
+        connectionString: connStr,
         ssl: { rejectUnauthorized: false },
         max: 1,
         connectionTimeoutMillis: 1500,
       });
       try {
-        await testPool.query('SELECT 1');
-        await testPool.end().catch(() => null);
-        SUPABASE_POOLER_HOST_CACHE.set(projectRef, candidateHost);
-        const resolved = testUrl.toString();
-        RESOLVED_CONN_STR_CACHE.set(connStr, resolved);
-        return resolved;
-      } catch (err) {
-        await testPool.end().catch(() => null);
-        const msg = err instanceof Error ? err.message : String(err);
-        if (!/tenant or user not found/i.test(msg)) {
+        await directPool.query('SELECT 1');
+        await directPool.end().catch(() => null);
+        RESOLVED_CONN_STR_CACHE.set(connStr, connStr);
+        return connStr;
+      } catch {
+        await directPool.end().catch(() => null);
+      }
+    }
+
+    if (cachedHost) {
+      const fallbackUrl = new URL(connStr);
+      fallbackUrl.hostname = cachedHost;
+      fallbackUrl.port = '5432';
+      fallbackUrl.username = encodeURIComponent(`${baseUser}.${projectRef}`);
+      const resolvedFallback = fallbackUrl.toString();
+      RESOLVED_CONN_STR_CACHE.set(connStr, resolvedFallback);
+      return resolvedFallback;
+    }
+
+    for (const prefix of ['aws-0', 'aws-1']) {
+      for (const region of SUPABASE_AWS_REGIONS) {
+        const candidateHost = `${prefix}-${region}.pooler.supabase.com`;
+        const testUrl = new URL(connStr);
+        testUrl.hostname = candidateHost;
+        testUrl.port = '5432';
+        testUrl.username = encodeURIComponent(`${baseUser}.${projectRef}`);
+        const testPool = new Pool({
+          connectionString: testUrl.toString(),
+          ssl: { rejectUnauthorized: false },
+          max: 1,
+          connectionTimeoutMillis: 1500,
+        });
+        try {
+          await testPool.query('SELECT 1');
+          await testPool.end().catch(() => null);
           SUPABASE_POOLER_HOST_CACHE.set(projectRef, candidateHost);
-          RESOLVED_CONN_STR_CACHE.set(connStr, connStr);
-          return connStr;
+          const resolved = testUrl.toString();
+          RESOLVED_CONN_STR_CACHE.set(connStr, resolved);
+          return resolved;
+        } catch (err) {
+          await testPool.end().catch(() => null);
+          const msg = err instanceof Error ? err.message : String(err);
+          if (!/tenant or user not found|tenant\/user .* not found|enotfound/i.test(msg)) {
+            SUPABASE_POOLER_HOST_CACHE.set(projectRef, candidateHost);
+            const resolved = testUrl.toString();
+            RESOLVED_CONN_STR_CACHE.set(connStr, resolved);
+            return resolved;
+          }
         }
       }
     }
@@ -249,35 +261,44 @@ async function resolveSupabaseIpv4PoolerConnectionString(connStr: string): Promi
   return connStr;
 }
 
+const DEFAULT_BUNDLED_SUPABASE_CONN_STR =
+  'postgresql://postgres.cjiqsovtljzpvlnncpuh:RedBus%400904@aws-0-ap-southeast-2.pooler.supabase.com:5432/postgres';
+
 function readConnectionStringFromEnv(): string {
-  try {
-    const appsettingsPath = join(process.cwd(), 'dotnet-backend', 'appsettings.json');
-    if (existsSync(appsettingsPath)) {
-      const rawJsonc = readFileSync(appsettingsPath, 'utf-8');
-      const strippedJson = rawJsonc.replace(
-        /\\"|"(?:\\"|[^"])*"|(\/\/.*|\/\*[\s\S]*?\*\/)/g,
-        (match, comment) => (comment ? '' : match)
-      );
-      const parsed = JSON.parse(strippedJson) as {
-        ConnectionStrings?: Record<string, string>;
-      };
-      const connStrings = parsed?.ConnectionStrings;
-      if (connStrings && typeof connStrings === 'object') {
-        const candidates = [
-          connStrings['SupabasePostgreSql'],
-          connStrings['PostgreSqlConnection'],
-          ...Object.values(connStrings),
-        ];
-        for (const c of candidates) {
-          if (typeof c === 'string' && c.trim()) {
-            const normalized = normalizePostgresConnectionString(c);
-            if (normalized) return normalized;
+  const appsettingsCandidates = [
+    join(process.cwd(), 'dotnet-backend', 'appsettings.json'),
+    join(import.meta.dirname, '../../../dotnet-backend/appsettings.json'),
+    join(import.meta.dirname, '../../dotnet-backend/appsettings.json'),
+  ];
+  for (const appsettingsPath of appsettingsCandidates) {
+    try {
+      if (existsSync(appsettingsPath)) {
+        const rawJsonc = readFileSync(appsettingsPath, 'utf-8');
+        const strippedJson = rawJsonc.replace(
+          /\\"|"(?:\\"|[^"])*"|(\/\/.*|\/\*[\s\S]*?\*\/)/g,
+          (match, comment) => (comment ? '' : match)
+        );
+        const parsed = JSON.parse(strippedJson) as {
+          ConnectionStrings?: Record<string, string>;
+        };
+        const connStrings = parsed?.ConnectionStrings;
+        if (connStrings && typeof connStrings === 'object') {
+          const candidates = [
+            connStrings['SupabasePostgreSql'],
+            connStrings['PostgreSqlConnection'],
+            ...Object.values(connStrings),
+          ];
+          for (const c of candidates) {
+            if (typeof c === 'string' && c.trim()) {
+              const normalized = normalizePostgresConnectionString(c);
+              if (normalized) return normalized;
+            }
           }
         }
       }
+    } catch {
+      // Ignore appsettings.json read errors
     }
-  } catch {
-    // Ignore appsettings.json read errors
   }
 
   try {
@@ -323,7 +344,7 @@ function readConnectionStringFromEnv(): string {
     }
   }
 
-  return '';
+  return normalizePostgresConnectionString(DEFAULT_BUNDLED_SUPABASE_CONN_STR);
 }
 
 let cachedPgPool: pg.Pool | null = null;
@@ -341,8 +362,8 @@ function createPgPoolForConnectionString(connStr: string): pg.Pool {
   return new Pool({
     connectionString: connStr,
     ssl: isLocalhost ? false : { rejectUnauthorized: false },
-    max: 4,
-    connectionTimeoutMillis: 2500,
+    max: 10,
+    connectionTimeoutMillis: 4000,
   });
 }
 
@@ -1871,6 +1892,14 @@ function resolveServerConnectionInfo(state: CloudWorkspaceState): ServerConnecti
   }
 
   const existing = state.serverInfo;
+  if (
+    existing &&
+    (existing.serverName || existing.host || existing.loginUser || existing.clusterName) &&
+    Boolean(getEffectiveConnectionString())
+  ) {
+    return existing;
+  }
+
   const disconnectedInfo: ServerConnectionInfo = {
     serverName: '',
     clusterName: '',
@@ -2856,32 +2885,67 @@ async function introspectSinglePostgresPoolSchemas(
   nowIso: string,
   pgExistingTablesSet: Set<string>
 ): Promise<{ databases: ServerDatabase[]; rowCount: number }> {
-  const schemasRes = await pool
-    .query<{ schema_name: string }>(`
-      SELECT schema_name
-      FROM information_schema.schemata
-      WHERE schema_name NOT IN (${excludedSqlList})
-        AND schema_name NOT LIKE 'pg_%'
-      ORDER BY schema_name ASC
-    `)
-    .catch(() => ({ rows: [] as { schema_name: string }[] }));
-
-  const pkRes = await pool
-    .query<{ table_schema: string; table_name: string; column_name: string }>(`
-      SELECT
-        tc.table_schema,
-        tc.table_name,
-        kcu.column_name
-      FROM information_schema.table_constraints tc
-      INNER JOIN information_schema.key_column_usage kcu
-        ON tc.constraint_name = kcu.constraint_name
-       AND tc.table_schema = kcu.table_schema
-       AND tc.table_name = kcu.table_name
-      WHERE tc.constraint_type = 'PRIMARY KEY'
-        AND tc.table_schema NOT IN (${excludedSqlList})
-        AND tc.table_schema NOT LIKE 'pg_%'
-    `)
-    .catch(() => ({ rows: [] as { table_schema: string; table_name: string; column_name: string }[] }));
+  const [schemasRes, pkRes, allColsRes] = await Promise.all([
+    pool
+      .query<{ schema_name: string }>(`
+        SELECT schema_name
+        FROM information_schema.schemata
+        WHERE schema_name NOT IN (${excludedSqlList})
+          AND schema_name NOT LIKE 'pg_%'
+        ORDER BY schema_name ASC
+      `)
+      .catch(() => ({ rows: [] as { schema_name: string }[] })),
+    pool
+      .query<{ table_schema: string; table_name: string; column_name: string }>(`
+        SELECT
+          tc.table_schema,
+          tc.table_name,
+          kcu.column_name
+        FROM information_schema.table_constraints tc
+        INNER JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_schema = kcu.table_schema
+         AND tc.table_name = kcu.table_name
+        WHERE tc.constraint_type = 'PRIMARY KEY'
+          AND tc.table_schema NOT IN (${excludedSqlList})
+          AND tc.table_schema NOT LIKE 'pg_%'
+      `)
+      .catch(() => ({ rows: [] as { table_schema: string; table_name: string; column_name: string }[] })),
+    pool
+      .query<{
+        table_schema: string;
+        table_name: string;
+        column_name: string | null;
+        data_type: string | null;
+        udt_name: string | null;
+        is_nullable: string | null;
+        column_default: string | null;
+        is_identity: string | null;
+        ordinal_position: number | null;
+      }>(`
+        SELECT
+          t.table_schema,
+          t.table_name,
+          c.column_name,
+          c.data_type,
+          c.udt_name,
+          c.is_nullable,
+          c.column_default,
+          c.is_identity,
+          c.ordinal_position
+        FROM information_schema.tables t
+        LEFT JOIN information_schema.columns c
+          ON t.table_schema = c.table_schema
+         AND t.table_name = c.table_name
+        WHERE t.table_type IN ('BASE TABLE', 'VIEW', 'FOREIGN', 'PARTITIONED TABLE')
+          AND t.table_schema NOT IN (${excludedSqlList})
+          AND t.table_schema NOT LIKE 'pg_%'
+          AND t.table_name NOT LIKE '__gridpulse%'
+          AND t.table_name NOT LIKE 'pg_%'
+        ORDER BY t.table_schema ASC, t.table_name ASC, c.ordinal_position ASC
+      `)
+      .catch(() => ({ rows: [] })),
+  ]);
 
   const pkByTable = new Map<string, Set<string>>();
   for (const pk of pkRes.rows) {
@@ -2889,42 +2953,6 @@ async function introspectSinglePostgresPoolSchemas(
     if (!pkByTable.has(key)) pkByTable.set(key, new Set());
     pkByTable.get(key)!.add(pk.column_name.toLowerCase());
   }
-
-  // Use LEFT JOIN on information_schema.columns so even tables with 0 columns or newly created tables are discovered
-  const allColsRes = await pool
-    .query<{
-      table_schema: string;
-      table_name: string;
-      column_name: string | null;
-      data_type: string | null;
-      udt_name: string | null;
-      is_nullable: string | null;
-      column_default: string | null;
-      is_identity: string | null;
-      ordinal_position: number | null;
-    }>(`
-      SELECT
-        t.table_schema,
-        t.table_name,
-        c.column_name,
-        c.data_type,
-        c.udt_name,
-        c.is_nullable,
-        c.column_default,
-        c.is_identity,
-        c.ordinal_position
-      FROM information_schema.tables t
-      LEFT JOIN information_schema.columns c
-        ON t.table_schema = c.table_schema
-       AND t.table_name = c.table_name
-      WHERE t.table_type IN ('BASE TABLE', 'VIEW', 'FOREIGN', 'PARTITIONED TABLE')
-        AND t.table_schema NOT IN (${excludedSqlList})
-        AND t.table_schema NOT LIKE 'pg_%'
-        AND t.table_name NOT LIKE '__gridpulse%'
-        AND t.table_name NOT LIKE 'pg_%'
-      ORDER BY t.table_schema ASC, t.table_name ASC, c.ordinal_position ASC
-    `)
-    .catch(() => ({ rows: [] }));
 
   const grouped = new Map<
     string,
@@ -3009,116 +3037,119 @@ async function introspectSinglePostgresPoolSchemas(
 
     const dbTables: ServerTable[] = [];
 
-    for (const [tblName, colRows] of tblMap.entries()) {
-      pgExistingTablesSet.add(`${effectiveDbName.toLowerCase()}::${tblName.toLowerCase()}`);
-      pgExistingTablesSet.add(`${schemaName.toLowerCase()}::${tblName.toLowerCase()}`);
+    const tblEntries = Array.from(tblMap.entries());
+    const hydratedTables = await Promise.all(
+      tblEntries.map(async ([tblName, colRows]) => {
+        pgExistingTablesSet.add(`${effectiveDbName.toLowerCase()}::${tblName.toLowerCase()}`);
+        pgExistingTablesSet.add(`${schemaName.toLowerCase()}::${tblName.toLowerCase()}`);
 
-      const existingTbl = existingDb?.tables?.find(
-        (t) => t.tableName.toLowerCase() === tblName.toLowerCase()
-      );
-      const tableKey = `${schemaName.toLowerCase()}::${tblName.toLowerCase()}`;
-      const pkSet = pkByTable.get(tableKey);
-
-      const builtCols: ServerColumn[] = colRows.map((c, idx) => {
-        const prevCol = existingTbl?.columns?.find(
-          (ec) => ec.name.toLowerCase() === c.column_name.toLowerCase()
+        const existingTbl = existingDb?.tables?.find(
+          (t) => t.tableName.toLowerCase() === tblName.toLowerCase()
         );
-        const isPk = pkSet
-          ? pkSet.has(c.column_name.toLowerCase())
-          : c.column_name.toLowerCase() === 'id' || idx === 0;
-        const isIdent =
-          isPk ||
-          c.is_identity === 'YES' ||
-          String(c.column_default || '').toLowerCase().includes('nextval');
-        const mappedType = mapPgDataTypeToColType(c.data_type, c.udt_name);
+        const tableKey = `${schemaName.toLowerCase()}::${tblName.toLowerCase()}`;
+        const pkSet = pkByTable.get(tableKey);
 
-        if (prevCol) {
+        const builtCols: ServerColumn[] = colRows.map((c, idx) => {
+          const prevCol = existingTbl?.columns?.find(
+            (ec) => ec.name.toLowerCase() === c.column_name.toLowerCase()
+          );
+          const isPk = pkSet
+            ? pkSet.has(c.column_name.toLowerCase())
+            : c.column_name.toLowerCase() === 'id' || idx === 0;
+          const isIdent =
+            isPk ||
+            c.is_identity === 'YES' ||
+            String(c.column_default || '').toLowerCase().includes('nextval');
+          const mappedType = mapPgDataTypeToColType(c.data_type, c.udt_name);
+
+          if (prevCol) {
+            return {
+              ...prevCol,
+              id: c.column_name,
+              name: c.column_name,
+              orderIndex: idx,
+              isPrimaryKey: isPk,
+              isIdentity: isIdent,
+              required: c.is_nullable === 'NO',
+              isNullable: c.is_nullable !== 'NO',
+            };
+          }
+
           return {
-            ...prevCol,
             id: c.column_name,
             name: c.column_name,
+            colType: mappedType,
             orderIndex: idx,
-            isPrimaryKey: isPk,
-            isIdentity: isIdent,
+            width: isPk ? 95 : 160,
             required: c.is_nullable === 'NO',
             isNullable: c.is_nullable !== 'NO',
+            isPrimaryKey: isPk,
+            isIdentity: isIdent,
+            identitySeed: 1,
+            identityIncrement: 1,
+            defaultValue: '',
+            formula: '',
+            optionsCsv: '',
           };
-        }
+        });
 
-        return {
-          id: c.column_name,
-          name: c.column_name,
-          colType: mappedType,
-          orderIndex: idx,
-          width: isPk ? 95 : 160,
-          required: c.is_nullable === 'NO',
-          isNullable: c.is_nullable !== 'NO',
-          isPrimaryKey: isPk,
-          isIdentity: isIdent,
-          identitySeed: 1,
-          identityIncrement: 1,
-          defaultValue: '',
-          formula: '',
-          optionsCsv: '',
-        };
-      });
-
-      if (existingTbl?.columns) {
-        for (const ec of existingTbl.columns) {
-          if (
-            ec.colType === 'formula' &&
-            !builtCols.some((bc) => bc.name.toLowerCase() === ec.name.toLowerCase())
-          ) {
-            builtCols.push({ ...ec, orderIndex: builtCols.length });
+        if (existingTbl?.columns) {
+          for (const ec of existingTbl.columns) {
+            if (
+              ec.colType === 'formula' &&
+              !builtCols.some((bc) => bc.name.toLowerCase() === ec.name.toLowerCase())
+            ) {
+              builtCols.push({ ...ec, orderIndex: builtCols.length });
+            }
           }
         }
-      }
 
-      const quotedSchemaTbl = `${quoteSqlIdent(schemaName)}.${quoteSqlIdent(tblName)}`;
-      const liveDataRes = await pool
-        .query<Record<string, unknown>>(
-          `SELECT * FROM ${quotedSchemaTbl} ORDER BY 1 ASC LIMIT 5000`
-        )
-        .catch(() => null);
+        const quotedSchemaTbl = `${quoteSqlIdent(schemaName)}.${quoteSqlIdent(tblName)}`;
+        const liveDataRes = await pool
+          .query<Record<string, unknown>>(
+            `SELECT * FROM ${quotedSchemaTbl} ORDER BY 1 ASC LIMIT 5000`
+          )
+          .catch(() => null);
 
-      const liveRows: ServerRow[] = (liveDataRes?.rows || []).map((r, rIdx) => {
-        const cells: Record<string, string | number | boolean> = {};
-        for (const col of builtCols) {
-          if (col.colType === 'formula') continue;
-          const rawVal = r[col.name] !== undefined ? r[col.name] : r[col.id];
-          const norm = formatPgCellValue(rawVal, col.colType);
-          cells[col.name] = norm;
-          cells[col.id] = norm;
-        }
-        const pkCol = builtCols.find((c) => c.isPrimaryKey || c.isIdentity);
-        const pkVal =
-          (pkCol ? cells[pkCol.name] ?? cells[pkCol.id] : undefined) ??
-          cells['ID'] ??
-          cells['id'] ??
-          rIdx + 1;
-        return {
-          id: `row_pg_${String(pkVal).replace(/[^a-zA-Z0-9_-]/g, '_')}_${rIdx}`,
-          orderIndex: (rIdx + 1) * 10,
-          cells,
-          updatedBy: metaUser || 'PostgreSQL',
+        const liveRows: ServerRow[] = (liveDataRes?.rows || []).map((r, rIdx) => {
+          const cells: Record<string, string | number | boolean> = {};
+          for (const col of builtCols) {
+            if (col.colType === 'formula') continue;
+            const rawVal = r[col.name] !== undefined ? r[col.name] : r[col.id];
+            const norm = formatPgCellValue(rawVal, col.colType);
+            cells[col.name] = norm;
+            cells[col.id] = norm;
+          }
+          const pkCol = builtCols.find((c) => c.isPrimaryKey || c.isIdentity);
+          const pkVal =
+            (pkCol ? cells[pkCol.name] ?? cells[pkCol.id] : undefined) ??
+            cells['ID'] ??
+            cells['id'] ??
+            rIdx + 1;
+          return {
+            id: `row_pg_${String(pkVal).replace(/[^a-zA-Z0-9_-]/g, '_')}_${rIdx}`,
+            orderIndex: (rIdx + 1) * 10,
+            cells,
+            updatedBy: metaUser || 'PostgreSQL',
+            updatedAt: nowIso,
+          };
+        });
+
+        totalRowsRetrieved += liveRows.length;
+
+        return normalizeServerTable({
+          tableName: tblName,
+          columns: builtCols,
+          rows: liveRows,
+          identitySeed: existingTbl?.identitySeed || 1,
+          identityIncrement: existingTbl?.identityIncrement || 1,
+          nextIdentityValue: computeNextIdentityValue(builtCols, liveRows),
+          createdAt: existingTbl?.createdAt || nowIso,
           updatedAt: nowIso,
-        };
-      });
-
-      totalRowsRetrieved += liveRows.length;
-
-      const hydratedTbl = normalizeServerTable({
-        tableName: tblName,
-        columns: builtCols,
-        rows: liveRows,
-        identitySeed: existingTbl?.identitySeed || 1,
-        identityIncrement: existingTbl?.identityIncrement || 1,
-        nextIdentityValue: computeNextIdentityValue(builtCols, liveRows),
-        createdAt: existingTbl?.createdAt || nowIso,
-        updatedAt: nowIso,
-      });
-      dbTables.push(hydratedTbl);
-    }
+        });
+      })
+    );
+    dbTables.push(...hydratedTables);
 
     // Preserve any tables in existingDb from metadata that haven't been flushed to PG yet
     if (existingDb?.tables) {
@@ -3187,41 +3218,6 @@ async function introspectAndHydrateFromPostgresPool(
   const dbClusterName = (metaRow.cluster_name || '').trim();
   const dbLoginUser = (metaRow.usr || '').trim();
 
-  await pool
-    .query(`
-      CREATE TABLE IF NOT EXISTS "public"."__gridpulse_workspace_state" (
-        "workspace_id" TEXT PRIMARY KEY,
-        "state_json" TEXT NOT NULL,
-        "updated_at" TIMESTAMPTZ DEFAULT NOW()
-      )
-    `)
-    .catch(() => null);
-
-  const metaRes = await pool
-    .query<{ state_json: string }>(
-      `SELECT "state_json" FROM "public"."__gridpulse_workspace_state" WHERE "workspace_id" = $1 LIMIT 1`,
-      ['ws_gridpulse_main']
-    )
-    .catch(() => ({ rows: [] as { state_json: string }[] }));
-
-  let savedMetaState: CloudWorkspaceState | null = null;
-  if (metaRes.rows.length > 0 && metaRes.rows[0].state_json) {
-    savedMetaState = parseAndHydrateWorkspaceState(metaRes.rows[0].state_json);
-    if (savedMetaState && !options.replaceAllDatabases) {
-      const isDiskFreshInit =
-        state.activities?.length === 1 && state.activities[0]?.id === 'act_init';
-      const pgTime = Date.parse(savedMetaState.updatedAt || '') || 0;
-      const localTime = Date.parse(state.updatedAt || '') || 0;
-      const pgHasMoreDatabases =
-        (savedMetaState.databases?.length || 0) > (state.databases?.length || 0);
-      if (isDiskFreshInit || pgTime >= localTime || pgHasMoreDatabases) {
-        Object.assign(state, savedMetaState);
-        ensureDatabasesHierarchy(state);
-      }
-    }
-  }
-
-  const excludedSqlList = SYSTEM_EXCLUDED_SCHEMAS.map((s) => `'${s}'`).join(', ');
   const nowIso = new Date().toISOString();
   const dbHost = (metaRow.srv_addr || '').trim();
   livePgServerInfo = {
@@ -3238,6 +3234,54 @@ async function introspectAndHydrateFromPostgresPool(
     connectedAt: nowIso,
   };
   state.serverInfo = livePgServerInfo;
+
+  await pool
+    .query(`
+      CREATE TABLE IF NOT EXISTS "public"."__gridpulse_workspace_state" (
+        "workspace_id" TEXT PRIMARY KEY,
+        "state_json" TEXT NOT NULL,
+        "updated_at" TIMESTAMPTZ DEFAULT NOW()
+      )
+    `)
+    .catch(() => null);
+
+  const [metaRes, catalogDbsRes] = await Promise.all([
+    pool
+      .query<{ state_json: string }>(
+        `SELECT "state_json" FROM "public"."__gridpulse_workspace_state" WHERE "workspace_id" = $1 LIMIT 1`,
+        ['ws_gridpulse_main']
+      )
+      .catch(() => ({ rows: [] as { state_json: string }[] })),
+    pool
+      .query<{ datname: string }>(`
+        SELECT datname
+        FROM pg_database
+        WHERE datistemplate = false
+          AND datallowconn = true
+        ORDER BY datname ASC
+      `)
+      .catch(() => ({ rows: [] as { datname: string }[] })),
+  ]);
+
+  let savedMetaState: CloudWorkspaceState | null = null;
+  if (metaRes.rows.length > 0 && metaRes.rows[0].state_json) {
+    savedMetaState = parseAndHydrateWorkspaceState(metaRes.rows[0].state_json);
+    if (savedMetaState && !options.replaceAllDatabases) {
+      const isDiskFreshInit =
+        state.activities?.length === 1 && state.activities[0]?.id === 'act_init';
+      const pgTime = Date.parse(savedMetaState.updatedAt || '') || 0;
+      const localTime = Date.parse(state.updatedAt || '') || 0;
+      const pgHasMoreDatabases =
+        (savedMetaState.databases?.length || 0) > (state.databases?.length || 0);
+      if (isDiskFreshInit || pgTime >= localTime || pgHasMoreDatabases) {
+        Object.assign(state, savedMetaState);
+        state.serverInfo = livePgServerInfo;
+        ensureDatabasesHierarchy(state);
+      }
+    }
+  }
+
+  const excludedSqlList = SYSTEM_EXCLUDED_SCHEMAS.map((s) => `'${s}'`).join(', ');
   const pgExistingTablesSet = new Set<string>();
   const discoveredDatabases: ServerDatabase[] = [];
   let totalRowsRetrieved = 0;
@@ -3257,84 +3301,86 @@ async function introspectAndHydrateFromPostgresPool(
   discoveredDatabases.push(...primaryResult.databases);
   totalRowsRetrieved += primaryResult.rowCount;
 
-  // 2. Also query pg_database for any additional user-created catalog databases on the same server
-  const catalogDbsRes = await pool
-    .query<{ datname: string }>(`
-      SELECT datname
-      FROM pg_database
-      WHERE datistemplate = false
-        AND datallowconn = true
-      ORDER BY datname ASC
-    `)
-    .catch(() => ({ rows: [] as { datname: string }[] }));
-
+  // 2. Also include any additional user-created catalog databases on the same server
   const activeConnStr = options.baseConnectionString || getEffectiveConnectionString();
-  for (const dbRow of catalogDbsRes.rows) {
-    const datName = (dbRow.datname || '').trim();
-    if (!datName) continue;
-    const lowerDat = datName.toLowerCase();
-    if (
-      SYSTEM_EXCLUDED_DATABASES.has(lowerDat) ||
-      lowerDat === (metaRow.db || 'postgres').toLowerCase()
-    ) {
-      continue;
-    }
+  const isSupabasePooler = /\.pooler\.supabase\.com/i.test(activeConnStr);
 
-    // If this catalog database is not the primary connected database, try connecting to it to fetch its tables & fields
-    let secondaryTables: ServerTable[] = [];
-    if (activeConnStr) {
-      try {
-        const u = new URL(activeConnStr);
-        u.pathname = `/${encodeURIComponent(datName)}`;
-        const secPool = createPgPoolForConnectionString(u.toString());
-        try {
-          const secResult = await introspectSinglePostgresPoolSchemas(
-            secPool,
-            excludedSqlList,
-            datName,
-            true,
-            savedMetaState,
-            state,
-            metaRow.usr || 'postgres',
-            nowIso,
-            pgExistingTablesSet
-          );
-          for (const secDb of secResult.databases) {
-            if (secDb.databaseName.toLowerCase() === lowerDat) {
-              secondaryTables = secDb.tables;
-            } else if (
-              !discoveredDatabases.some(
-                (d) => d.databaseName.toLowerCase() === secDb.databaseName.toLowerCase()
-              )
-            ) {
-              discoveredDatabases.push(secDb);
-            }
-          }
-          totalRowsRetrieved += secResult.rowCount;
-        } finally {
-          await secPool.end().catch(() => null);
-        }
-      } catch {
-        // Ignore if pooler only routes to default database
+  const extraCatalogDbNames = catalogDbsRes.rows
+    .map((r) => (r.datname || '').trim())
+    .filter((datName) => {
+      if (!datName) return false;
+      const lowerDat = datName.toLowerCase();
+      return (
+        !SYSTEM_EXCLUDED_DATABASES.has(lowerDat) &&
+        lowerDat !== (metaRow.db || 'postgres').toLowerCase()
+      );
+    });
+
+  await Promise.all(
+    extraCatalogDbNames.map(async (datName) => {
+      const lowerDat = datName.toLowerCase();
+      const alreadyDiscovered = discoveredDatabases.find(
+        (d) => d.databaseName.toLowerCase() === lowerDat
+      );
+      if (alreadyDiscovered && alreadyDiscovered.tables.length > 0) {
+        return;
       }
-    }
 
-    if (!discoveredDatabases.some((d) => d.databaseName.toLowerCase() === lowerDat)) {
-      const existingCatalogDb =
-        savedMetaState?.databases?.find((d) => d.databaseName.toLowerCase() === lowerDat) ||
-        state.databases.find((d) => d.databaseName.toLowerCase() === lowerDat);
-      const mergedTables =
-        secondaryTables.length > 0 ? secondaryTables : existingCatalogDb?.tables || [];
-      discoveredDatabases.push({
-        databaseName: datName,
-        activeTableName:
-          existingCatalogDb?.activeTableName || mergedTables[0]?.tableName || '',
-        tables: mergedTables,
-        createdAt: existingCatalogDb?.createdAt || nowIso,
-        updatedAt: nowIso,
-      });
-    }
-  }
+      let secondaryTables: ServerTable[] = [];
+      if (activeConnStr && !isSupabasePooler && !alreadyDiscovered) {
+        try {
+          const u = new URL(activeConnStr);
+          u.pathname = `/${encodeURIComponent(datName)}`;
+          const secPool = createPgPoolForConnectionString(u.toString());
+          try {
+            const secResult = await introspectSinglePostgresPoolSchemas(
+              secPool,
+              excludedSqlList,
+              datName,
+              true,
+              savedMetaState,
+              state,
+              metaRow.usr || 'postgres',
+              nowIso,
+              pgExistingTablesSet
+            );
+            for (const secDb of secResult.databases) {
+              if (secDb.databaseName.toLowerCase() === lowerDat) {
+                secondaryTables = secDb.tables;
+              } else if (
+                !discoveredDatabases.some(
+                  (d) => d.databaseName.toLowerCase() === secDb.databaseName.toLowerCase()
+                )
+              ) {
+                discoveredDatabases.push(secDb);
+              }
+            }
+            totalRowsRetrieved += secResult.rowCount;
+          } finally {
+            await secPool.end().catch(() => null);
+          }
+        } catch {
+          // Ignore if pooler only routes to default database
+        }
+      }
+
+      if (!discoveredDatabases.some((d) => d.databaseName.toLowerCase() === lowerDat)) {
+        const existingCatalogDb =
+          savedMetaState?.databases?.find((d) => d.databaseName.toLowerCase() === lowerDat) ||
+          state.databases.find((d) => d.databaseName.toLowerCase() === lowerDat);
+        const mergedTables =
+          secondaryTables.length > 0 ? secondaryTables : existingCatalogDb?.tables || [];
+        discoveredDatabases.push({
+          databaseName: datName,
+          activeTableName:
+            existingCatalogDb?.activeTableName || mergedTables[0]?.tableName || '',
+          tables: mergedTables,
+          createdAt: existingCatalogDb?.createdAt || nowIso,
+          updatedAt: nowIso,
+        });
+      }
+    })
+  );
 
   // 3. Also preserve any databases recorded in savedMetaState (e.g. empty databases created in UI)
   if (savedMetaState?.databases) {

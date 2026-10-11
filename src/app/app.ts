@@ -1184,6 +1184,7 @@ export class App implements OnInit, OnDestroy {
       }
 
       this.fetchWorkspaceFromServer();
+      this.refreshObjectExplorerTreeFromDb(false);
       this.connectRealTimeStream();
       this.realtimeSync.initializeConnection(
         this.activeDatabaseName(),
@@ -1805,12 +1806,12 @@ export class App implements OnInit, OnDestroy {
       .subscribe({
         next: (res) => {
           if (res?.ok) {
-            if (res.serverName !== undefined) this.serverName.set(res.serverName);
-            if (res.serverHost !== undefined) this.serverHost.set(res.serverHost);
-            if (res.serverClusterName !== undefined) this.serverClusterName.set(res.serverClusterName);
-            if (res.serverVersion !== undefined) this.serverVersion.set(res.serverVersion);
-            if (res.serverEngine !== undefined) this.serverEngine.set(res.serverEngine);
-            if (res.serverLoginUser !== undefined) this.serverLoginUser.set(res.serverLoginUser);
+            if (res.serverName) this.serverName.set(res.serverName);
+            if (res.serverHost) this.serverHost.set(res.serverHost);
+            if (res.serverClusterName) this.serverClusterName.set(res.serverClusterName);
+            if (res.serverVersion) this.serverVersion.set(res.serverVersion);
+            if (res.serverEngine) this.serverEngine.set(res.serverEngine);
+            if (res.serverLoginUser) this.serverLoginUser.set(res.serverLoginUser);
             if (Array.isArray(res.databases)) {
               this.databases.set(res.databases);
               this.syncTablesSignalForActiveDatabase(res.databases);
@@ -5444,12 +5445,15 @@ export class App implements OnInit, OnDestroy {
       .subscribe({
         next: (res) => {
           if (res && Array.isArray(res.columns) && Array.isArray(res.rows)) {
-            if (res.serverName !== undefined) this.serverName.set(res.serverName);
-            if (res.serverHost !== undefined) this.serverHost.set(res.serverHost);
-            if (res.serverClusterName !== undefined) this.serverClusterName.set(res.serverClusterName);
-            if (res.serverVersion !== undefined) this.serverVersion.set(res.serverVersion);
-            if (res.serverEngine !== undefined) this.serverEngine.set(res.serverEngine);
-            if (res.serverLoginUser !== undefined) this.serverLoginUser.set(res.serverLoginUser);
+            if (res.serverName) this.serverName.set(res.serverName);
+            if (res.serverHost) this.serverHost.set(res.serverHost);
+            if (res.serverClusterName) this.serverClusterName.set(res.serverClusterName);
+            if (res.serverVersion) this.serverVersion.set(res.serverVersion);
+            if (res.serverEngine) this.serverEngine.set(res.serverEngine);
+            if (res.serverLoginUser) this.serverLoginUser.set(res.serverLoginUser);
+            if (!res.serverName || !res.serverHost) {
+              this.refreshObjectExplorerTreeFromDb(true);
+            }
             const activeDb =
               requestedDatabaseName || res.activeDatabaseName || this.activeDatabaseName() || 'GridPulse_DB';
             let activeTbl = res.activeTableName ?? '';
