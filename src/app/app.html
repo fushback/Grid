@@ -251,32 +251,6 @@
             </div>
           </div>
 
-          <!-- Version Control & Cloud Hosting Section inside Settings Dropdown -->
-          <div class="pt-2 mb-2 border-t border-slate-200 d-flex flex-column gap-1.5">
-            <div class="pb-0.5 text-slate-400 font-semibold d-flex align-items-center justify-content-between" style="font-size: 10px">
-              <span>Version Control &amp; Cloud Hosting</span>
-              @if (versions().length > 0) {
-                <span class="px-1.5 py-0 rounded bg-blue-100 text-blue-800 font-mono-tabular font-bold">
-                  {{ versions()[0].versionTag }}
-                </span>
-              }
-            </div>
-
-            <button
-              type="button"
-              (click)="openVersionControlModal($event)"
-              class="w-100 btn btn-sm btn-outline-primary d-flex align-items-center justify-content-between text-xs font-semibold"
-            >
-              <span class="d-inline-flex align-items-center gap-1.5">
-                <mat-icon>history</mat-icon>
-                <span>Version Control &amp; Snapshots</span>
-              </span>
-              <span class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-mono-tabular" style="font-size: 10px">
-                {{ versions().length }} saved
-              </span>
-            </button>
-          </div>
-
           <!-- Collaboration & Export Section inside Gear Dropdown -->
           <div class="pt-2 mb-2 border-t border-slate-200">
             <div class="pb-1 text-slate-400 font-semibold" style="font-size: 10px">
@@ -309,16 +283,6 @@
               <mat-icon class="text-slate-500">download</mat-icon>
               <span>Export Filtered Table to CSV</span>
             </button>
-
-            <a
-              href="/api/download-project"
-              download="gridpulse-complete-project.tar.gz"
-              (click)="isSettingsDropdownOpen.set(false)"
-              class="w-100 text-start px-2 py-1.5 rounded bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-xs text-slate-700 no-underline"
-            >
-              <mat-icon class="text-emerald-600">folder_zip</mat-icon>
-              <span>Download Complete Project (.tar.gz)</span>
-            </a>
           </div>
 
           <div class="pt-2 border-t border-slate-200">
@@ -1122,41 +1086,32 @@
         [style.max-width.px]="sidebarWidthPx()"
         aria-label="Object Explorer Sidebar"
       >
-        <!-- Docked Window Title Bar with 2 Tabs: Object Explorer & Server Explorer -->
-        <div class="ssms-titlebar d-flex align-items-center justify-content-between gap-1 px-1 py-0" style="min-height: 32px">
-          <div class="d-flex align-items-stretch gap-1 overflow-hidden min-w-0 flex-grow-1 pt-1">
-            <button
-              type="button"
-              (click)="switchSidebarTab('object_explorer', $event)"
-              class="d-inline-flex align-items-center gap-1.5 px-2 py-1 border-0 rounded-top text-xs font-semibold truncate cursor-pointer transition-colors"
-              [style.background-color]="activeSidebarTab() === 'object_explorer' ? '#FFFFFF' : 'rgba(255,255,255,0.12)'"
-              [style.color]="activeSidebarTab() === 'object_explorer' ? '#000000' : '#FFFFFF'"
-              [style.border-bottom]="activeSidebarTab() === 'object_explorer' ? '2px solid #FBBC05' : '2px solid transparent'"
-              title="Object Explorer (v{{ serverVersion() }})"
-            >
+        <!-- Docked Window Title Bar showing only the Active Tab Name (tabs are selected when sidebar is closed) -->
+        <div class="ssms-titlebar d-flex align-items-center justify-content-between gap-1.5 px-2.5 py-1" style="min-height: 32px">
+          <div class="d-flex align-items-center gap-1.5 min-w-0 flex-grow-1">
+            @if (activeSidebarTab() === 'object_explorer') {
               <mat-icon class="shrink-0" style="color: #FBBC05; font-size: 15px; width: 15px; height: 15px">account_tree</mat-icon>
-              <span class="truncate">Object Explorer (v{{ serverVersion() }})</span>
-            </button>
-
-            <button
-              type="button"
-              (click)="switchSidebarTab('server_explorer', $event)"
-              class="d-inline-flex align-items-center gap-1.5 px-2 py-1 border-0 rounded-top text-xs font-semibold truncate cursor-pointer transition-colors"
-              [style.background-color]="activeSidebarTab() === 'server_explorer' ? '#FFFFFF' : 'rgba(255,255,255,0.12)'"
-              [style.color]="activeSidebarTab() === 'server_explorer' ? '#000000' : '#FFFFFF'"
-              [style.border-bottom]="activeSidebarTab() === 'server_explorer' ? '2px solid #4285F4' : '2px solid transparent'"
-              title="Server Explorer (GitHub & Vercel)"
-            >
+              <span class="font-semibold text-xs text-white truncate" title="Object Explorer (v{{ serverVersion() }})">
+                Object Explorer (v{{ serverVersion() }})
+              </span>
+            } @else if (activeSidebarTab() === 'server_explorer') {
               <mat-icon class="shrink-0" style="color: #4285F4; font-size: 15px; width: 15px; height: 15px">dns</mat-icon>
-              <span class="truncate">Server Explorer</span>
-            </button>
+              <span class="font-semibold text-xs text-white truncate" title="Server Explorer (GitHub & Vercel)">
+                Server Explorer
+              </span>
+            } @else {
+              <mat-icon class="shrink-0" style="color: #34A853; font-size: 15px; width: 15px; height: 15px">groups</mat-icon>
+              <span class="font-semibold text-xs text-white truncate" title="Team Explorer">
+                Team Explorer
+              </span>
+            }
           </div>
           <div class="d-flex align-items-center gap-0.5 shrink-0">
             <button
               type="button"
               (click)="toggleManageSidebar($event)"
               class="btn btn-sm p-0 px-1 border-0 bg-transparent text-white d-inline-flex align-items-center gridario-icon-only-btn"
-              title="Auto Hide / Collapse Sidebar"
+              title="Close Sidebar to Switch Tabs"
               aria-label="Collapse Sidebar"
             >
               <mat-icon style="color: #4285F4">chevron_left</mat-icon>
@@ -1783,6 +1738,20 @@
                 </span>
               </button>
 
+              <button
+                type="button"
+                (click)="openVersionControlModal($event)"
+                class="w-100 btn btn-sm btn-outline-primary d-flex align-items-center justify-content-between text-xs font-semibold mt-1"
+              >
+                <span class="d-inline-flex align-items-center gap-1.5">
+                  <mat-icon style="font-size: 14px; width: 14px; height: 14px">history</mat-icon>
+                  <span>Version Control &amp; Snapshots</span>
+                </span>
+                <span class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-mono-tabular" style="font-size: 10px">
+                  {{ versions().length }} saved
+                </span>
+              </button>
+
               <div class="d-flex align-items-center justify-content-between gap-1.5 pt-1 border-t border-slate-200">
                 <a
                   href="https://github.com/fushback/Grid"
@@ -1805,6 +1774,21 @@
                 </a>
               </div>
             </form>
+          </div>
+        }
+
+        @if (activeSidebarTab() === 'team_explorer') {
+          <!-- Team Explorer Tab Content -->
+          <div class="manage-tree-scroll flex-grow-1 min-h-0 p-2.5 d-flex flex-column gap-2.5 bg-white text-slate-900">
+            <div class="d-flex align-items-center justify-content-between pb-1.5 border-b border-slate-200">
+              <div class="d-flex align-items-center gap-1.5 min-w-0">
+                <mat-icon style="color: #34A853; font-size: 16px; width: 16px; height: 16px">groups</mat-icon>
+                <span class="font-bold text-xs text-slate-900 truncate">Team Explorer</span>
+              </div>
+            </div>
+            <div class="p-3 rounded border border-slate-200 bg-slate-50 text-center text-slate-500 text-xs">
+              Team Explorer workspace ready.
+            </div>
           </div>
         }
 
@@ -1846,37 +1830,56 @@
         <span class="gridpulse-split-grip-pill-v"></span>
       </div>
     } @else {
-      <!-- Collapsed SSMS Object Explorer & Server Explorer Docked Tab Rail -->
+      <!-- Collapsed SSMS Object Explorer, Server Explorer & Team Explorer Docked Tab Rail -->
       <aside
-        class="manage-sidebar-collapsed d-flex flex-column align-items-center py-2 gap-2 shrink-0 select-none"
+        class="manage-sidebar-collapsed d-flex flex-column align-items-center py-1.5 gap-1 shrink-0 select-none"
         aria-label="Collapsed Sidebar"
       >
         <button
           type="button"
           (click)="toggleManageSidebar($event)"
-          class="btn btn-sm p-1.5 rounded bg-slate-900 text-white hover:bg-slate-800 d-inline-flex align-items-center justify-content-center shadow-2xs gridario-icon-only-btn"
-          title="Expand Sidebar"
+          class="btn btn-sm p-0.5 rounded bg-slate-900 text-white hover:bg-slate-800 d-inline-flex align-items-center justify-content-center shadow-2xs gridario-icon-only-btn mb-0.5"
+          style="width: 20px; height: 20px"
+          title="Expand Active Sidebar Tab"
           aria-label="Expand Sidebar"
         >
-          <mat-icon style="color: #FBBC05">chevron_right</mat-icon>
+          <mat-icon style="color: #FBBC05; font-size: 14px; width: 14px; height: 14px">chevron_right</mat-icon>
         </button>
 
         <button
           type="button"
           (click)="switchSidebarTab('object_explorer', $event)"
-          class="mt-2 py-2 px-1 border-0 bg-transparent text-slate-700 hover:text-slate-950 font-bold text-xs uppercase manage-vertical-label cursor-pointer"
-          title="Click to Expand Object Explorer"
+          class="manage-collapsed-tab manage-vertical-label cursor-pointer"
+          [class.manage-collapsed-tab-active]="activeSidebarTab() === 'object_explorer'"
+          style="--tab-accent-color: #FBBC05"
+          title="Open Object Explorer ({{ databases().length }})"
         >
-          Object Explorer ({{ databases().length }})
+          <mat-icon class="manage-collapsed-tab-icon" style="color: #FBBC05">account_tree</mat-icon>
+          <span>Object Explorer ({{ databases().length }})</span>
         </button>
 
         <button
           type="button"
           (click)="switchSidebarTab('server_explorer', $event)"
-          class="mt-2 py-2 px-1 border-0 bg-transparent text-slate-700 hover:text-slate-950 font-bold text-xs uppercase manage-vertical-label cursor-pointer"
-          title="Click to Expand Server Explorer"
+          class="manage-collapsed-tab manage-vertical-label cursor-pointer"
+          [class.manage-collapsed-tab-active]="activeSidebarTab() === 'server_explorer'"
+          style="--tab-accent-color: #4285F4"
+          title="Open Server Explorer"
         >
-          Server Explorer
+          <mat-icon class="manage-collapsed-tab-icon" style="color: #4285F4">dns</mat-icon>
+          <span>Server Explorer</span>
+        </button>
+
+        <button
+          type="button"
+          (click)="switchSidebarTab('team_explorer', $event)"
+          class="manage-collapsed-tab manage-vertical-label cursor-pointer"
+          [class.manage-collapsed-tab-active]="activeSidebarTab() === 'team_explorer'"
+          style="--tab-accent-color: #34A853"
+          title="Open Team Explorer"
+        >
+          <mat-icon class="manage-collapsed-tab-icon" style="color: #34A853">groups</mat-icon>
+          <span>Team Explorer</span>
         </button>
       </aside>
     }

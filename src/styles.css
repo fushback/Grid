@@ -1044,10 +1044,10 @@ mat-icon.text-purple-700 {
 }
 
 .manage-sidebar-collapsed {
-  width: 42px;
-  min-width: 42px;
-  max-width: 42px;
-  background: #FFFFFF;
+  width: 28px;
+  min-width: 28px;
+  max-width: 28px;
+  background: #f1f5f9;
   color: #000000;
   border-right: 1px solid #000000;
   transition: width 180ms ease;
@@ -1056,8 +1056,59 @@ mat-icon.text-purple-700 {
 .manage-vertical-label {
   writing-mode: vertical-rl;
   transform: rotate(180deg);
-  letter-spacing: 0.08em;
+  letter-spacing: 0.04em;
   color: #000000 !important;
+}
+
+.manage-collapsed-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 22px;
+  min-width: 22px;
+  max-width: 22px;
+  padding: 7px 2px;
+  margin-top: 2px;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 1;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background-color: #ffffff;
+  color: #1e293b !important;
+  border: 1px solid #cbd5e1;
+  border-right: 2px solid var(--tab-accent-color, #4285F4);
+  border-radius: 4px 0 0 4px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+  transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+}
+
+.manage-collapsed-tab:hover {
+  background-color: #f8fafc;
+  border-color: #94a3b8;
+  border-right: 2px solid var(--tab-accent-color, #4285F4);
+  color: #000000 !important;
+}
+
+.manage-collapsed-tab.manage-collapsed-tab-active {
+  background-color: #0f172a;
+  color: #ffffff !important;
+  border-color: #0f172a;
+  border-right: 2.5px solid var(--tab-accent-color, #4285F4);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.18);
+}
+
+.manage-collapsed-tab.manage-collapsed-tab-active span {
+  color: #ffffff !important;
+}
+
+.manage-collapsed-tab-icon {
+  font-size: 11px !important;
+  width: 11px !important;
+  height: 11px !important;
+  min-width: 11px !important;
+  transform: rotate(90deg);
 }
 
 /* SSMS Docked Tool Window Title Bar (Black #000000 with White #FFFFFF text) */
@@ -1508,6 +1559,22 @@ mat-icon.text-purple-700 {
   background: #000000 !important;
   background-color: #000000 !important;
   color: #FFFFFF !important;
+}
+
+[data-theme='classic-dark'] .manage-collapsed-tab {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  color: #e2e8f0 !important;
+  border: 1px solid #3f3f46 !important;
+  border-right: 2px solid var(--tab-accent-color, #4285F4) !important;
+}
+
+[data-theme='classic-dark'] .manage-collapsed-tab.manage-collapsed-tab-active {
+  background: #18181b !important;
+  background-color: #18181b !important;
+  color: #FFFFFF !important;
+  border: 1px solid var(--tab-accent-color, #4285F4) !important;
+  border-right: 2.5px solid var(--tab-accent-color, #4285F4) !important;
 }
 
 [data-theme='classic-dark'] .manage-tree-branch,

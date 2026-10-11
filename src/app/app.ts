@@ -42,6 +42,7 @@ import {
   CellDeltaPayload,
   CellAckPayload,
 } from './grid-realtime-sync';
+import { CellHighlightState } from './cell-highlight-state';
 
 export interface PostgresAuthUser {
   id: string;
@@ -192,6 +193,7 @@ export class App implements OnInit, OnDestroy {
   private readonly isBrowser = isPlatformBrowser(this.platformId);
   readonly loader = inject(OperationLoader);
   readonly realtimeSync = inject(GridRealtimeSyncService);
+  readonly cellHighlightState = inject(CellHighlightState);
 
   // Workspace, Multi-Database (SQL Server Database Tabs), Multi-Table (Excel Sheet Tabs inside Database Tab) & Cloud Sync State
   readonly workspaceId = signal<string>('ws_gridpulse_main');
@@ -473,7 +475,7 @@ export class App implements OnInit, OnDestroy {
 
   // Active Navigation Section / Modal / Sidebar Tab State
   readonly activeNavTab = signal<'grid' | 'sort' | 'filter' | 'schema' | 'activity'>('grid');
-  readonly activeSidebarTab = signal<'object_explorer' | 'server_explorer'>('object_explorer');
+  readonly activeSidebarTab = signal<'object_explorer' | 'server_explorer' | 'team_explorer'>('object_explorer');
   readonly activeModal = signal<ActiveModalType>('none');
   readonly isSettingsDropdownOpen = signal<boolean>(false);
 
@@ -583,11 +585,9 @@ export class App implements OnInit, OnDestroy {
   readonly pendingUnsavedColIds = signal<Set<string>>(new Set<string>());
   private lastValidRowSnapshots = new Map<string, GridRow>();
 
-  // Redis Pending (Yellow) -> Database Saved (Green for 3s -> Disappear) Cell Highlight State
-  readonly redisPendingCells = signal<Record<string, number>>({});
-  readonly dbSavedGreenCells = signal<Record<string, number>>({});
-  private readonly dbSavedGreenTimers = new Map<string, ReturnType<typeof setTimeout>>();
-  private redisFlushCheckTimer: ReturnType<typeof setTimeout> | null = null;
+  // Redis Pending (Yellow) -> Database Saved (Green for 3s -> Disappear) Cell Highlight State (delegated to CellHighlightState service)
+  readonly redisPendingCells = this.cellHighlightState.redisPendingCells;
+  readonly dbSavedGreenCells = this.cellHighlightState.dbSavedGreenCells;
 
   // Clipboard State (Rows or Column Copy / Cut / Paste + Excel System Clipboard)
   readonly clipboard = signal<ClipboardBuffer | null>(null);
@@ -1231,6 +1231,7 @@ export class App implements OnInit, OnDestroy {
     if (this.githubPollTimer) {
       clearInterval(this.githubPollTimer);
     }
+    this.cellHighlightState.clearAllHighlights();
     this.clearActionTooltip();
   }
 
@@ -5878,6 +5879,7 @@ export class App implements OnInit, OnDestroy {
     event?.stopPropagation();
     const status = await this.realtimeSync.triggerManualPostgresFlush();
     if (status) {
+      this.transitionRedisCellsToDbSavedGreen();
       this.cloudSyncStatus.set('synced');
       this.lastSyncedTime.set(this.formatTimeShort(status.lastFlushedAt || new Date().toISOString()));
       this.showBanner(
@@ -5958,6 +5960,7 @@ export class App implements OnInit, OnDestroy {
       })
       .subscribe({
         next: (res) => {
+          this.transitionRedisCellsToDbSavedGreen();
           this.cloudSyncStatus.set('synced');
           this.lastSyncedTime.set(this.formatTimeShort(res.updatedAt));
           if (Array.isArray(res.databases)) {
@@ -11342,7 +11345,7 @@ export class App implements OnInit, OnDestroy {
   // =========================================================================
 
   public switchSidebarTab(
-    tab: 'object_explorer' | 'server_explorer',
+    tab: 'object_explorer' | 'server_explorer' | 'team_explorer',
     event?: Event
   ): void {
     event?.stopPropagation();
@@ -11370,129 +11373,26 @@ export class App implements OnInit, OnDestroy {
   }
 
   public isCellRedisPending(rowId: string, colId: string): boolean {
-    return Boolean(this.redisPendingCells()[`${rowId}:${colId}`]);
+    return this.cellHighlightState.isCellRedisPending(rowId, colId);
   }
 
   public isCellDbSaved(rowId: string, colId: string): boolean {
-    return Boolean(this.dbSavedGreenCells()[`${rowId}:${colId}`]);
+    return this.cellHighlightState.isCellDbSaved(rowId, colId);
   }
 
   private clearCellFromRedisAndDbHighlight(cellKey: string): void {
-    if (this.redisPendingCells()[cellKey]) {
-      this.redisPendingCells.update((prev) => {
-        const next = { ...prev };
-        delete next[cellKey];
-        return next;
-      });
-    }
-    if (this.dbSavedGreenCells()[cellKey]) {
-      this.dbSavedGreenCells.update((prev) => {
-        const next = { ...prev };
-        delete next[cellKey];
-        return next;
-      });
-    }
-    const existingTimer = this.dbSavedGreenTimers.get(cellKey);
-    if (existingTimer) {
-      clearTimeout(existingTimer);
-      this.dbSavedGreenTimers.delete(cellKey);
-    }
+    this.cellHighlightState.clearCellHighlight(cellKey);
   }
 
   public markCellsPendingInRedis(cellKeys: string[]): void {
-    if (!cellKeys || cellKeys.length === 0) return;
-    const now = Date.now();
-    this.redisPendingCells.update((prev) => {
-      const next = { ...prev };
-      for (const k of cellKeys) {
-        if (k && !this.cellValidationErrors()[k]) {
-          next[k] = now;
-        }
-      }
-      return next;
-    });
-    this.dbSavedGreenCells.update((prev) => {
-      const next = { ...prev };
-      for (const k of cellKeys) {
-        delete next[k];
-        const t = this.dbSavedGreenTimers.get(k);
-        if (t) {
-          clearTimeout(t);
-          this.dbSavedGreenTimers.delete(k);
-        }
-      }
-      return next;
-    });
-    this.scheduleRedisFlushVerification();
+    this.cellHighlightState.markCellsPendingInRedis(cellKeys, this.cellValidationErrors());
   }
 
   public transitionRedisCellsToDbSavedGreen(specificKeys?: string[]): void {
-    const pendingMap = this.redisPendingCells();
-    const keysToTransition =
-      specificKeys && specificKeys.length > 0
-        ? specificKeys.filter((k) => Boolean(pendingMap[k]))
-        : Object.keys(pendingMap);
-    if (keysToTransition.length === 0) return;
-
-    const now = Date.now();
-    this.redisPendingCells.update((prev) => {
-      const next = { ...prev };
-      for (const k of keysToTransition) {
-        delete next[k];
-      }
-      return next;
-    });
-
-    const validTransitionKeys = keysToTransition.filter(
-      (k) => !this.cellValidationErrors()[k]
+    this.cellHighlightState.transitionPendingToSavedGreen(
+      specificKeys,
+      this.cellValidationErrors()
     );
-    if (validTransitionKeys.length === 0) return;
-
-    this.dbSavedGreenCells.update((prev) => {
-      const next = { ...prev };
-      for (const k of validTransitionKeys) {
-        next[k] = now;
-      }
-      return next;
-    });
-
-    if (this.isBrowser) {
-      for (const k of validTransitionKeys) {
-        const prevTimer = this.dbSavedGreenTimers.get(k);
-        if (prevTimer) {
-          clearTimeout(prevTimer);
-        }
-        const timer = setTimeout(() => {
-          this.dbSavedGreenTimers.delete(k);
-          this.dbSavedGreenCells.update((prev) => {
-            if (!prev[k]) return prev;
-            const next = { ...prev };
-            delete next[k];
-            return next;
-          });
-        }, 3000);
-        this.dbSavedGreenTimers.set(k, timer);
-      }
-    }
-  }
-
-  private scheduleRedisFlushVerification(): void {
-    if (!this.isBrowser) return;
-    if (this.redisFlushCheckTimer) {
-      clearTimeout(this.redisFlushCheckTimer);
-    }
-    this.redisFlushCheckTimer = setTimeout(async () => {
-      this.redisFlushCheckTimer = null;
-      if (Object.keys(this.redisPendingCells()).length === 0) {
-        return;
-      }
-      const status = await this.realtimeSync.triggerManualPostgresFlush();
-      if (!status || status.dirtyRowCount === 0) {
-        this.transitionRedisCellsToDbSavedGreen();
-      } else {
-        this.scheduleRedisFlushVerification();
-      }
-    }, 1300);
   }
 
   public getRowErrorSummary(rowId: string): string {
