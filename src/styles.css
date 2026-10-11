@@ -885,6 +885,39 @@ mat-icon.text-purple-700 {
   color: #000000 !important;
 }
 
+/* Column # Clear Sort / Filter Icon Button — Prominent, Red (#EA4335), and Bold */
+.gridpulse-table thead th.sticky-col-index .gridario-clear-filter-sort-btn {
+  width: 28px !important;
+  height: 26px !important;
+  min-width: 28px !important;
+  min-height: 26px !important;
+  padding: 0 !important;
+  border-radius: 5px !important;
+  background-color: transparent !important;
+  border: none !important;
+  transition: background-color 140ms ease, transform 140ms ease;
+}
+
+.gridpulse-table thead th.sticky-col-index .gridario-clear-filter-sort-btn:hover {
+  background-color: rgba(234, 67, 53, 0.14) !important;
+  transform: scale(1.08);
+}
+
+.gridpulse-table thead th.sticky-col-index .gridario-clear-filter-sort-btn mat-icon.gridario-clear-filter-sort-icon,
+[data-theme='classic-dark'] .gridpulse-table thead th.sticky-col-index .gridario-clear-filter-sort-btn mat-icon.gridario-clear-filter-sort-icon {
+  font-size: 22px !important;
+  width: 22px !important;
+  height: 22px !important;
+  min-width: 22px !important;
+  min-height: 22px !important;
+  line-height: 22px !important;
+  color: #EA4335 !important;
+  -webkit-text-fill-color: #EA4335 !important;
+  font-weight: 900 !important;
+  -webkit-text-stroke: 0.75px #EA4335 !important;
+  text-shadow: 0 0 0.6px #EA4335 !important;
+}
+
 /* Active cell focus ring (Excel Green #34A853 / #4285F4) directly on the cell border */
 .cell-focused:not(.cell-invalid):not(.cell-redis-pending):not(.cell-db-saved),
 .gridpulse-table tbody td:focus-within:not(.sticky-col-check):not(.sticky-col-index):not(.cell-invalid):not(.cell-redis-pending):not(.cell-db-saved) {
@@ -1043,6 +1076,12 @@ mat-icon.text-purple-700 {
   transition: width 180ms ease;
 }
 
+.manage-right-sidebar-expanded {
+  border-right: none;
+  border-left: 1px solid #000000;
+  box-shadow: -1px 0 4px rgba(0, 0, 0, 0.06);
+}
+
 .manage-sidebar-collapsed {
   width: 31px;
   min-width: 31px;
@@ -1051,6 +1090,30 @@ mat-icon.text-purple-700 {
   color: #000000;
   border-right: 1px solid #000000;
   transition: width 180ms ease;
+}
+
+.manage-right-sidebar-collapsed {
+  border-right: none;
+  border-left: 1px solid #000000;
+}
+
+.manage-sidebar-tabs-scroll {
+  overflow-y: auto;
+  overflow-x: hidden;
+  touch-action: pan-y;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  cursor: grab;
+}
+
+.manage-sidebar-tabs-scroll:active {
+  cursor: grabbing;
+}
+
+.manage-sidebar-tabs-scroll::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .manage-vertical-label {
@@ -1101,6 +1164,25 @@ mat-icon.text-purple-700 {
 
 .manage-collapsed-tab.manage-collapsed-tab-active span {
   color: #ffffff !important;
+}
+
+.manage-right-collapsed-tab {
+  border: 1px solid #cbd5e1;
+  border-left: 2.5px solid var(--tab-accent-color, #4285F4);
+  border-right: 1px solid #cbd5e1;
+  border-radius: 0 4px 4px 0;
+}
+
+.manage-right-collapsed-tab:hover {
+  border-color: #94a3b8;
+  border-left: 2.5px solid var(--tab-accent-color, #4285F4);
+  border-right: 1px solid #94a3b8;
+}
+
+.manage-right-collapsed-tab.manage-collapsed-tab-active {
+  border-color: #0f172a;
+  border-left: 3px solid var(--tab-accent-color, #4285F4);
+  border-right: 1px solid #0f172a;
 }
 
 .manage-collapsed-tab-icon {
@@ -1875,16 +1957,65 @@ mat-icon.text-purple-700 {
   box-shadow: none !important;
 }
 
-/* Top & Footer Excel Sheet Tabs — Compact height (+15%) & green active line */
+/* Top & Footer Excel Sheet Tabs — Exact same tab size as Left & Right Sidebar Tabs */
+.excel-top-tabs-bar,
+.excel-sheet-footer {
+  height: 31px;
+  min-height: 31px;
+  max-height: 31px;
+}
+
+.excel-sheet-tabs-strip {
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  cursor: grab;
+}
+
+.excel-sheet-tabs-strip:active {
+  cursor: grabbing;
+}
+
+.excel-sheet-tabs-strip::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
 .excel-sheet-tab,
 .excel-top-tab {
-  font-size: 12.5px;
-  line-height: 1.2;
-  min-height: 23px;
-  padding: 3px 9px !important;
-  border-radius: 5px !important;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4.5px !important;
+  height: 25px !important;
+  min-height: 25px !important;
+  max-height: 25px !important;
+  padding: 2.5px 8px !important;
+  font-size: 10.5px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 4px !important;
   border-top: 2px solid transparent;
   border-bottom: 2px solid transparent;
+}
+
+.excel-tab-icon {
+  font-size: 12px !important;
+  width: 12px !important;
+  height: 12px !important;
+  min-width: 12px !important;
+  min-height: 12px !important;
+}
+
+.excel-tab-close-icon {
+  font-size: 11px !important;
+  width: 11px !important;
+  height: 11px !important;
+  min-width: 11px !important;
+  min-height: 11px !important;
 }
 
 .excel-sheet-tab.excel-sheet-tab-active,

@@ -2060,18 +2060,17 @@
               (touchmove)="onTouchEndOrMove()"
             >
               <div class="d-flex flex-column align-items-center justify-content-center px-1 py-1 gap-1 text-slate-500">
-                <span class="font-bold leading-none" style="font-size: 11px">#</span>
+                <span class="font-bold leading-none" style="font-size: 12px">#</span>
                 @if (sortRules().length > 0 || activeFilterCount() > 0 || globalSearchQuery().length > 0) {
                   <button
                     type="button"
                     (click)="clearAllFiltersAndSearch(); clearAllSorts(); $event.stopPropagation()"
-                    class="btn btn-sm btn-danger text-white p-0 d-inline-flex align-items-center justify-content-center rounded gridario-icon-only-btn"
-                    style="height: 20px; width: 20px"
+                    class="btn btn-sm p-0 border-0 bg-transparent d-inline-flex align-items-center justify-content-center rounded gridario-icon-only-btn gridario-clear-filter-sort-btn"
                     data-office-tip="Clear Sort / Filter"
                     title="Clear Sort / Filter"
                     aria-label="Clear Sort and Filter"
                   >
-                    <mat-icon style="font-size: 13px; width: 13px; height: 13px; min-width: 13px; min-height: 13px">filter_alt_off</mat-icon>
+                    <mat-icon class="gridario-clear-filter-sort-icon text-red-600">filter_alt_off</mat-icon>
                   </button>
                 }
               </div>
