@@ -376,34 +376,22 @@
           }
         </div>
 
-        <!-- Toggle: Show Toolbar Header & Buttons with Icon + Text vs Icon Without Text -->
+        <!-- Toggle: Show Toolbar Header & Buttons with Icon + Text vs Icon Without Text (Icon Only Button) -->
         <button
           type="button"
           role="switch"
           [attr.aria-checked]="isRibbonTextVisible()"
           (click)="toggleRibbonTextMode($event)"
-          class="d-inline-flex align-items-center gap-1.5 px-2 py-0.5 rounded bg-white border border-slate-300 text-slate-800 cursor-pointer transition-all"
-          style="height: 22px; font-size: 10.5px"
+          class="d-inline-flex align-items-center justify-content-center p-1 rounded bg-white border border-slate-300 text-slate-800 hover:bg-slate-100 cursor-pointer transition-all gridario-icon-only-btn"
+          style="width: 22px; height: 22px"
           [attr.data-office-tip]="isRibbonTextVisible() ? 'Toolbar Labels: Icon + Text (Click for Icon Only)' : 'Toolbar Labels: Icon Only (Click for Icon + Text)'"
           aria-label="Toggle toolbar icon text labels"
         >
           <mat-icon
-            style="font-size: 13px; width: 13px; height: 13px; min-width: 13px; min-height: 13px; color: #4285F4"
+            style="font-size: 14px; width: 14px; height: 14px; min-width: 14px; min-height: 14px; color: #4285F4"
           >
             {{ isRibbonTextVisible() ? 'text_fields' : 'apps' }}
           </mat-icon>
-          <span class="font-semibold whitespace-nowrap">{{ isRibbonTextVisible() ? 'Icon + Text' : 'Icon Only' }}</span>
-          <span
-            class="gridario-theme-switch-btn"
-            style="width: 28px; height: 15px; padding: 1.5px"
-            [class.is-dark]="isRibbonTextVisible()"
-          >
-            <span
-              class="gridario-theme-switch-thumb"
-              style="width: 10px; height: 10px"
-              [style.transform]="isRibbonTextVisible() ? 'translateX(13px)' : 'translateX(0)'"
-            ></span>
-          </span>
         </button>
 
         <button
@@ -1865,73 +1853,84 @@
     } @else {
       <!-- Collapsed SSMS Object Explorer, Server Explorer & Team Explorer Docked Tab Rail -->
       <aside
-        class="manage-sidebar-collapsed d-flex flex-column align-items-center py-1.5 gap-1 shrink-0 select-none"
-        aria-label="Collapsed Sidebar"
+        class="manage-sidebar-collapsed d-flex flex-column align-items-center py-1.5 gap-1 shrink-0 select-none h-100 overflow-hidden"
+        aria-label="Collapsed Left Sidebar"
       >
         <button
           type="button"
           (click)="toggleManageSidebar($event)"
-          class="btn btn-sm p-0.5 rounded bg-slate-900 text-white hover:bg-slate-800 d-inline-flex align-items-center justify-content-center shadow-2xs gridario-icon-only-btn mb-0.5"
+          class="btn btn-sm p-0.5 rounded bg-slate-900 text-white hover:bg-slate-800 d-inline-flex align-items-center justify-content-center shadow-2xs gridario-icon-only-btn mb-0.5 shrink-0"
           style="width: 20px; height: 20px"
-          title="Expand Active Sidebar Tab"
-          aria-label="Expand Sidebar"
+          title="Expand Active Left Sidebar Tab"
+          aria-label="Expand Left Sidebar"
         >
           <mat-icon style="color: #FBBC05; font-size: 14px; width: 14px; height: 14px">chevron_right</mat-icon>
         </button>
 
-        <button
-          type="button"
-          (click)="switchSidebarTab('object_explorer', $event)"
-          class="manage-collapsed-tab manage-vertical-label cursor-pointer"
-          [class.manage-collapsed-tab-active]="activeSidebarTab() === 'object_explorer'"
-          style="--tab-accent-color: #FBBC05"
-          title="Open Object Explorer ({{ databases().length }})"
+        <div
+          id="left-sidebar-tabs-scroll-container"
+          class="manage-sidebar-tabs-scroll d-flex flex-column align-items-center gap-1 flex-grow-1 min-h-0 w-100"
+          (mousedown)="startTabStripDragScroll($event, 'y')"
+          (touchstart)="startTabStripDragScroll($event, 'y')"
+          (wheel)="onTabStripWheelScroll($event, 'y')"
         >
-          <mat-icon class="manage-collapsed-tab-icon" style="color: #FBBC05">account_tree</mat-icon>
-          <span>Object Explorer ({{ databases().length }})</span>
-        </button>
+          <button
+            type="button"
+            (click)="switchSidebarTab('object_explorer', $event)"
+            class="manage-collapsed-tab manage-vertical-label cursor-pointer shrink-0"
+            [class.manage-collapsed-tab-active]="activeSidebarTab() === 'object_explorer'"
+            style="--tab-accent-color: #FBBC05"
+            title="Open Object Explorer ({{ databases().length }})"
+          >
+            <mat-icon class="manage-collapsed-tab-icon" style="color: #FBBC05">account_tree</mat-icon>
+            <span>Object Explorer ({{ databases().length }})</span>
+          </button>
 
-        <button
-          type="button"
-          (click)="switchSidebarTab('server_explorer', $event)"
-          class="manage-collapsed-tab manage-vertical-label cursor-pointer"
-          [class.manage-collapsed-tab-active]="activeSidebarTab() === 'server_explorer'"
-          style="--tab-accent-color: #4285F4"
-          title="Open Server Explorer"
-        >
-          <mat-icon class="manage-collapsed-tab-icon" style="color: #4285F4">dns</mat-icon>
-          <span>Server Explorer</span>
-        </button>
+          <button
+            type="button"
+            (click)="switchSidebarTab('server_explorer', $event)"
+            class="manage-collapsed-tab manage-vertical-label cursor-pointer shrink-0"
+            [class.manage-collapsed-tab-active]="activeSidebarTab() === 'server_explorer'"
+            style="--tab-accent-color: #4285F4"
+            title="Open Server Explorer"
+          >
+            <mat-icon class="manage-collapsed-tab-icon" style="color: #4285F4">dns</mat-icon>
+            <span>Server Explorer</span>
+          </button>
 
-        <button
-          type="button"
-          (click)="switchSidebarTab('team_explorer', $event)"
-          class="manage-collapsed-tab manage-vertical-label cursor-pointer"
-          [class.manage-collapsed-tab-active]="activeSidebarTab() === 'team_explorer'"
-          style="--tab-accent-color: #34A853"
-          title="Open Team Explorer"
-        >
-          <mat-icon class="manage-collapsed-tab-icon" style="color: #34A853">groups</mat-icon>
-          <span>Team Explorer</span>
-        </button>
+          <button
+            type="button"
+            (click)="switchSidebarTab('team_explorer', $event)"
+            class="manage-collapsed-tab manage-vertical-label cursor-pointer shrink-0"
+            [class.manage-collapsed-tab-active]="activeSidebarTab() === 'team_explorer'"
+            style="--tab-accent-color: #34A853"
+            title="Open Team Explorer"
+          >
+            <mat-icon class="manage-collapsed-tab-icon" style="color: #34A853">groups</mat-icon>
+            <span>Team Explorer</span>
+          </button>
+        </div>
       </aside>
     }
 
-    <!-- Right-Side Column: SQL Server Design Database Tabs Bar + Active Database Tab Page (with Excel Table Sheet Tabs inside) -->
+    <!-- Center Column: SQL Server Design Database Tabs Bar + Active Database Tab Page (with Excel Table Sheet Tabs inside) -->
     <div class="flex-grow-1 d-flex flex-column overflow-hidden min-w-0 min-h-0 h-100 bg-slate-100">
       <!-- ===================================================================== -->
       <!-- OPEN TABLE TABS BAR (TOP OF WORKSPACE)                                -->
       <!-- Displays the open Table Tabs for the active Database                  -->
       <!-- ===================================================================== -->
-      <div class="bg-slate-200 border-b border-slate-300 px-2 py-0.5 d-flex align-items-center justify-content-between gap-1.5 select-none shrink-0" style="min-height: 28px">
+      <div class="excel-top-tabs-bar bg-slate-200 border-b border-slate-300 px-2 d-flex align-items-center justify-content-between gap-1.5 select-none shrink-0">
         <div
           id="excel-sheet-tabs-scroll-container"
-          class="excel-sheet-tabs-strip d-flex align-items-center gap-1 overflow-x-auto flex-grow-1 py-0.5"
+          class="excel-sheet-tabs-strip d-flex align-items-center gap-1 overflow-x-auto flex-grow-1"
+          (mousedown)="startTabStripDragScroll($event, 'x')"
+          (touchstart)="startTabStripDragScroll($event, 'x')"
+          (wheel)="onTabStripWheelScroll($event, 'x')"
         >
           @for (tbl of openTablesForActiveDatabase(); track tbl.tableName) {
             @let isActiveTab = tbl.tableName === activeTableName();
             <div
-              class="excel-top-tab excel-sheet-tab d-inline-flex align-items-center gap-1.5 border cursor-pointer whitespace-nowrap select-none transition-all"
+              class="excel-top-tab excel-sheet-tab d-inline-flex align-items-center border cursor-pointer whitespace-nowrap select-none transition-all shrink-0"
               [class.excel-top-tab-active]="isActiveTab"
               [class.excel-sheet-tab-active]="isActiveTab"
               [class.bg-white]="isActiveTab"
@@ -1946,16 +1945,16 @@
               tabindex="0"
             >
               <mat-icon
+                class="excel-tab-icon"
                 [class.text-emerald-600]="isActiveTab"
                 [class.text-slate-400]="!isActiveTab"
-                style="font-size: 15px; width: 15px; height: 15px; min-width: 15px; min-height: 15px"
               >
                 grid_on
               </mat-icon>
               <span>{{ tbl.tableName }}</span>
               <span
-                class="px-1.5 py-0 rounded font-mono-tabular"
-                style="font-size: 10.5px"
+                class="px-1 py-0 rounded font-mono-tabular"
+                style="font-size: 9.5px; line-height: 1.1"
                 [class.bg-emerald-100]="isActiveTab"
                 [class.text-emerald-800]="isActiveTab"
                 [class.bg-slate-200]="!isActiveTab"
@@ -1970,7 +1969,7 @@
                 class="btn btn-sm p-0 ms-0.5 border-0 bg-transparent text-slate-400 hover:text-red-600 d-inline-flex align-items-center gridario-icon-only-btn"
                 aria-label="Close table tab"
               >
-                <mat-icon style="font-size: 14px; width: 14px; height: 14px; min-width: 14px; min-height: 14px">close</mat-icon>
+                <mat-icon class="excel-tab-close-icon">close</mat-icon>
               </button>
             </div>
           }
@@ -2052,7 +2051,7 @@
               </div>
             </th>
 
-            <!-- Row Index # Header with Clear Filter/Sort Button -->
+            <!-- Row Index # Header with Clear Filter/Sort Icon Button (Visible only when filter or sort is applied) -->
             <th
               class="sticky-col-index text-center font-mono-tabular align-middle cursor-pointer"
               (contextmenu)="onContextMenu($event, 'table', null, null)"
@@ -2062,21 +2061,19 @@
             >
               <div class="d-flex flex-column align-items-center justify-content-center px-1 py-1 gap-1 text-slate-500">
                 <span class="font-bold leading-none" style="font-size: 11px">#</span>
-                <button
-                  type="button"
-                  (click)="clearAllFiltersAndSearch(); clearAllSorts(); $event.stopPropagation()"
-                  [disabled]="sortRules().length === 0 && activeFilterCount() === 0 && globalSearchQuery().length === 0"
-                  [class.btn-danger]="sortRules().length > 0 || activeFilterCount() > 0 || globalSearchQuery().length > 0"
-                  [class.text-white]="sortRules().length > 0 || activeFilterCount() > 0 || globalSearchQuery().length > 0"
-                  [class.btn-outline-secondary]="sortRules().length === 0 && activeFilterCount() === 0 && globalSearchQuery().length === 0"
-                  class="btn btn-sm p-0 d-inline-flex align-items-center justify-content-center gap-0.5 font-semibold whitespace-nowrap"
-                  style="height: 18px; width: 44px; font-size: 9px; line-height: 1"
-                  data-office-tip="Clear Sort / Filter"
-                  title="Clear Sort / Filter"
-                >
-                  <mat-icon style="font-size: 11px; width: 11px; height: 11px">filter_alt_off</mat-icon>
-                  <span>Clear</span>
-                </button>
+                @if (sortRules().length > 0 || activeFilterCount() > 0 || globalSearchQuery().length > 0) {
+                  <button
+                    type="button"
+                    (click)="clearAllFiltersAndSearch(); clearAllSorts(); $event.stopPropagation()"
+                    class="btn btn-sm btn-danger text-white p-0 d-inline-flex align-items-center justify-content-center rounded gridario-icon-only-btn"
+                    style="height: 20px; width: 20px"
+                    data-office-tip="Clear Sort / Filter"
+                    title="Clear Sort / Filter"
+                    aria-label="Clear Sort and Filter"
+                  >
+                    <mat-icon style="font-size: 13px; width: 13px; height: 13px; min-width: 13px; min-height: 13px">filter_alt_off</mat-icon>
+                  </button>
+                }
               </div>
             </th>
 
@@ -2740,8 +2737,8 @@
   <!-- ===================================================================== -->
   <!-- DATABASE TABS FOOTER BAR (Bottom of Workspace)                        -->
   <!-- ===================================================================== -->
-  <footer class="excel-sheet-footer bg-slate-200 border-t border-slate-300 px-2 py-0.5 shrink-0 z-30" style="min-height: 28px">
-    <div class="d-flex align-items-center justify-content-between gap-2">
+  <footer class="excel-sheet-footer bg-slate-200 border-t border-slate-300 px-2 d-flex align-items-center shrink-0 z-30">
+    <div class="d-flex align-items-center justify-content-between gap-2 w-100">
       <!-- Left Scroll Arrows -->
       <div class="d-flex align-items-center gap-1 shrink-0">
         <button
@@ -2751,7 +2748,7 @@
           style="width: 21px; height: 21px"
           aria-label="Scroll database tabs left"
         >
-          <mat-icon style="font-size: 15px; width: 15px; height: 15px; min-width: 15px; min-height: 15px">chevron_left</mat-icon>
+          <mat-icon style="font-size: 14px; width: 14px; height: 14px; min-width: 14px; min-height: 14px">chevron_left</mat-icon>
         </button>
         <button
           type="button"
@@ -2760,19 +2757,22 @@
           style="width: 21px; height: 21px"
           aria-label="Scroll database tabs right"
         >
-          <mat-icon style="font-size: 15px; width: 15px; height: 15px; min-width: 15px; min-height: 15px">chevron_right</mat-icon>
+          <mat-icon style="font-size: 14px; width: 14px; height: 14px; min-width: 14px; min-height: 14px">chevron_right</mat-icon>
         </button>
       </div>
 
       <!-- Horizontally Scrollable Database Tabs Strip -->
       <div
         id="database-tabs-scroll-container"
-        class="excel-sheet-tabs-strip d-flex align-items-center gap-1 overflow-x-auto flex-grow-1 py-0.5"
+        class="excel-sheet-tabs-strip d-flex align-items-center gap-1 overflow-x-auto flex-grow-1"
+        (mousedown)="startTabStripDragScroll($event, 'x')"
+        (touchstart)="startTabStripDragScroll($event, 'x')"
+        (wheel)="onTabStripWheelScroll($event, 'x')"
       >
         @for (dbTab of databaseTabs(); track dbTab.tabId; let tIdx = $index) {
           @let isCurrentDbTab = dbTab.tabId === activeDatabaseTabId();
           <div
-            class="excel-sheet-tab d-inline-flex align-items-center gap-1.5 border cursor-pointer whitespace-nowrap select-none transition-all"
+            class="excel-sheet-tab d-inline-flex align-items-center border cursor-pointer whitespace-nowrap select-none transition-all shrink-0"
             [class.excel-sheet-tab-active]="isCurrentDbTab"
             [class.bg-white]="isCurrentDbTab"
             [class.text-emerald-800]="isCurrentDbTab"
@@ -2787,13 +2787,13 @@
           >
             <span
               class="rounded-full shrink-0"
-              style="width: 6px; height: 6px"
+              style="width: 5px; height: 5px"
               [style.background-color]="isCurrentDbTab ? '#34A853' : dbTab.databaseName ? '#94a3b8' : '#FBBC05'"
             ></span>
             <mat-icon
+              class="excel-tab-icon"
               [class.text-emerald-600]="isCurrentDbTab"
               [class.text-slate-400]="!isCurrentDbTab"
-              style="font-size: 15px; width: 15px; height: 15px; min-width: 15px; min-height: 15px"
             >
               storage
             </mat-icon>
@@ -2806,14 +2806,14 @@
               class="btn btn-sm p-0 ms-0.5 border-0 bg-transparent text-slate-400 hover:text-red-600 d-inline-flex align-items-center gridario-icon-only-btn"
               aria-label="Close database connection tab"
             >
-              <mat-icon style="font-size: 14px; width: 14px; height: 14px; min-width: 14px; min-height: 14px">close</mat-icon>
+              <mat-icon class="excel-tab-close-icon">close</mat-icon>
             </button>
           </div>
         }
       </div>
 
       <!-- Right Side Table Schema Summary -->
-      <div class="d-none d-md-flex align-items-center gap-1.5 shrink-0 text-[11.5px] text-slate-600 font-mono-tabular pe-1">
+      <div class="d-none d-md-flex align-items-center gap-1.5 shrink-0 text-[11px] text-slate-600 font-mono-tabular pe-1">
         <span>DB Tab: <strong>{{ activeDatabaseName() }}</strong></span>
         <span>·</span>
         <span>Excel Sheet (Table): <strong>{{ activeTableName() || '(None)' }}</strong></span>
@@ -2826,6 +2826,181 @@
   </footer>
       </div>
     </div>
+
+    <!-- ===================================================================== -->
+    <!-- RIGHT SIDEBAR (Same structure & tab size as Left Sidebar, 4 Tabs)     -->
+    <!-- Tabs: AI Explorer | Cloud explorer | Extentions | Query Builder       -->
+    <!-- ===================================================================== -->
+    @if (isRightSidebarOpen()) {
+      <!-- Vertical Split-Screen Resizer Handle (Between Table View & Right Sidebar) -->
+      <div
+        class="gridpulse-split-handle-vertical shrink-0"
+        [class.split-active]="isDraggingRightSidebarWidth()"
+        (mousedown)="startRightSidebarWidthResize($event)"
+        (touchstart)="startRightSidebarWidthResize($event)"
+        (dblclick)="toggleRightSidebarExpandedView($event)"
+        title="Drag left/right to expand or contract right sidebar (Double-click to toggle)"
+        role="separator"
+        aria-orientation="vertical"
+      >
+        <span class="gridpulse-split-grip-pill-v"></span>
+      </div>
+
+      <aside
+        class="manage-sidebar-expanded manage-right-sidebar-expanded d-flex flex-column shrink-0 select-none h-100 overflow-hidden"
+        [class.is-resizing-pane]="isDraggingRightSidebarWidth()"
+        [style.width.px]="rightSidebarWidthPx()"
+        [style.min-width.px]="rightSidebarWidthPx()"
+        [style.max-width.px]="rightSidebarWidthPx()"
+        aria-label="Right Explorer Sidebar"
+      >
+        <!-- Docked Window Title Bar showing the Active Right Tab Name + Collapse Action -->
+        <div class="ssms-titlebar d-flex align-items-center justify-content-between gap-1.5 px-2.5 py-1" style="min-height: 32px">
+          <div class="d-flex align-items-center gap-1.5 min-w-0 flex-grow-1">
+            @if (activeRightSidebarTab() === 'ai_explorer') {
+              <mat-icon class="shrink-0" style="color: #4285F4; font-size: 15px; width: 15px; height: 15px">auto_awesome</mat-icon>
+              <span class="font-semibold text-xs text-white truncate" title="AI Explorer">
+                AI Explorer
+              </span>
+            } @else if (activeRightSidebarTab() === 'cloud_explorer') {
+              <mat-icon class="shrink-0" style="color: #34A853; font-size: 15px; width: 15px; height: 15px">cloud</mat-icon>
+              <span class="font-semibold text-xs text-white truncate" title="Cloud explorer">
+                Cloud explorer
+              </span>
+            } @else if (activeRightSidebarTab() === 'extensions') {
+              <mat-icon class="shrink-0" style="color: #FBBC05; font-size: 15px; width: 15px; height: 15px">extension</mat-icon>
+              <span class="font-semibold text-xs text-white truncate" title="Extentions">
+                Extentions
+              </span>
+            } @else {
+              <mat-icon class="shrink-0" style="color: #EA4335; font-size: 15px; width: 15px; height: 15px">query_stats</mat-icon>
+              <span class="font-semibold text-xs text-white truncate" title="Query Builder">
+                Query Builder
+              </span>
+            }
+          </div>
+          <div class="d-flex align-items-center gap-0.5 shrink-0">
+            <button
+              type="button"
+              (click)="toggleRightSidebar($event)"
+              class="btn btn-sm p-0 px-1 border-0 bg-transparent text-white d-inline-flex align-items-center gridario-icon-only-btn"
+              title="Close Right Sidebar to Switch Tabs"
+              aria-label="Collapse Right Sidebar"
+            >
+              <mat-icon style="color: #4285F4">chevron_right</mat-icon>
+            </button>
+          </div>
+        </div>
+
+        <!-- Empty Tab Panes (All 4 tabs empty for future features) -->
+        @if (activeRightSidebarTab() === 'ai_explorer') {
+          <div class="manage-tree-scroll flex-grow-1 min-h-0 p-2.5 d-flex flex-column gap-2.5 bg-white text-slate-900"></div>
+        } @else if (activeRightSidebarTab() === 'cloud_explorer') {
+          <div class="manage-tree-scroll flex-grow-1 min-h-0 p-2.5 d-flex flex-column gap-2.5 bg-white text-slate-900"></div>
+        } @else if (activeRightSidebarTab() === 'extensions') {
+          <div class="manage-tree-scroll flex-grow-1 min-h-0 p-2.5 d-flex flex-column gap-2.5 bg-white text-slate-900"></div>
+        } @else {
+          <div class="manage-tree-scroll flex-grow-1 min-h-0 p-2.5 d-flex flex-column gap-2.5 bg-white text-slate-900"></div>
+        }
+
+        <!-- Right Sidebar Bottom Status Bar -->
+        <div
+          class="px-2.5 py-1 bg-white border-t border-black d-flex align-items-center justify-content-between text-slate-900 font-mono-tabular shrink-0"
+          style="font-size: 10.5px"
+        >
+          <div class="d-flex align-items-center gap-1.5 truncate">
+            <span class="rounded-full shrink-0" style="width: 6px; height: 6px; background-color: #4285F4"></span>
+            <span class="truncate">
+              @if (activeRightSidebarTab() === 'ai_explorer') {
+                AI Explorer
+              } @else if (activeRightSidebarTab() === 'cloud_explorer') {
+                Cloud explorer
+              } @else if (activeRightSidebarTab() === 'extensions') {
+                Extentions
+              } @else {
+                Query Builder
+              }
+            </span>
+          </div>
+          <div class="d-flex align-items-center gap-1 shrink-0">
+            <span>Ready</span>
+          </div>
+        </div>
+      </aside>
+    } @else {
+      <!-- Collapsed Right Sidebar Docked Tab Rail (Scrollable on Drag, Wheel, or Touch) -->
+      <aside
+        class="manage-sidebar-collapsed manage-right-sidebar-collapsed d-flex flex-column align-items-center py-1.5 gap-1 shrink-0 select-none h-100 overflow-hidden"
+        aria-label="Collapsed Right Sidebar"
+      >
+        <button
+          type="button"
+          (click)="toggleRightSidebar($event)"
+          class="btn btn-sm p-0.5 rounded bg-slate-900 text-white hover:bg-slate-800 d-inline-flex align-items-center justify-content-center shadow-2xs gridario-icon-only-btn mb-0.5 shrink-0"
+          style="width: 20px; height: 20px"
+          title="Expand Active Right Sidebar Tab"
+          aria-label="Expand Right Sidebar"
+        >
+          <mat-icon style="color: #4285F4; font-size: 14px; width: 14px; height: 14px">chevron_left</mat-icon>
+        </button>
+
+        <div
+          id="right-sidebar-tabs-scroll-container"
+          class="manage-sidebar-tabs-scroll d-flex flex-column align-items-center gap-1 flex-grow-1 min-h-0 w-100"
+          (mousedown)="startTabStripDragScroll($event, 'y')"
+          (touchstart)="startTabStripDragScroll($event, 'y')"
+          (wheel)="onTabStripWheelScroll($event, 'y')"
+        >
+          <button
+            type="button"
+            (click)="switchRightSidebarTab('ai_explorer', $event)"
+            class="manage-collapsed-tab manage-right-collapsed-tab manage-vertical-label cursor-pointer shrink-0"
+            [class.manage-collapsed-tab-active]="activeRightSidebarTab() === 'ai_explorer'"
+            style="--tab-accent-color: #4285F4"
+            title="Open AI Explorer"
+          >
+            <mat-icon class="manage-collapsed-tab-icon" style="color: #4285F4">auto_awesome</mat-icon>
+            <span>AI Explorer</span>
+          </button>
+
+          <button
+            type="button"
+            (click)="switchRightSidebarTab('cloud_explorer', $event)"
+            class="manage-collapsed-tab manage-right-collapsed-tab manage-vertical-label cursor-pointer shrink-0"
+            [class.manage-collapsed-tab-active]="activeRightSidebarTab() === 'cloud_explorer'"
+            style="--tab-accent-color: #34A853"
+            title="Open Cloud explorer"
+          >
+            <mat-icon class="manage-collapsed-tab-icon" style="color: #34A853">cloud</mat-icon>
+            <span>Cloud explorer</span>
+          </button>
+
+          <button
+            type="button"
+            (click)="switchRightSidebarTab('extensions', $event)"
+            class="manage-collapsed-tab manage-right-collapsed-tab manage-vertical-label cursor-pointer shrink-0"
+            [class.manage-collapsed-tab-active]="activeRightSidebarTab() === 'extensions'"
+            style="--tab-accent-color: #FBBC05"
+            title="Open Extentions"
+          >
+            <mat-icon class="manage-collapsed-tab-icon" style="color: #FBBC05">extension</mat-icon>
+            <span>Extentions</span>
+          </button>
+
+          <button
+            type="button"
+            (click)="switchRightSidebarTab('query_builder', $event)"
+            class="manage-collapsed-tab manage-right-collapsed-tab manage-vertical-label cursor-pointer shrink-0"
+            [class.manage-collapsed-tab-active]="activeRightSidebarTab() === 'query_builder'"
+            style="--tab-accent-color: #EA4335"
+            title="Open Query Builder"
+          >
+            <mat-icon class="manage-collapsed-tab-icon" style="color: #EA4335">query_stats</mat-icon>
+            <span>Query Builder</span>
+          </button>
+        </div>
+      </aside>
+    }
   </div>
 
   <!-- ===================================================================== -->

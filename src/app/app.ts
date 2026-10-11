@@ -377,6 +377,13 @@ export class App implements OnInit, OnDestroy {
     () => this.sidebarWidthPx() >= 420 || this.sidebarTreeHeightPx() >= 680
   );
 
+  // Right Sidebar State (AI Explorer, Cloud explorer, Extentions, Query Builder)
+  readonly isRightSidebarOpen = signal<boolean>(false);
+  readonly rightSidebarWidthPx = signal<number>(316);
+  readonly isDraggingRightSidebarWidth = signal<boolean>(false);
+  readonly isRightSidebarExpanded = computed<boolean>(() => this.rightSidebarWidthPx() >= 420);
+  private suppressNextTabClick = false;
+
   // Table View Split-Screen & Expand / Contract State (See More or Fewer Rows)
   readonly tableViewHeightPx = signal<number>(380);
   readonly isDraggingTableHeight = signal<boolean>(false);
@@ -476,6 +483,7 @@ export class App implements OnInit, OnDestroy {
   // Active Navigation Section / Modal / Sidebar Tab State
   readonly activeNavTab = signal<'grid' | 'sort' | 'filter' | 'schema' | 'activity'>('grid');
   readonly activeSidebarTab = signal<'object_explorer' | 'server_explorer' | 'team_explorer'>('object_explorer');
+  readonly activeRightSidebarTab = signal<'ai_explorer' | 'cloud_explorer' | 'extensions' | 'query_builder'>('ai_explorer');
   readonly activeModal = signal<ActiveModalType>('none');
   readonly isSettingsDropdownOpen = signal<boolean>(false);
 
@@ -11355,10 +11363,97 @@ export class App implements OnInit, OnDestroy {
     event?: Event
   ): void {
     event?.stopPropagation();
+    if (this.suppressNextTabClick) {
+      return;
+    }
     this.activeSidebarTab.set(tab);
     if (!this.isManageSidebarOpen()) {
       this.isManageSidebarOpen.set(true);
       this.saveSidebarTreeStateToStorage();
+    }
+  }
+
+  public toggleRightSidebar(event?: Event): void {
+    event?.stopPropagation();
+    this.isRightSidebarOpen.set(!this.isRightSidebarOpen());
+  }
+
+  public switchRightSidebarTab(
+    tab: 'ai_explorer' | 'cloud_explorer' | 'extensions' | 'query_builder',
+    event?: Event
+  ): void {
+    event?.stopPropagation();
+    if (this.suppressNextTabClick) {
+      return;
+    }
+    this.activeRightSidebarTab.set(tab);
+    if (!this.isRightSidebarOpen()) {
+      this.isRightSidebarOpen.set(true);
+    }
+  }
+
+  public startTabStripDragScroll(
+    event: MouseEvent | TouchEvent,
+    axis: 'x' | 'y'
+  ): void {
+    if (!this.isBrowser) return;
+    const container = event.currentTarget as HTMLElement | null;
+    if (!container) return;
+
+    const isTouch = 'touches' in event;
+    const startX = isTouch ? event.touches[0]?.clientX ?? 0 : event.clientX;
+    const startY = isTouch ? event.touches[0]?.clientY ?? 0 : event.clientY;
+    const startScrollLeft = container.scrollLeft;
+    const startScrollTop = container.scrollTop;
+    let dragged = false;
+
+    const onMove = (moveEv: MouseEvent | TouchEvent) => {
+      const moveTouch = 'touches' in moveEv;
+      const curX = moveTouch ? moveEv.touches[0]?.clientX ?? startX : moveEv.clientX;
+      const curY = moveTouch ? moveEv.touches[0]?.clientY ?? startY : moveEv.clientY;
+      const dx = curX - startX;
+      const dy = curY - startY;
+
+      if (!dragged && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+        dragged = true;
+      }
+      if (!dragged) return;
+
+      if (axis === 'y') {
+        container.scrollTop = startScrollTop - dy;
+      } else {
+        container.scrollLeft = startScrollLeft - dx;
+      }
+    };
+
+    const onUp = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onUp);
+      if (dragged) {
+        this.suppressNextTabClick = true;
+        setTimeout(() => {
+          this.suppressNextTabClick = false;
+        }, 90);
+      }
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('touchmove', onMove, { passive: true });
+    window.addEventListener('touchend', onUp);
+  }
+
+  public onTabStripWheelScroll(event: WheelEvent, axis: 'x' | 'y'): void {
+    const container = event.currentTarget as HTMLElement | null;
+    if (!container) return;
+    const delta = Math.abs(event.deltaY) >= Math.abs(event.deltaX) ? event.deltaY : event.deltaX;
+    if (delta === 0) return;
+    if (axis === 'y') {
+      container.scrollTop += delta;
+    } else {
+      container.scrollLeft += delta;
     }
   }
 
@@ -11967,6 +12062,61 @@ export class App implements OnInit, OnDestroy {
 
     const onUp = () => {
       this.isDraggingSidebarWidth.set(false);
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onUp);
+    };
+
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('touchmove', onMove, { passive: true });
+    window.addEventListener('touchend', onUp);
+  }
+
+  public toggleRightSidebarExpandedView(event?: Event): void {
+    event?.stopPropagation();
+    if (!this.isRightSidebarOpen()) {
+      this.isRightSidebarOpen.set(true);
+      this.rightSidebarWidthPx.set(440);
+      return;
+    }
+    if (this.isRightSidebarExpanded()) {
+      this.rightSidebarWidthPx.set(316);
+    } else {
+      this.rightSidebarWidthPx.set(440);
+    }
+  }
+
+  public startRightSidebarWidthResize(event: MouseEvent | TouchEvent): void {
+    if (!this.isBrowser) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    const startX =
+      'touches' in event ? event.touches[0]?.clientX ?? 0 : event.clientX;
+    const startWidth = this.rightSidebarWidthPx();
+    this.isDraggingRightSidebarWidth.set(true);
+
+    const onMove = (moveEv: MouseEvent | TouchEvent) => {
+      const currentX =
+        'touches' in moveEv ? moveEv.touches[0]?.clientX ?? startX : moveEv.clientX;
+      // Moving left (negative deltaX) widens the right sidebar
+      const deltaX = startX - currentX;
+      const rawTarget = Math.round(startWidth + deltaX);
+      if (rawTarget < 75) {
+        this.isRightSidebarOpen.set(false);
+        return;
+      }
+      if (!this.isRightSidebarOpen()) {
+        this.isRightSidebarOpen.set(true);
+      }
+      const nextWidth = Math.max(128, Math.min(680, rawTarget));
+      this.rightSidebarWidthPx.set(nextWidth);
+    };
+
+    const onUp = () => {
+      this.isDraggingRightSidebarWidth.set(false);
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
       window.removeEventListener('touchmove', onMove);
