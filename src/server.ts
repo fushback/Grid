@@ -18,8 +18,6 @@ const { Pool } = pg;
 const browserDistFolder = join(import.meta.dirname, '../browser');
 const CLOUD_STORE_FILE = '/tmp/gridpulse-cloud-state-v3.json';
 const PERSISTENT_WORKSPACE_FILE = join(process.cwd(), '.gridpulse-workspace-state.json');
-const CLOUD_PG_CONN_FILE = '/tmp/gridpulse-pg-connection.json';
-const PERSISTENT_PG_CONN_FILE = join(process.cwd(), '.gridpulse-pg-connection.json');
 
 const IS_SERVERLESS_HOST = Boolean(
   process.env['VERCEL'] ||
@@ -28,9 +26,7 @@ const IS_SERVERLESS_HOST = Boolean(
     process.env['NETLIFY']
 );
 
-const SUPABASE_POOLER_HOST_CACHE = new Map<string, string>([
-  ['cjiqsovtljzpvlnncpuh', 'aws-0-ap-southeast-2.pooler.supabase.com'],
-]);
+const SUPABASE_POOLER_HOST_CACHE = new Map<string, string>();
 
 const SUPABASE_AWS_REGIONS = [
   'ap-southeast-2',
@@ -81,7 +77,12 @@ function normalizePostgresConnectionString(rawInput: string): string {
     const database = kv.get('database') || kv.get('initial catalog') || 'postgres';
     const user = kv.get('username') || kv.get('user id') || kv.get('uid') || kv.get('user') || 'postgres';
     const password = sanitizeRawPassword(kv.get('password') || kv.get('pwd') || '');
-    if (!host || password === 'YOUR_SUPABASE_PASSWORD' || password === 'your_supabase_db_password') {
+    if (
+      !host ||
+      password === 'YOUR_SUPABASE_PASSWORD' ||
+      password === 'your_supabase_db_password' ||
+      password === 'your_password'
+    ) {
       return '';
     }
     return normalizePostgresConnectionString(
@@ -91,7 +92,8 @@ function normalizePostgresConnectionString(rawInput: string): string {
 
   if (
     raw.includes('YOUR_SUPABASE_PASSWORD') ||
-    raw.includes('your_supabase_db_password')
+    raw.includes('your_supabase_db_password') ||
+    raw.includes('your_project_ref:your_password')
   ) {
     return '';
   }
@@ -127,23 +129,9 @@ function normalizePostgresConnectionString(rawInput: string): string {
     }
   }
 
-  // Automatically upgrade direct IPv6-only Supabase host (db.<ref>.supabase.co)
-  // to IPv4-compatible Supavisor pooler host when known in SUPABASE_POOLER_HOST_CACHE
   try {
     const u = new URL(normalizedUri);
-    const directMatch = u.hostname.match(/^db\.([a-z0-9]+)\.supabase\.co$/i);
-    if (directMatch) {
-      const projectRef = directMatch[1].toLowerCase();
-      const poolerHost = SUPABASE_POOLER_HOST_CACHE.get(projectRef);
-      if (poolerHost) {
-        u.hostname = poolerHost;
-        const currentUser = decodeURIComponent(u.username || 'postgres');
-        if (!currentUser.endsWith(`.${projectRef}`)) {
-          u.username = encodeURIComponent(`${currentUser}.${projectRef}`);
-        }
-        normalizedUri = u.toString();
-      }
-    } else if (/\.pooler\.supabase\.com$/i.test(u.hostname)) {
+    if (/\.pooler\.supabase\.com$/i.test(u.hostname)) {
       const currentUser = decodeURIComponent(u.username || '');
       const dotIdx = currentUser.lastIndexOf('.');
       if (dotIdx > 0) {
@@ -160,11 +148,20 @@ function normalizePostgresConnectionString(rawInput: string): string {
   return normalizedUri;
 }
 
+const RESOLVED_CONN_STR_CACHE = new Map<string, string>();
+
 async function resolveSupabaseIpv4PoolerConnectionString(connStr: string): Promise<string> {
+  const cachedResolved = RESOLVED_CONN_STR_CACHE.get(connStr);
+  if (cachedResolved) return cachedResolved;
+
   try {
     const u = new URL(connStr);
     const directMatch = u.hostname.match(/^db\.([a-z0-9]+)\.supabase\.co$/i);
-    if (!directMatch) return connStr;
+    if (!directMatch) {
+      RESOLVED_CONN_STR_CACHE.set(connStr, connStr);
+      return connStr;
+    }
+
     const projectRef = directMatch[1].toLowerCase();
     const cachedHost = SUPABASE_POOLER_HOST_CACHE.get(projectRef);
     const baseUser = decodeURIComponent(u.username || 'postgres').replace(
@@ -173,9 +170,47 @@ async function resolveSupabaseIpv4PoolerConnectionString(connStr: string): Promi
     );
 
     if (cachedHost) {
-      u.hostname = cachedHost;
-      u.username = encodeURIComponent(`${baseUser}.${projectRef}`);
-      return u.toString();
+      for (const port of ['5432', '6543']) {
+        const testUrl = new URL(connStr);
+        testUrl.hostname = cachedHost;
+        testUrl.port = port;
+        testUrl.username = encodeURIComponent(`${baseUser}.${projectRef}`);
+        const testPool = new Pool({
+          connectionString: testUrl.toString(),
+          ssl: { rejectUnauthorized: false },
+          max: 1,
+          connectionTimeoutMillis: 2500,
+        });
+        try {
+          await testPool.query('SELECT 1');
+          await testPool.end().catch(() => null);
+          const resolved = testUrl.toString();
+          RESOLVED_CONN_STR_CACHE.set(connStr, resolved);
+          return resolved;
+        } catch {
+          await testPool.end().catch(() => null);
+        }
+      }
+    }
+
+    const directPool = new Pool({
+      connectionString: connStr,
+      ssl: { rejectUnauthorized: false },
+      max: 1,
+      connectionTimeoutMillis: 1500,
+    });
+    try {
+      await directPool.query('SELECT 1');
+      await directPool.end().catch(() => null);
+      RESOLVED_CONN_STR_CACHE.set(connStr, connStr);
+      return connStr;
+    } catch {
+      await directPool.end().catch(() => null);
+    }
+
+    if (cachedHost) {
+      RESOLVED_CONN_STR_CACHE.set(connStr, connStr);
+      return connStr;
     }
 
     for (const region of SUPABASE_AWS_REGIONS) {
@@ -188,44 +223,61 @@ async function resolveSupabaseIpv4PoolerConnectionString(connStr: string): Promi
         connectionString: testUrl.toString(),
         ssl: { rejectUnauthorized: false },
         max: 1,
-        connectionTimeoutMillis: 3500,
+        connectionTimeoutMillis: 1500,
       });
       try {
         await testPool.query('SELECT 1');
         await testPool.end().catch(() => null);
         SUPABASE_POOLER_HOST_CACHE.set(projectRef, candidateHost);
-        return testUrl.toString();
+        const resolved = testUrl.toString();
+        RESOLVED_CONN_STR_CACHE.set(connStr, resolved);
+        return resolved;
       } catch (err) {
         await testPool.end().catch(() => null);
         const msg = err instanceof Error ? err.message : String(err);
         if (!/tenant or user not found/i.test(msg)) {
-          // Found the exact regional pooler for this Supabase project!
           SUPABASE_POOLER_HOST_CACHE.set(projectRef, candidateHost);
-          return testUrl.toString();
+          RESOLVED_CONN_STR_CACHE.set(connStr, connStr);
+          return connStr;
         }
       }
     }
   } catch {
     // Ignore resolution errors
   }
+  RESOLVED_CONN_STR_CACHE.set(connStr, connStr);
   return connStr;
 }
 
 function readConnectionStringFromEnv(): string {
-  const envCandidates = [
-    process.env['SUPABASE_POSTGRES_CONNECTION_STRING'],
-    process.env['DATABASE_URL'],
-    process.env['POSTGRES_URL'],
-    process.env['POSTGRES_CONNECTION_STRING'],
-    process.env['POSTGRES_PRISMA_URL'],
-    process.env['POSTGRES_URL_NON_POOLING'],
-  ];
-
-  for (const candidate of envCandidates) {
-    if (candidate) {
-      const normalized = normalizePostgresConnectionString(candidate);
-      if (normalized) return normalized;
+  try {
+    const appsettingsPath = join(process.cwd(), 'dotnet-backend', 'appsettings.json');
+    if (existsSync(appsettingsPath)) {
+      const rawJsonc = readFileSync(appsettingsPath, 'utf-8');
+      const strippedJson = rawJsonc.replace(
+        /\\"|"(?:\\"|[^"])*"|(\/\/.*|\/\*[\s\S]*?\*\/)/g,
+        (match, comment) => (comment ? '' : match)
+      );
+      const parsed = JSON.parse(strippedJson) as {
+        ConnectionStrings?: Record<string, string>;
+      };
+      const connStrings = parsed?.ConnectionStrings;
+      if (connStrings && typeof connStrings === 'object') {
+        const candidates = [
+          connStrings['SupabasePostgreSql'],
+          connStrings['PostgreSqlConnection'],
+          ...Object.values(connStrings),
+        ];
+        for (const c of candidates) {
+          if (typeof c === 'string' && c.trim()) {
+            const normalized = normalizePostgresConnectionString(c);
+            if (normalized) return normalized;
+          }
+        }
+      }
     }
+  } catch {
+    // Ignore appsettings.json read errors
   }
 
   try {
@@ -254,61 +306,33 @@ function readConnectionStringFromEnv(): string {
   } catch {
     // Ignore .env read errors
   }
+
+  const envCandidates = [
+    process.env['SUPABASE_POSTGRES_CONNECTION_STRING'],
+    process.env['DATABASE_URL'],
+    process.env['POSTGRES_URL'],
+    process.env['POSTGRES_CONNECTION_STRING'],
+    process.env['POSTGRES_PRISMA_URL'],
+    process.env['POSTGRES_URL_NON_POOLING'],
+  ];
+
+  for (const candidate of envCandidates) {
+    if (candidate) {
+      const normalized = normalizePostgresConnectionString(candidate);
+      if (normalized) return normalized;
+    }
+  }
+
   return '';
 }
 
 let cachedPgPool: pg.Pool | null = null;
 let cachedPgConnStr = '';
-let runtimeCustomConnStr = '';
+let lastHydratedRawConnStr = '';
 let pgConnectionVerified = false;
-let lastPgConnectionError = '';
-
-function loadSavedRuntimeConnectionString(): string {
-  const candidates = IS_SERVERLESS_HOST
-    ? [CLOUD_PG_CONN_FILE, PERSISTENT_PG_CONN_FILE]
-    : [PERSISTENT_PG_CONN_FILE, CLOUD_PG_CONN_FILE];
-  for (const filePath of candidates) {
-    try {
-      if (existsSync(filePath)) {
-        const parsed = JSON.parse(readFileSync(filePath, 'utf-8')) as { connectionString?: string };
-        if (parsed?.connectionString) {
-          const norm = normalizePostgresConnectionString(parsed.connectionString);
-          if (norm) return norm;
-        }
-      }
-    } catch {
-      // Ignore read errors
-    }
-  }
-  return '';
-}
-
-function saveRuntimePostgresConnectionString(connStr: string): void {
-  const norm = normalizePostgresConnectionString(connStr);
-  runtimeCustomConnStr = norm;
-  const payload = JSON.stringify({ connectionString: norm, updatedAt: new Date().toISOString() });
-  try {
-    writeFileSync(PERSISTENT_PG_CONN_FILE, payload, 'utf-8');
-  } catch {
-    // Ignore write errors in read-only environments
-  }
-  try {
-    writeFileSync(CLOUD_PG_CONN_FILE, payload, 'utf-8');
-  } catch {
-    // Ignore write errors
-  }
-}
+let livePgServerInfo: ServerConnectionInfo | null = null;
 
 function getEffectiveConnectionString(): string {
-  if (runtimeCustomConnStr) {
-    const normalized = normalizePostgresConnectionString(runtimeCustomConnStr);
-    if (normalized) return normalized;
-  }
-  const savedDisk = loadSavedRuntimeConnectionString();
-  if (savedDisk) {
-    runtimeCustomConnStr = savedDisk;
-    return savedDisk;
-  }
   return readConnectionStringFromEnv();
 }
 
@@ -318,19 +342,20 @@ function createPgPoolForConnectionString(connStr: string): pg.Pool {
     connectionString: connStr,
     ssl: isLocalhost ? false : { rejectUnauthorized: false },
     max: 4,
-    connectionTimeoutMillis: 8000,
+    connectionTimeoutMillis: 2500,
   });
 }
 
 function getPgPool(): pg.Pool | null {
   const raw = getEffectiveConnectionString();
   if (!raw) return null;
-  if (cachedPgPool && cachedPgConnStr === raw) {
+  const effective = RESOLVED_CONN_STR_CACHE.get(raw) || raw;
+  if (cachedPgPool && (cachedPgConnStr === effective || cachedPgConnStr === raw)) {
     return cachedPgPool;
   }
   try {
-    cachedPgConnStr = raw;
-    cachedPgPool = createPgPoolForConnectionString(raw);
+    cachedPgConnStr = effective;
+    cachedPgPool = createPgPoolForConnectionString(effective);
     return cachedPgPool;
   } catch {
     return null;
@@ -508,6 +533,8 @@ interface ServerColumnFilterRule {
 
 interface ServerConnectionInfo {
   serverName: string;
+  clusterName?: string;
+  serverVersion?: string;
   serverEngine: string;
   loginUser: string;
   host: string;
@@ -871,20 +898,15 @@ function sanitizeRowsAgainstSchema(columns: ServerColumn[], rows: ServerRow[]): 
     }
   }
 
-  const assignedPkByRowId = new Map<string, string | number>();
+  const assignedPkByRowId = new Map<string, number>();
   if (pkCol) {
-    const seenInPass = new Set<string | number>();
+    const seenInPass = new Set<number>();
     for (const r of rows) {
       const rawPk =
         r.cells?.[pkCol.name] ??
         r.cells?.[pkCol.id] ??
         r.cells?.['ID'] ??
         r.cells?.['id'];
-      if (pkCol.colType !== 'number' && typeof rawPk === 'string' && rawPk.trim().length > 0 && !seenInPass.has(rawPk.trim())) {
-        seenInPass.add(rawPk.trim());
-        assignedPkByRowId.set(r.id, rawPk.trim());
-        continue;
-      }
       const numPk = Number(rawPk);
       if (Number.isInteger(numPk) && numPk >= 1 && !seenInPass.has(numPk)) {
         seenInPass.add(numPk);
@@ -1842,75 +1864,28 @@ function getDatabaseSummaries(state: CloudWorkspaceState): DbDatabaseSummary[] {
   }));
 }
 
-function parseConnStrHostAndUser(connStr: string): {
-  host: string;
-  port: number;
-  user: string;
-  database: string;
-} | null {
-  if (!connStr) return null;
-  try {
-    const u = new URL(connStr);
-    return {
-      host: u.hostname || 'localhost',
-      port: Number(u.port || 5432),
-      user: decodeURIComponent(u.username || 'postgres'),
-      database: decodeURIComponent((u.pathname || '').replace(/^\//, '') || 'postgres'),
-    };
-  } catch {
-    return null;
-  }
-}
-
 function resolveServerConnectionInfo(state: CloudWorkspaceState): ServerConnectionInfo {
-  const activeConnStr = getEffectiveConnectionString();
-  const parsedPg = parseConnStrHostAndUser(activeConnStr);
-  const existing = state.serverInfo;
-  const cleanExistingName =
-    existing?.serverName && existing.serverName !== 'localhost\\SQLEXPRESS'
-      ? existing.serverName
-      : '';
-  const cleanExistingEngine =
-    existing?.serverEngine && !existing.serverEngine.includes('SQL Server')
-      ? existing.serverEngine
-      : '';
-  const cleanExistingUser =
-    existing?.loginUser && existing.loginUser !== 'WINDOWS\\Admin'
-      ? existing.loginUser
-      : '';
-
-  if (parsedPg) {
-    const info: ServerConnectionInfo = {
-      serverName: cleanExistingName || parsedPg.host,
-      serverEngine: cleanExistingEngine || 'PostgreSQL 16.0',
-      loginUser: cleanExistingUser || parsedPg.user || 'postgres',
-      host: parsedPg.host,
-      port: parsedPg.port,
-      database: parsedPg.database || state.activeDatabaseName || 'GridPulse_DB',
-      isLivePostgres: pgConnectionVerified,
-      isConnected:
-        existing?.isConnected !== undefined
-          ? existing.isConnected
-          : pgConnectionVerified || !lastPgConnectionError,
-      connectedAt: existing?.connectedAt || state.updatedAt || new Date().toISOString(),
-    };
-    state.serverInfo = info;
-    return info;
+  if (pgConnectionVerified && livePgServerInfo) {
+    state.serverInfo = livePgServerInfo;
+    return livePgServerInfo;
   }
 
-  const fallbackInfo: ServerConnectionInfo = {
-    serverName: cleanExistingName || 'localhost',
-    serverEngine: cleanExistingEngine || 'PostgreSQL 16.0',
-    loginUser: cleanExistingUser || 'postgres',
-    host: existing?.host || 'localhost',
-    port: existing?.port || 5432,
-    database: existing?.database || state.activeDatabaseName || 'GridPulse_DB',
-    isLivePostgres: Boolean(existing?.isLivePostgres && pgConnectionVerified),
-    isConnected: existing?.isConnected !== undefined ? existing.isConnected : true,
+  const existing = state.serverInfo;
+  const disconnectedInfo: ServerConnectionInfo = {
+    serverName: '',
+    clusterName: '',
+    serverVersion: '',
+    serverEngine: '',
+    loginUser: '',
+    host: '',
+    port: 0,
+    database: state.activeDatabaseName || '',
+    isLivePostgres: false,
+    isConnected: false,
     connectedAt: existing?.connectedAt || state.updatedAt || new Date().toISOString(),
   };
-  state.serverInfo = fallbackInfo;
-  return fallbackInfo;
+  state.serverInfo = disconnectedInfo;
+  return disconnectedInfo;
 }
 
 function extractLookupTemplateTokens(rawTemplate?: string): string[] {
@@ -2451,6 +2426,11 @@ function normalizeServerTable(t: ServerTable): ServerTable {
 
 function ensureDatabasesHierarchy(state: CloudWorkspaceState): void {
   const nowIso = new Date().toISOString();
+  if (Array.isArray(state.databases)) {
+    state.databases = state.databases.filter(
+      (d) => d.databaseName.toLowerCase() !== 'systemdatabase'
+    );
+  }
   if (!Array.isArray(state.databases) || state.databases.length === 0) {
     const existingTables =
       Array.isArray(state.tables) && state.tables.length > 0
@@ -2467,7 +2447,10 @@ function ensureDatabasesHierarchy(state: CloudWorkspaceState): void {
               updatedAt: state.updatedAt || nowIso,
             }),
           ];
-    const defaultDbName = state.activeDatabaseName || 'GridPulse_DB';
+    const defaultDbName =
+      state.activeDatabaseName && state.activeDatabaseName.toLowerCase() !== 'systemdatabase'
+        ? state.activeDatabaseName
+        : 'GridPulse_DB';
     state.databases = [
       {
         databaseName: defaultDbName,
@@ -2487,7 +2470,10 @@ function ensureDatabasesHierarchy(state: CloudWorkspaceState): void {
         normalizeServerTable(tbl);
       }
     }
-    if (!state.activeDatabaseName) {
+    if (
+      !state.activeDatabaseName ||
+      state.activeDatabaseName.toLowerCase() === 'systemdatabase'
+    ) {
       state.activeDatabaseName = state.databases[0].databaseName;
     }
   }
@@ -3179,11 +3165,27 @@ async function introspectAndHydrateFromPostgresPool(
     db: string;
     usr: string;
     ver: string;
-  }>(`SELECT current_database() AS db, current_user AS usr, current_setting('server_version') AS ver`);
+    cluster_name: string | null;
+    srv_addr: string | null;
+    srv_port: number | null;
+  }>(
+    `SELECT current_database() AS db, current_user AS usr, current_setting('server_version') AS ver, current_setting('cluster_name', true) AS cluster_name, host(inet_server_addr()) AS srv_addr, inet_server_port() AS srv_port`
+  );
 
-  const metaRow = metaQuery.rows[0] || { db: 'postgres', usr: 'postgres', ver: '16.0' };
+  const metaRow = metaQuery.rows[0] || {
+    db: '',
+    usr: '',
+    ver: '',
+    cluster_name: '',
+    srv_addr: null,
+    srv_port: 5432,
+  };
   pgConnectionVerified = true;
-  lastPgConnectionError = '';
+  const rawServerVersion = (metaRow.ver || '').trim();
+  const cleanVer = rawServerVersion.split(' ')[0];
+  const dbConnectionName = (metaRow.db || '').trim();
+  const dbClusterName = (metaRow.cluster_name || '').trim();
+  const dbLoginUser = (metaRow.usr || '').trim();
 
   await pool
     .query(`
@@ -3210,7 +3212,9 @@ async function introspectAndHydrateFromPostgresPool(
         state.activities?.length === 1 && state.activities[0]?.id === 'act_init';
       const pgTime = Date.parse(savedMetaState.updatedAt || '') || 0;
       const localTime = Date.parse(state.updatedAt || '') || 0;
-      if (isDiskFreshInit || pgTime >= localTime) {
+      const pgHasMoreDatabases =
+        (savedMetaState.databases?.length || 0) > (state.databases?.length || 0);
+      if (isDiskFreshInit || pgTime >= localTime || pgHasMoreDatabases) {
         Object.assign(state, savedMetaState);
         ensureDatabasesHierarchy(state);
       }
@@ -3219,6 +3223,21 @@ async function introspectAndHydrateFromPostgresPool(
 
   const excludedSqlList = SYSTEM_EXCLUDED_SCHEMAS.map((s) => `'${s}'`).join(', ');
   const nowIso = new Date().toISOString();
+  const dbHost = (metaRow.srv_addr || '').trim();
+  livePgServerInfo = {
+    serverName: dbConnectionName,
+    clusterName: dbClusterName,
+    serverVersion: rawServerVersion,
+    serverEngine: cleanVer ? `PostgreSQL ${cleanVer}` : '',
+    loginUser: dbLoginUser,
+    host: dbHost,
+    port: Number(metaRow.srv_port || 5432),
+    database: dbConnectionName,
+    isLivePostgres: true,
+    isConnected: true,
+    connectedAt: nowIso,
+  };
+  state.serverInfo = livePgServerInfo;
   const pgExistingTablesSet = new Set<string>();
   const discoveredDatabases: ServerDatabase[] = [];
   let totalRowsRetrieved = 0;
@@ -3411,63 +3430,92 @@ async function introspectAndHydrateFromPostgresPool(
 
 async function ensurePostgresHydrated(forceRefresh = false): Promise<void> {
   const now = Date.now();
-  // Re-introspect if forced or if more than 15 seconds have elapsed since last introspection
-  if (pgHasHydrated && !forceRefresh && now - lastPgIntrospectTimestampMs < 15000) {
+  const currentRawConnStr = getEffectiveConnectionString();
+  const connStrChanged = currentRawConnStr !== lastHydratedRawConnStr;
+
+  if (pgHasHydrated && !forceRefresh && !connStrChanged) {
+    if (now - lastPgIntrospectTimestampMs >= 60000 && !pgHydrationPromise) {
+      // Trigger non-blocking background refresh
+      void ensurePostgresHydrated(true);
+    }
     return;
   }
-  if (pgHydrationPromise) return pgHydrationPromise;
 
-  pgHydrationPromise = (async () => {
-    let connStr = getEffectiveConnectionString();
-    if (!connStr) {
-      pgHasHydrated = true;
-      pgHydrationPromise = null;
-      return;
-    }
-
-    connStr = await resolveSupabaseIpv4PoolerConnectionString(connStr);
-    if (connStr !== cachedPgConnStr) {
-      cachedPgConnStr = connStr;
-      if (cachedPgPool) {
-        await cachedPgPool.end().catch(() => null);
+  if (!pgHydrationPromise) {
+    pgHydrationPromise = (async () => {
+      let connStr = getEffectiveConnectionString();
+      lastHydratedRawConnStr = connStr;
+      if (!connStr) {
+        pgConnectionVerified = false;
+        livePgServerInfo = null;
+        pgHasHydrated = true;
+        lastPgIntrospectTimestampMs = Date.now();
+        pgHydrationPromise = null;
+        return;
       }
-      cachedPgPool = createPgPoolForConnectionString(connStr);
-    }
 
-    const pool = cachedPgPool || getPgPool();
-    if (!pool) {
-      pgHasHydrated = true;
-      pgHydrationPromise = null;
-      return;
-    }
+      connStr = await resolveSupabaseIpv4PoolerConnectionString(connStr);
+      if (connStr !== cachedPgConnStr) {
+        cachedPgConnStr = connStr;
+        if (cachedPgPool) {
+          await cachedPgPool.end().catch(() => null);
+        }
+        cachedPgPool = createPgPoolForConnectionString(connStr);
+      }
 
-    try {
-      const result = await introspectAndHydrateFromPostgresPool(pool, cloudState, {
-        replaceAllDatabases: false,
-        baseConnectionString: connStr,
-      });
-      await persistWorkspaceState(cloudState, true);
+      const pool = cachedPgPool || getPgPool();
+      if (!pool) {
+        pgConnectionVerified = false;
+        livePgServerInfo = null;
+        pgHasHydrated = true;
+        lastPgIntrospectTimestampMs = Date.now();
+        pgHydrationPromise = null;
+        return;
+      }
 
-      // Sync any tables in cloudState that do not yet exist in PostgreSQL in the background
-      void (async () => {
-        for (const db of cloudState.databases) {
-          await createDatabaseInRealBackend(db.databaseName, true);
-          for (const tbl of db.tables) {
-            const key = `${db.databaseName.toLowerCase()}::${tbl.tableName.toLowerCase()}`;
-            if (!result.pgExistingTablesSet.has(key)) {
-              await syncTableToRealDatabase(tbl, db.databaseName, true);
+      try {
+        const result = await introspectAndHydrateFromPostgresPool(pool, cloudState, {
+          replaceAllDatabases: false,
+          baseConnectionString: connStr,
+        });
+        await persistWorkspaceState(cloudState, true);
+
+        // Sync any tables in cloudState that do not yet exist in PostgreSQL in the background
+        void (async () => {
+          for (const db of cloudState.databases) {
+            await createDatabaseInRealBackend(db.databaseName, true);
+            for (const tbl of db.tables) {
+              const key = `${db.databaseName.toLowerCase()}::${tbl.tableName.toLowerCase()}`;
+              if (!result.pgExistingTablesSet.has(key)) {
+                await syncTableToRealDatabase(tbl, db.databaseName, true);
+              }
             }
           }
-        }
-      })();
-    } catch (err) {
-      pgConnectionVerified = false;
-      lastPgConnectionError = err instanceof Error ? err.message : String(err);
-    } finally {
-      pgHasHydrated = true;
-      pgHydrationPromise = null;
-    }
-  })();
+        })();
+      } catch {
+        pgConnectionVerified = false;
+        livePgServerInfo = null;
+      } finally {
+        pgHasHydrated = true;
+        lastPgIntrospectTimestampMs = Date.now();
+        pgHydrationPromise = null;
+      }
+    })();
+  }
+
+  if (
+    !forceRefresh &&
+    !connStrChanged &&
+    livePgServerInfo &&
+    cloudState.databases &&
+    cloudState.databases.length > 0
+  ) {
+    await Promise.race([
+      pgHydrationPromise,
+      new Promise<void>((resolve) => setTimeout(resolve, 1200)),
+    ]);
+    return;
+  }
 
   return pgHydrationPromise;
 }
@@ -3600,6 +3648,9 @@ app.get('/api/workspace', async (req: Request, res: Response) => {
     workspaceId: cloudState.workspaceId,
     workspaceName: targetTable ? targetTable.tableName : targetDb.databaseName,
     serverName: srvInfo.serverName,
+    serverHost: srvInfo.host,
+    serverClusterName: srvInfo.clusterName || '',
+    serverVersion: srvInfo.serverVersion || '',
     serverEngine: srvInfo.serverEngine,
     serverLoginUser: srvInfo.loginUser,
     isServerConnected: srvInfo.isConnected,
@@ -3634,6 +3685,9 @@ app.get('/api/workspace/tree', async (req: Request, res: Response) => {
   res.status(200).json({
     ok: true,
     serverName: srvInfo.serverName,
+    serverHost: srvInfo.host,
+    serverClusterName: srvInfo.clusterName || '',
+    serverVersion: srvInfo.serverVersion || '',
     serverEngine: srvInfo.serverEngine,
     serverLoginUser: srvInfo.loginUser,
     isServerConnected: srvInfo.isConnected,
@@ -3670,7 +3724,7 @@ app.post('/api/workspace/restore-client-backup', async (req: Request, res: Respo
 
     for (const backupDb of body.databases) {
       const cleanDbName = stripDboPrefix(backupDb.databaseName || '').trim();
-      if (!cleanDbName) continue;
+      if (!cleanDbName || cleanDbName.toLowerCase() === 'systemdatabase') continue;
 
       let existingDb = cloudState.databases.find(
         (d) => d.databaseName.toLowerCase() === cleanDbName.toLowerCase()
@@ -3765,239 +3819,6 @@ app.post('/api/workspace/restore-client-backup', async (req: Request, res: Respo
   }
 });
 
-/**
- * POST /api/workspace/server/connect — Connects to a live PostgreSQL or Supabase server
- * using either a Connection String (URI / ADO.NET Key-Value) or Server Host + Port + Database + Login + Password,
- * verifies the connection, and retrieves all Databases (schemas & catalog dbs), Tables, Fields (columns), and Data (rows).
- */
-app.post('/api/workspace/server/connect', async (req: Request, res: Response) => {
-  try {
-    const body = (req.body || {}) as {
-      serverName?: string;
-      loginUser?: string;
-      password?: string;
-      connectionString?: string;
-      host?: string;
-      port?: number | string;
-      databaseName?: string;
-      userName?: string;
-      userColor?: string;
-    };
-
-    const rawConnInput = (body.connectionString || '').trim();
-    const rawServerInput = (body.serverName || body.host || '').trim();
-    const rawUserInput = (body.loginUser || '').trim();
-    const rawPasswordInput = sanitizeRawPassword(body.password ?? '');
-    const existingConnStr = getEffectiveConnectionString();
-    const existingParsed = parseConnStrHostAndUser(existingConnStr);
-
-    let candidateConnStr = '';
-
-    if (rawConnInput) {
-      candidateConnStr = normalizePostgresConnectionString(rawConnInput);
-      if (!candidateConnStr) {
-        res.status(200).json({
-          ok: false,
-          error:
-            'Invalid connection string format. Use postgresql://user:password@host:5432/postgres or Host=...;Port=5432;Database=postgres;Username=...;Password=...',
-        });
-        return;
-      }
-    } else if (
-      rawServerInput.startsWith('postgres://') ||
-      rawServerInput.startsWith('postgresql://') ||
-      /host\s*=/i.test(rawServerInput)
-    ) {
-      candidateConnStr = normalizePostgresConnectionString(rawServerInput);
-      if (!candidateConnStr) {
-        res.status(200).json({
-          ok: false,
-          error: 'Invalid connection string entered in Server name.',
-        });
-        return;
-      }
-    } else if (rawServerInput) {
-      // Parse host, optional :port, and optional /database from rawServerInput
-      const stripped = rawServerInput.replace(/^https?:\/\//i, '');
-      const [hostPortPart, pathDbPart] = stripped.split('/');
-      const [parsedHost, parsedPortStr] = (hostPortPart || '').split(':');
-      const host = (parsedHost || '').trim();
-      const port = Number(body.port || parsedPortStr || existingParsed?.port || 5432) || 5432;
-      const dbName =
-        (body.databaseName || pathDbPart || existingParsed?.database || 'postgres').trim() ||
-        'postgres';
-      const user = rawUserInput || existingParsed?.user || 'postgres';
-
-      // If password was omitted (e.g. Refresh or reconnect to current server) and existing connection matches host, reuse existing connection string
-      if (
-        !rawPasswordInput &&
-        existingConnStr &&
-        existingParsed &&
-        (existingParsed.host.toLowerCase() === host.toLowerCase() || host.toLowerCase() === 'localhost')
-      ) {
-        candidateConnStr = existingConnStr;
-      } else {
-        candidateConnStr = normalizePostgresConnectionString(
-          `postgresql://${encodeURIComponent(user)}:${encodeURIComponent(
-            rawPasswordInput
-          )}@${host}:${port}/${encodeURIComponent(dbName)}`
-        );
-      }
-    } else if (existingConnStr) {
-      candidateConnStr = existingConnStr;
-    }
-
-    if (!candidateConnStr) {
-      res.status(200).json({
-        ok: false,
-        error:
-          'Please enter your Supabase / PostgreSQL Server host, Login, and Password, or paste a Connection String.',
-      });
-      return;
-    }
-
-    // Automatically resolve IPv6-only Supabase direct hosts (db.<ref>.supabase.co) to IPv4 Supavisor pooler
-    candidateConnStr = await resolveSupabaseIpv4PoolerConnectionString(candidateConnStr);
-
-    const testPool = createPgPoolForConnectionString(candidateConnStr);
-    let introspected: Awaited<ReturnType<typeof introspectAndHydrateFromPostgresPool>>;
-    try {
-      introspected = await introspectAndHydrateFromPostgresPool(testPool, cloudState, {
-        replaceAllDatabases: true,
-        baseConnectionString: candidateConnStr,
-      });
-    } catch (pgErr) {
-      await testPool.end().catch(() => null);
-      const errMsg =
-        pgErr instanceof Error ? pgErr.message : 'Unable to reach PostgreSQL / Supabase server.';
-      res.status(200).json({
-        ok: false,
-        error: `PostgreSQL / Supabase connection failed: ${errMsg}`,
-      });
-      return;
-    }
-
-    // Connection & introspection succeeded! Persist the verified connection string and pool
-    saveRuntimePostgresConnectionString(candidateConnStr);
-    if (cachedPgPool && cachedPgPool !== testPool) {
-      await cachedPgPool.end().catch(() => null);
-    }
-    cachedPgPool = testPool;
-    cachedPgConnStr = candidateConnStr;
-    pgHasHydrated = true;
-    pgHydrationPromise = null;
-
-    const parsedConnected = parseConnStrHostAndUser(candidateConnStr);
-    const resolvedServerName =
-      parsedConnected?.host ||
-      rawServerInput.split('/')[0] ||
-      cloudState.serverInfo?.serverName ||
-      'localhost';
-    const resolvedEngine = `PostgreSQL ${introspected.serverVersion || '16.0'}`;
-    const resolvedLoginUser =
-      introspected.loginUser || parsedConnected?.user || rawUserInput || 'postgres';
-
-    const nowIso = new Date().toISOString();
-    const srvInfo: ServerConnectionInfo = {
-      serverName: resolvedServerName,
-      serverEngine: resolvedEngine,
-      loginUser: resolvedLoginUser,
-      host: parsedConnected?.host || resolvedServerName,
-      port: parsedConnected?.port || Number(body.port || 5432),
-      database: introspected.serverDatabase || parsedConnected?.database || 'postgres',
-      isLivePostgres: true,
-      isConnected: true,
-      connectedAt: nowIso,
-    };
-
-    cloudState.serverInfo = srvInfo;
-    ensureDatabasesHierarchy(cloudState);
-    const targetDb = getTargetDatabase(cloudState, cloudState.activeDatabaseName);
-    const targetTable = getTargetTable(
-      cloudState,
-      targetDb.activeTableName || targetDb.tables[0]?.tableName,
-      targetDb.databaseName
-    );
-    cloudState.updatedAt = nowIso;
-
-    const allDbs = getDatabaseSummaries(cloudState);
-    const totalTablesCount = allDbs.reduce((acc, d) => acc + (d.tables?.length || 0), 0);
-    const totalFieldsCount = allDbs.reduce(
-      (acc, d) =>
-        acc + (d.tables || []).reduce((tAcc, t) => tAcc + (t.columns?.length || 0), 0),
-      0
-    );
-    const totalRowsCount = (cloudState.databases || []).reduce(
-      (acc, d) => acc + (d.tables || []).reduce((tAcc, t) => tAcc + (t.rows?.length || 0), 0),
-      0
-    );
-
-    recordActivity(
-      body.userName || resolvedLoginUser,
-      body.userColor || '#4285F4',
-      'PostgreSQL Connected',
-      `Connected to "${srvInfo.serverName}" (${srvInfo.loginUser}) — retrieved ${allDbs.length} database(s), ${totalTablesCount} table(s), ${totalFieldsCount} field(s), and ${totalRowsCount} row(s)`
-    );
-    await persistWorkspaceState(cloudState, true);
-
-    const sortedCols = targetTable
-      ? [...targetTable.columns].sort((a, b) => a.orderIndex - b.orderIndex)
-      : [];
-    const queryResult = executeDatabaseQuery(sortedCols, targetTable ? targetTable.rows : [], {
-      offset: 0,
-      limit: 10,
-    });
-
-    res.status(200).json({
-      ok: true,
-      serverName: srvInfo.serverName,
-      serverEngine: srvInfo.serverEngine,
-      serverLoginUser: srvInfo.loginUser,
-      isServerConnected: true,
-      serverInfo: srvInfo,
-      activeDatabaseName: targetDb.databaseName,
-      databases: allDbs,
-      activeTableName: targetTable ? targetTable.tableName : '',
-      tables: getTableSummaries(cloudState, targetDb),
-      columns: sortedCols,
-      rows: queryResult.rows,
-      totalRows: queryResult.totalRows,
-      filteredTotalRows: queryResult.filteredTotalRows,
-      hasMore: queryResult.hasMore,
-      uniqueValuesByColumn: queryResult.uniqueValuesByColumn,
-      activities: cloudState.activities,
-      stats: {
-        databaseCount: allDbs.length,
-        tableCount: totalTablesCount,
-        fieldCount: totalFieldsCount,
-        rowCount: totalRowsCount,
-      },
-    });
-  } catch (err) {
-    res.status(500).json({
-      ok: false,
-      error: err instanceof Error ? err.message : 'Failed to connect to PostgreSQL server.',
-    });
-  }
-});
-
-/**
- * POST /api/workspace/server/disconnect — disconnects the Object Explorer server session
- */
-app.post('/api/workspace/server/disconnect', async (_req: Request, res: Response) => {
-  const srvInfo = resolveServerConnectionInfo(cloudState);
-  srvInfo.isConnected = false;
-  cloudState.serverInfo = srvInfo;
-  writeStateFilesToDiskOnly(cloudState);
-  res.status(200).json({
-    ok: true,
-    serverName: srvInfo.serverName,
-    serverEngine: srvInfo.serverEngine,
-    serverLoginUser: srvInfo.loginUser,
-    isServerConnected: false,
-    serverInfo: srvInfo,
-  });
-});
 
 /**
  * POST /api/workspace/databases — creates a new database in the backend
@@ -6456,17 +6277,55 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
     addedColumnNames: syncAddedColumnNames,
     deletedColumnNames: syncDeletedColumnNames,
   });
-  await syncTableToRealDatabase(targetTable, targetDb.databaseName, IS_SERVERLESS_HOST);
-  for (const otherTbl of targetDb.tables) {
-    if (
-      otherTbl !== targetTable &&
-      otherTbl.columns.some(
-        (c) =>
-          c.colType === 'lookup' &&
-          (c.lookupTableName || '').toLowerCase() === targetTable.tableName.toLowerCase()
-      )
-    ) {
-      await syncTableToRealDatabase(otherTbl, targetDb.databaseName, IS_SERVERLESS_HOST);
+  const isCellEditOnly =
+    (actionType === 'cell_edit' ||
+      actionType === 'Cell Updated' ||
+      actionType === 'Row Auto-Saved' ||
+      actionType === 'Row Added (First Row)' ||
+      actionType === 'Rows Pasted via First Row' ||
+      actionType === 'Excel Data Pasted') &&
+    syncAddedColumnNames.length === 0 &&
+    syncDeletedColumnNames.length === 0 &&
+    syncRenamedCols.length === 0 &&
+    (!Array.isArray(deletedRowIds) || deletedRowIds.length === 0);
+
+  if (isCellEditOnly && Array.isArray(rows) && rows.length > 0) {
+    const nowMs = Date.now();
+    const tableKey = `${targetDb.databaseName.toLowerCase()}|${targetTable.tableName.toLowerCase()}`;
+    for (const incoming of rows) {
+      if (incoming?.id) {
+        writeBehindDirtyRows.set(`${tableKey}|${incoming.id}`, {
+          databaseName: targetDb.databaseName,
+          tableName: targetTable.tableName,
+          rowId: incoming.id,
+          timestampMs: nowMs,
+        });
+      }
+    }
+    if (!writeBehindDirtyTables.has(tableKey)) {
+      writeBehindDirtyTables.set(tableKey, {
+        databaseName: targetDb.databaseName,
+        tableName: targetTable.tableName,
+        firstDirtyAtMs: nowMs,
+      });
+    }
+    writeStateFilesToDiskOnly(cloudState);
+    writeBehindMetadataDirty = true;
+    scheduleWriteBehindFlush(1100);
+    broadcastEvent('write_behind_status', getWriteBehindBufferStatus());
+  } else {
+    await syncTableToRealDatabase(targetTable, targetDb.databaseName, IS_SERVERLESS_HOST);
+    for (const otherTbl of targetDb.tables) {
+      if (
+        otherTbl !== targetTable &&
+        otherTbl.columns.some(
+          (c) =>
+            c.colType === 'lookup' &&
+            (c.lookupTableName || '').toLowerCase() === targetTable.tableName.toLowerCase()
+        )
+      ) {
+        await syncTableToRealDatabase(otherTbl, targetDb.databaseName, IS_SERVERLESS_HOST);
+      }
     }
   }
 
@@ -6478,7 +6337,9 @@ app.post('/api/workspace/sync', async (req: Request, res: Response) => {
     cloudState.rows = targetTable.rows;
   }
 
-  await persistWorkspaceState(cloudState, IS_SERVERLESS_HOST);
+  if (!isCellEditOnly) {
+    await persistWorkspaceState(cloudState, IS_SERVERLESS_HOST);
+  }
   const currentActiveDb = getTargetDatabase(cloudState, cloudState.activeDatabaseName);
   const currentActiveTbl = getTargetTable(
     cloudState,
@@ -6561,6 +6422,8 @@ interface WriteBehindBufferStatus {
 
 // Atomic Last-Write-Wins (LWW) cell timestamp ledger ("dbLower|tableLower|rowId|colIdLower" -> timestampMs)
 const cellLwwTimestamps = new Map<string, number>();
+let inFlightFlushRowCount = 0;
+let activeFlushPromise: Promise<WriteBehindBufferStatus> | null = null;
 
 function getWriteBehindBufferStatus(): WriteBehindBufferStatus {
   let oldest: number | null = null;
@@ -6575,7 +6438,7 @@ function getWriteBehindBufferStatus(): WriteBehindBufferStatus {
     }
   }
   return {
-    dirtyRowCount: writeBehindDirtyRows.size + writeBehindDdlQueue.length,
+    dirtyRowCount: writeBehindDirtyRows.size + writeBehindDdlQueue.length + inFlightFlushRowCount,
     pendingDdlCount: writeBehindDdlQueue.length,
     totalCoalescedEdits: writeBehindMetrics.totalCoalescedEdits,
     totalPostgresBulkFlushes: writeBehindMetrics.totalPostgresBulkFlushes,
@@ -6898,11 +6761,13 @@ function scheduleWriteBehindFlush(delayMs = 1000): void {
 async function flushWriteBehindBufferToPostgres(
   reason: 'periodic' | 'threshold' | 'manual' | 'shutdown' = 'periodic'
 ): Promise<WriteBehindBufferStatus> {
+  if (activeFlushPromise) {
+    return activeFlushPromise;
+  }
   if (
-    writeBehindMetrics.isFlushing ||
-    (writeBehindDirtyTables.size === 0 &&
-      writeBehindDdlQueue.length === 0 &&
-      !writeBehindMetadataDirty)
+    writeBehindDirtyTables.size === 0 &&
+    writeBehindDdlQueue.length === 0 &&
+    !writeBehindMetadataDirty
   ) {
     return getWriteBehindBufferStatus();
   }
@@ -6913,100 +6778,107 @@ async function flushWriteBehindBufferToPostgres(
   const claimedDdls = writeBehindDdlQueue.splice(0, writeBehindDdlQueue.length);
   const claimedTables = Array.from(writeBehindDirtyTables.entries());
   const claimedRows = Array.from(writeBehindDirtyRows.entries());
+  inFlightFlushRowCount = Math.max(1, claimedRows.length + claimedDdls.length);
   writeBehindDirtyTables.clear();
   writeBehindDirtyRows.clear();
   writeBehindMetadataDirty = false;
 
-  try {
-    await ensurePostgresHydrated();
+  activeFlushPromise = (async () => {
+    try {
+      await ensurePostgresHydrated();
 
-    const maxAttempts = 3;
-    let attempt = 0;
-    let flushedSuccess = false;
+      const maxAttempts = 3;
+      let attempt = 0;
+      let flushedSuccess = false;
 
-    while (attempt < maxAttempts && !flushedSuccess) {
-      attempt++;
-      try {
-        // 1. Execute queued Sidebar Tree / Schema DDL tasks in chronological order
-        for (const ddl of claimedDdls) {
-          if (ddl.type === 'create_database') {
-            await execCreateDatabaseInPostgres(ddl.databaseName);
-          } else if (ddl.type === 'rename_database' && ddl.newDatabaseName) {
-            await execRenameDatabaseInPostgres(ddl.databaseName, ddl.newDatabaseName);
-          } else if (ddl.type === 'drop_database') {
-            await execDropDatabaseFromPostgres(ddl.databaseName);
-          } else if (ddl.type === 'drop_table' && ddl.tableName) {
-            await execDropTableFromPostgres(ddl.tableName, ddl.databaseName);
+      while (attempt < maxAttempts && !flushedSuccess) {
+        attempt++;
+        try {
+          // 1. Execute queued Sidebar Tree / Schema DDL tasks in chronological order
+          for (const ddl of claimedDdls) {
+            if (ddl.type === 'create_database') {
+              await execCreateDatabaseInPostgres(ddl.databaseName);
+            } else if (ddl.type === 'rename_database' && ddl.newDatabaseName) {
+              await execRenameDatabaseInPostgres(ddl.databaseName, ddl.newDatabaseName);
+            } else if (ddl.type === 'drop_database') {
+              await execDropDatabaseFromPostgres(ddl.databaseName);
+            } else if (ddl.type === 'drop_table' && ddl.tableName) {
+              await execDropTableFromPostgres(ddl.tableName, ddl.databaseName);
+            }
           }
-        }
 
-        // 2. Bulk-flush dirty tables and rows to PostgreSQL
-        for (const [, item] of claimedTables) {
-          const db = findDatabase(cloudState, item.databaseName);
-          const tbl = findTable(db, item.tableName);
-          if (tbl) {
-            await execSyncTableToPostgres(tbl, db.databaseName);
-            // Also flush any lookup-dependent tables in the same database
-            for (const otherTbl of db.tables) {
-              if (
-                otherTbl !== tbl &&
-                otherTbl.columns.some(
-                  (c) =>
-                    c.colType === 'lookup' &&
-                    (c.lookupTableName || '').toLowerCase() === tbl.tableName.toLowerCase()
-                )
-              ) {
-                await execSyncTableToPostgres(otherTbl, db.databaseName);
+          // 2. Bulk-flush dirty tables and rows to PostgreSQL
+          for (const [, item] of claimedTables) {
+            const db = findDatabase(cloudState, item.databaseName);
+            const tbl = findTable(db, item.tableName);
+            if (tbl) {
+              await execSyncTableToPostgres(tbl, db.databaseName);
+              // Also flush any lookup-dependent tables in the same database
+              for (const otherTbl of db.tables) {
+                if (
+                  otherTbl !== tbl &&
+                  otherTbl.columns.some(
+                    (c) =>
+                      c.colType === 'lookup' &&
+                      (c.lookupTableName || '').toLowerCase() === tbl.tableName.toLowerCase()
+                  )
+                ) {
+                  await execSyncTableToPostgres(otherTbl, db.databaseName);
+                }
               }
             }
           }
-        }
 
-        // 3. Persist authoritative workspace metadata snapshot to PostgreSQL
-        await persistWorkspaceState(cloudState, true);
-        flushedSuccess = true;
-      } catch {
-        if (attempt < maxAttempts) {
-          await new Promise((r) => setTimeout(r, 200 * Math.pow(2, attempt)));
+          // 3. Persist authoritative workspace metadata snapshot to PostgreSQL
+          await persistWorkspaceState(cloudState, true);
+          flushedSuccess = true;
+        } catch {
+          if (attempt < maxAttempts) {
+            await new Promise((r) => setTimeout(r, 200 * Math.pow(2, attempt)));
+          }
         }
       }
+
+      if (flushedSuccess) {
+        writeBehindMetrics.totalPostgresBulkFlushes++;
+        writeBehindMetrics.lastFlushedAt = new Date().toISOString();
+        recordActivity(
+          'Write-Behind Worker',
+          '#0d9488',
+          'PostgreSQL Bulk Flush',
+          `Flushed ${claimedRows.length} dirty row(s), ${claimedTables.length} table(s), and ${claimedDdls.length} DDL op(s) to PostgreSQL (${reason} trigger)`
+        );
+      } else {
+        // Dead-letter recovery: re-queue claimed records if PostgreSQL was unreachable after retries
+        writeBehindDdlQueue.unshift(...claimedDdls);
+        for (const [k, v] of claimedTables) {
+          if (!writeBehindDirtyTables.has(k)) {
+            writeBehindDirtyTables.set(k, v);
+          }
+        }
+        for (const [k, v] of claimedRows) {
+          if (!writeBehindDirtyRows.has(k)) {
+            writeBehindDirtyRows.set(k, v);
+          }
+        }
+        writeBehindMetadataDirty = true;
+      }
+    } finally {
+      inFlightFlushRowCount = 0;
+      writeBehindMetrics.isFlushing = false;
+      activeFlushPromise = null;
     }
 
-    if (flushedSuccess) {
-      writeBehindMetrics.totalPostgresBulkFlushes++;
-      writeBehindMetrics.lastFlushedAt = new Date().toISOString();
-      recordActivity(
-        'Write-Behind Worker',
-        '#0d9488',
-        'PostgreSQL Bulk Flush',
-        `Flushed ${claimedRows.length} dirty row(s), ${claimedTables.length} table(s), and ${claimedDdls.length} DDL op(s) to PostgreSQL (${reason} trigger)`
-      );
-    } else {
-      // Dead-letter recovery: re-queue claimed records if PostgreSQL was unreachable after retries
-      writeBehindDdlQueue.unshift(...claimedDdls);
-      for (const [k, v] of claimedTables) {
-        if (!writeBehindDirtyTables.has(k)) {
-          writeBehindDirtyTables.set(k, v);
-        }
-      }
-      for (const [k, v] of claimedRows) {
-        if (!writeBehindDirtyRows.has(k)) {
-          writeBehindDirtyRows.set(k, v);
-        }
-      }
-      writeBehindMetadataDirty = true;
-    }
-  } finally {
-    writeBehindMetrics.isFlushing = false;
-  }
+    const updatedStatus = getWriteBehindBufferStatus();
+    broadcastEvent('write_behind_status', updatedStatus);
+    broadcastWsFrameToAll({
+      type: 'WriteBehindStatus',
+      status: updatedStatus,
+    });
+    return updatedStatus;
+  })();
 
-  const updatedStatus = getWriteBehindBufferStatus();
-  broadcastEvent('write_behind_status', updatedStatus);
-  broadcastWsFrameToAll({
-    type: 'WriteBehindStatus',
-    status: updatedStatus,
-  });
-  return updatedStatus;
+  return activeFlushPromise;
 }
 
 // Start periodic background write-behind flush timer (every 2 minutes)
@@ -7147,16 +7019,10 @@ app.post('/api/realtime/delta', async (req: Request, res: Response) => {
     : [];
 
   const result = processRealtimeCellDeltaBatch(list);
-  // In serverless environments (e.g., Vercel), background setTimeouts are frozen as soon as res.json() returns.
-  // Flush the write-behind buffer before completing the HTTP response when running on serverless hosts.
-  const finalStatus =
-    IS_SERVERLESS_HOST && result.acceptedDeltas.length > 0
-      ? await flushWriteBehindBufferToPostgres('threshold')
-      : result.status;
   res.json({
     ok: true,
     acks: result.acks,
-    status: finalStatus,
+    status: result.status,
   });
 });
 

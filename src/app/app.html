@@ -275,18 +275,6 @@
                 {{ versions().length }} saved
               </span>
             </button>
-
-            <button
-              type="button"
-              (click)="openGitHubModal($event)"
-              class="w-100 btn btn-sm btn-outline-dark d-flex align-items-center justify-content-between text-xs font-semibold"
-            >
-              <span class="d-inline-flex align-items-center gap-1.5">
-                <mat-icon>cloud_upload</mat-icon>
-                <span>Commit to GitHub / Host on Vercel</span>
-              </span>
-              <span class="text-slate-400 font-mono-tabular" style="font-size: 10px">Git + Vercel</span>
-            </button>
           </div>
 
           <!-- Collaboration & Export Section inside Gear Dropdown -->
@@ -1134,19 +1122,42 @@
         [style.max-width.px]="sidebarWidthPx()"
         aria-label="Object Explorer Sidebar"
       >
-        <!-- Docked Window Title Bar -->
-        <div class="ssms-titlebar d-flex align-items-center justify-content-between gap-2">
-          <div class="d-flex align-items-center gap-2 overflow-hidden min-w-0">
-            <mat-icon class="shrink-0" style="color: #FBBC05">account_tree</mat-icon>
-            <span class="font-semibold truncate text-white">Object Explorer</span>
+        <!-- Docked Window Title Bar with 2 Tabs: Object Explorer & Server Explorer -->
+        <div class="ssms-titlebar d-flex align-items-center justify-content-between gap-1 px-1 py-0" style="min-height: 32px">
+          <div class="d-flex align-items-stretch gap-1 overflow-hidden min-w-0 flex-grow-1 pt-1">
+            <button
+              type="button"
+              (click)="switchSidebarTab('object_explorer', $event)"
+              class="d-inline-flex align-items-center gap-1.5 px-2 py-1 border-0 rounded-top text-xs font-semibold truncate cursor-pointer transition-colors"
+              [style.background-color]="activeSidebarTab() === 'object_explorer' ? '#FFFFFF' : 'rgba(255,255,255,0.12)'"
+              [style.color]="activeSidebarTab() === 'object_explorer' ? '#000000' : '#FFFFFF'"
+              [style.border-bottom]="activeSidebarTab() === 'object_explorer' ? '2px solid #FBBC05' : '2px solid transparent'"
+              title="Object Explorer (v{{ serverVersion() }})"
+            >
+              <mat-icon class="shrink-0" style="color: #FBBC05; font-size: 15px; width: 15px; height: 15px">account_tree</mat-icon>
+              <span class="truncate">Object Explorer (v{{ serverVersion() }})</span>
+            </button>
+
+            <button
+              type="button"
+              (click)="switchSidebarTab('server_explorer', $event)"
+              class="d-inline-flex align-items-center gap-1.5 px-2 py-1 border-0 rounded-top text-xs font-semibold truncate cursor-pointer transition-colors"
+              [style.background-color]="activeSidebarTab() === 'server_explorer' ? '#FFFFFF' : 'rgba(255,255,255,0.12)'"
+              [style.color]="activeSidebarTab() === 'server_explorer' ? '#000000' : '#FFFFFF'"
+              [style.border-bottom]="activeSidebarTab() === 'server_explorer' ? '2px solid #4285F4' : '2px solid transparent'"
+              title="Server Explorer (GitHub & Vercel)"
+            >
+              <mat-icon class="shrink-0" style="color: #4285F4; font-size: 15px; width: 15px; height: 15px">dns</mat-icon>
+              <span class="truncate">Server Explorer</span>
+            </button>
           </div>
           <div class="d-flex align-items-center gap-0.5 shrink-0">
             <button
               type="button"
               (click)="toggleManageSidebar($event)"
               class="btn btn-sm p-0 px-1 border-0 bg-transparent text-white d-inline-flex align-items-center gridario-icon-only-btn"
-              title="Auto Hide / Collapse Object Explorer"
-              aria-label="Collapse Object Explorer"
+              title="Auto Hide / Collapse Sidebar"
+              aria-label="Collapse Sidebar"
             >
               <mat-icon style="color: #4285F4">chevron_left</mat-icon>
             </button>
@@ -1154,34 +1165,13 @@
         </div>
 
         <!-- Command Toolbar Strip + Available Databases Combo Box -->
-        <div class="ssms-toolbar d-flex flex-column gap-1.5">
-          <!-- Row 1: Icon Strip (Connect Status | Refresh | Expand All | Collapse All | New DB) + Filter Search -->
+        <div
+          class="ssms-toolbar d-flex flex-column gap-1.5"
+          [class.d-none]="activeSidebarTab() !== 'object_explorer'"
+        >
+          <!-- Row 1: Icon Strip (Refresh | Expand All | Collapse All | New DB) + Filter Search -->
           <div class="d-flex align-items-center justify-content-between gap-1">
             <div class="d-flex align-items-center gap-0.5 shrink-0">
-              <button
-                type="button"
-                (click)="openConnectServerModal($event)"
-                class="ssms-toolbar-btn d-inline-flex align-items-center gap-1 px-1.5"
-                style="width: auto"
-                aria-label="Connect to Server"
-              >
-                <mat-icon [style.color]="isServerConnected() ? '#34A853' : '#4285F4'">power</mat-icon>
-                <span class="text-[11px] font-semibold text-slate-900">Connect</span>
-              </button>
-
-              @if (isServerConnected()) {
-                <button
-                  type="button"
-                  (click)="disconnectServerFromExplorer($event)"
-                  class="ssms-toolbar-btn"
-                  aria-label="Disconnect Server"
-                >
-                  <mat-icon style="color: #EA4335">link_off</mat-icon>
-                </button>
-              }
-
-              <span class="text-slate-300 mx-0.5" style="font-size: 11px">|</span>
-
               <button
                 type="button"
                 (click)="refreshServerAndRetrieveObjects($event)"
@@ -1248,350 +1238,575 @@
         <!-- SSMS Object Explorer Hierarchical Tree Canvas -->
         <div
           class="manage-tree-scroll flex-grow-1 min-h-0"
+          [class.d-none]="activeSidebarTab() !== 'object_explorer'"
           [class.is-resizing-pane]="isDraggingSidebarHeight()"
           (contextmenu)="onSidebarContextMenu($event, 'server')"
         >
-          @if (!isServerConnected()) {
-            <div class="p-3 m-2 rounded-lg border border-slate-300 bg-slate-50 text-center d-flex flex-column align-items-center gap-2">
-              <mat-icon style="font-size: 26px; width: 26px; height: 26px; color: #4285F4">dns</mat-icon>
-              <div class="text-xs font-bold text-slate-800">Not Connected to Server</div>
-              <div class="text-[11px] text-slate-600">
-                Log in to a database server to retrieve its server name, databases, tables, and fields.
-              </div>
-              <button
-                type="button"
-                (click)="openConnectServerModal($event)"
-                class="btn btn-sm btn-primary d-inline-flex align-items-center gap-1 text-xs font-semibold px-3 mt-1"
-              >
-                <mat-icon>power</mat-icon>
-                <span>Connect to Server...</span>
-              </button>
-            </div>
-          } @else {
-          <!-- Root SQL Server Instance Node (Populated from Database after Login) -->
-          <div
-            class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 text-slate-900 font-semibold cursor-pointer"
-            style="font-size: 12.5px"
-            (click)="toggleServerNode($event)"
-            (keydown.enter)="toggleServerNode($event)"
-            (contextmenu)="onSidebarContextMenu($event, 'server')"
-            (touchstart)="onSidebarTouchStart($event, 'server')"
-            (touchend)="onSidebarTouchEndOrMove()"
-            (touchmove)="onSidebarTouchEndOrMove()"
-            tabindex="0"
-          >
-            <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
-              <button
-                type="button"
-                (click)="toggleServerNode($event)"
-                class="ssms-expander"
-              >
-                {{ isServerRootNodeExpanded() ? '−' : '+' }}
-              </button>
-              <div class="position-relative d-inline-flex align-items-center justify-content-center shrink-0">
-                <mat-icon style="color: #4285F4">dns</mat-icon>
-                <span
-                  class="position-absolute bottom-0 end-0 rounded-full"
-                  style="width: 6px; height: 6px; background-color: #34A853; border: 1px solid #FFFFFF"
-                ></span>
-              </div>
-              <span class="truncate">
-                {{ serverName() || 'localhost' }}
-                <span class="font-normal">
-                  ({{ serverEngine() || 'PostgreSQL 16.0' }}{{ serverLoginUser() ? ' - ' + serverLoginUser() : '' }})
-                </span>
-              </span>
-            </div>
-            <div class="manage-node-actions d-flex align-items-center gap-1 shrink-0">
-              <button
-                type="button"
-                (click)="refreshServerAndRetrieveObjects($event)"
-                class="ssms-action-icon-btn ssms-action-edit"
-                aria-label="Retrieve all databases, tables, and fields from server"
-              >
-                <mat-icon>sync</mat-icon>
-              </button>
-              <button
-                type="button"
-                (click)="openConnectServerModal($event)"
-                class="ssms-action-icon-btn ssms-action-add"
-                aria-label="Connect or switch database server"
-              >
-                <mat-icon>power</mat-icon>
-              </button>
-            </div>
-          </div>
-
-          <!-- Level 1 Branch under Server Instance: Databases Folder -->
-          @if (isServerRootNodeExpanded()) {
-            <div class="manage-tree-branch mt-1">
-              <div
-                class="ssms-tree-node-wrapper"
-                (contextmenu)="onSidebarContextMenu($event, 'databases_folder')"
-              >
-                <div
-                  class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
-                  (click)="toggleDatabasesFolderNode($event)"
-                  (keydown.enter)="toggleDatabasesFolderNode($event)"
-                  (contextmenu)="onSidebarContextMenu($event, 'databases_folder')"
-                  (touchstart)="onSidebarTouchStart($event, 'databases_folder')"
-                  (touchend)="onSidebarTouchEndOrMove()"
-                  (touchmove)="onSidebarTouchEndOrMove()"
-                  tabindex="0"
+          <div class="ssms-server-instance-block">
+            <!-- Root SQL Server Instance Node -->
+            <div
+              class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 text-slate-900 font-semibold cursor-pointer"
+              style="font-size: 12.5px"
+              (click)="toggleServerNode($event)"
+              (keydown.enter)="toggleServerNode($event)"
+              (contextmenu)="onSidebarContextMenu($event, 'server')"
+              (touchstart)="onSidebarTouchStart($event, 'server')"
+              (touchend)="onSidebarTouchEndOrMove()"
+              (touchmove)="onSidebarTouchEndOrMove()"
+              tabindex="0"
+            >
+              <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
+                <button
+                  type="button"
+                  (click)="toggleServerNode($event)"
+                  class="ssms-expander"
                 >
-                  <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
+                  {{ isServerNodeExpanded() ? '−' : '+' }}
+                </button>
+                <div class="position-relative d-inline-flex align-items-center justify-content-center shrink-0">
+                  <mat-icon style="color: #4285F4">dns</mat-icon>
+                  <span
+                    class="position-absolute bottom-0 end-0 rounded-full"
+                    style="width: 6px; height: 6px; background-color: #34A853; border: 1px solid #FFFFFF"
+                  ></span>
+                </div>
+                <span
+                  class="truncate"
+                  [title]="serverHost() + '/' + serverName() + ' - (' + serverClusterName() + ')/' + serverLoginUser()"
+                >
+                  {{ serverHost() }}/{{ serverName() }} - ({{ serverClusterName() }})/{{ serverLoginUser() }}
+                </span>
+              </div>
+              <div class="manage-node-actions d-flex align-items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  (click)="refreshServerAndRetrieveObjects($event)"
+                  class="ssms-action-icon-btn ssms-action-edit"
+                  aria-label="Retrieve all databases, tables, and fields from server"
+                >
+                  <mat-icon>sync</mat-icon>
+                </button>
+              </div>
+            </div>
+
+            <!-- Level 1 Branch under Server Instance: Databases Folder -->
+            @if (isServerNodeExpanded()) {
+              <div class="manage-tree-branch mt-1">
+                <div
+                  class="ssms-tree-node-wrapper"
+                  (contextmenu)="onSidebarContextMenu($event, 'databases_folder')"
+                >
+                  <div
+                    class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
+                    (click)="toggleDatabasesFolderNode($event)"
+                    (keydown.enter)="toggleDatabasesFolderNode($event)"
+                    (contextmenu)="onSidebarContextMenu($event, 'databases_folder')"
+                    (touchstart)="onSidebarTouchStart($event, 'databases_folder')"
+                    (touchend)="onSidebarTouchEndOrMove()"
+                    (touchmove)="onSidebarTouchEndOrMove()"
+                    tabindex="0"
+                  >
+                    <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
+                      <button
+                        type="button"
+                        (click)="toggleDatabasesFolderNode($event)"
+                        class="ssms-expander"
+                      >
+                        {{ isDatabasesFolderExpanded() ? '−' : '+' }}
+                      </button>
+                      <mat-icon
+                        class="shrink-0"
+                        style="color: #FBBC05"
+                      >
+                        folder
+                      </mat-icon>
+                      <span class="font-semibold text-slate-900 truncate" style="font-size: 12.5px">
+                        Databases <span class="font-normal">({{ filteredManageDatabases().length }})</span>
+                      </span>
+                    </div>
                     <button
                       type="button"
-                      (click)="toggleDatabasesFolderNode($event)"
-                      class="ssms-expander"
+                      (click)="openCreateDatabaseModal($event)"
+                      class="ssms-action-icon-btn ssms-action-add shrink-0"
+                      aria-label="New Database"
                     >
-                      {{ isDatabasesFolderNodeExpanded() ? '−' : '+' }}
+                      <mat-icon>add</mat-icon>
                     </button>
-                    <mat-icon
-                      class="shrink-0"
-                      style="color: #FBBC05"
-                    >
-                      folder
-                    </mat-icon>
-                    <span class="font-semibold text-slate-900 truncate" style="font-size: 12.5px">
-                      Databases <span class="font-normal">({{ databases().length }})</span>
-                    </span>
                   </div>
-                  <button
-                    type="button"
-                    (click)="openCreateDatabaseModal($event)"
-                    class="ssms-action-icon-btn ssms-action-add shrink-0"
-                    aria-label="New Database"
-                  >
-                    <mat-icon>add</mat-icon>
-                  </button>
-                </div>
 
-                <!-- Level 2 Branch: Individual Database Nodes -->
-                @if (isDatabasesFolderNodeExpanded()) {
-                  <div class="manage-tree-branch mt-1 d-flex flex-column gap-1">
-                    @for (db of filteredManageDatabases(); track db.databaseName) {
-                  @let isDbActive = db.databaseName.toLowerCase() === activeDatabaseName().toLowerCase();
-                  @let isDbExpanded = isDatabaseNodeExpanded(db.databaseName);
-                  <div
-                    class="ssms-tree-node-wrapper"
-                    (contextmenu)="onSidebarContextMenu($event, 'database', db.databaseName)"
-                  >
-                    <!-- Database Node Row -->
-                    <div
-                      class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
-                      [class.ssms-node-selected]="isDbActive"
-                      (click)="toggleDatabaseNode(db.databaseName, $event)"
-                      (keydown.enter)="toggleDatabaseNode(db.databaseName, $event)"
-                      (contextmenu)="onSidebarContextMenu($event, 'database', db.databaseName)"
-                      (touchstart)="onSidebarTouchStart($event, 'database', db.databaseName)"
-                      (touchend)="onSidebarTouchEndOrMove()"
-                      (touchmove)="onSidebarTouchEndOrMove()"
-                      tabindex="0"
-                    >
-                      <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
-                        <button
-                          type="button"
-                          (click)="toggleDatabaseNode(db.databaseName, $event)"
-                          class="ssms-expander"
+                  <!-- Level 2 Branch: Individual Database Nodes -->
+                  @if (isDatabasesFolderExpanded()) {
+                    <div class="manage-tree-branch mt-1 d-flex flex-column gap-1">
+                      @for (db of filteredManageDatabases(); track db.databaseName) {
+                        @let isDbActive = db.databaseName.toLowerCase() === activeDatabaseName().toLowerCase() && hasActiveConnection();
+                        @let isDbExpanded = isDatabaseNodeExpanded(db.databaseName);
+                        <div
+                          class="ssms-tree-node-wrapper"
+                          (contextmenu)="onSidebarContextMenu($event, 'database', db.databaseName)"
                         >
-                          {{ isDbExpanded ? '−' : '+' }}
-                        </button>
-                        <mat-icon
-                          class="shrink-0"
-                          [style.color]="isDbActive ? '#4285F4' : '#FBBC05'"
-                        >
-                          storage
-                        </mat-icon>
-                        <span
-                          class="truncate"
-                          [class.font-bold]="isDbActive"
-                          style="font-size: 12.5px"
-                        >
-                          {{ db.databaseName }}
-                        </span>
-                      </div>
-
-                      <div class="manage-node-actions d-flex align-items-center gap-1 shrink-0">
-                        <button
-                          type="button"
-                          (click)="openCreateTableForDatabaseFromTree(db.databaseName, $event)"
-                          class="ssms-action-icon-btn ssms-action-add"
-                        >
-                          <mat-icon>add</mat-icon>
-                        </button>
-                        <button
-                          type="button"
-                          (click)="openRenameSidebarModal('database', db.databaseName, '', null, $event)"
-                          class="ssms-action-icon-btn ssms-action-edit"
-                        >
-                          <mat-icon>edit</mat-icon>
-                        </button>
-                        @if (databases().length > 1) {
-                          <button
-                            type="button"
-                            (click)="deleteDatabase(db.databaseName, $event)"
-                            class="ssms-action-icon-btn ssms-action-danger"
-                          >
-                            <mat-icon>delete_outline</mat-icon>
-                          </button>
-                        }
-                      </div>
-                    </div>
-
-                    <!-- Level 3 Branch: Tables inside Database -->
-                    @if (isDbExpanded) {
-                      <div class="manage-tree-branch mt-1 d-flex flex-column gap-1">
-                        @for (tbl of db.tables; track tbl.tableName) {
-                          @let isTblActive = isDbActive && tbl.tableName.toLowerCase() === activeTableName().toLowerCase();
-                          @let isTblExpanded = isTableNodeExpanded(db.databaseName, tbl.tableName);
-                          @let tblCols = getColumnsForManageTable(db.databaseName, tbl);
+                          <!-- Database Node Row -->
                           <div
-                            class="ssms-tree-node-wrapper"
-                            (contextmenu)="onSidebarContextMenu($event, 'table', db.databaseName, tbl.tableName)"
+                            class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
+                            [class.ssms-node-selected]="isDbActive"
+                            (click)="toggleDatabaseNode(db.databaseName, $event)"
+                            (keydown.enter)="toggleDatabaseNode(db.databaseName, $event)"
+                            (contextmenu)="onSidebarContextMenu($event, 'database', db.databaseName)"
+                            (touchstart)="onSidebarTouchStart($event, 'database', db.databaseName)"
+                            (touchend)="onSidebarTouchEndOrMove()"
+                            (touchmove)="onSidebarTouchEndOrMove()"
+                            tabindex="0"
                           >
-                            <!-- Table Node Row -->
-                            <div
-                              class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
-                              [class.ssms-table-selected]="isTblActive"
-                              (click)="selectTableFromTree(db.databaseName, tbl.tableName, $event)"
-                              (dblclick)="selectTableFromContextMenu(db.databaseName, tbl.tableName, $event)"
-                              (keydown.enter)="selectTableFromTree(db.databaseName, tbl.tableName, $event)"
-                              (contextmenu)="onSidebarContextMenu($event, 'table', db.databaseName, tbl.tableName)"
-                              (touchstart)="onSidebarTouchStart($event, 'table', db.databaseName, tbl.tableName)"
-                              (touchend)="onSidebarTouchEndOrMove()"
-                              (touchmove)="onSidebarTouchEndOrMove()"
-                              tabindex="0"
-                            >
-                              <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
-                                <button
-                                  type="button"
-                                  (click)="toggleTableNode(db.databaseName, tbl.tableName, $event)"
-                                  class="ssms-expander"
-                                >
-                                  {{ isTblExpanded ? '−' : '+' }}
-                                </button>
-                                <mat-icon
-                                  class="shrink-0"
-                                  [style.color]="isTblActive ? '#34A853' : '#4285F4'"
-                                >
-                                  table_chart
-                                </mat-icon>
-                                <span
-                                  class="truncate"
-                                  style="font-size: 12.5px"
-                                >
-                                  {{ tbl.tableName }}
-                                </span>
-                              </div>
+                            <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
+                              <button
+                                type="button"
+                                (click)="toggleDatabaseNode(db.databaseName, $event)"
+                                class="ssms-expander"
+                              >
+                                {{ isDbExpanded ? '−' : '+' }}
+                              </button>
+                              <mat-icon
+                                class="shrink-0"
+                                [style.color]="isDbActive ? '#4285F4' : '#FBBC05'"
+                              >
+                                storage
+                              </mat-icon>
+                              <span
+                                class="truncate"
+                                [class.font-bold]="isDbActive"
+                                style="font-size: 12.5px"
+                              >
+                                {{ db.databaseName }}
+                              </span>
+                            </div>
 
-                              <div class="manage-node-actions d-flex align-items-center gap-1 shrink-0">
+                            <div class="manage-node-actions d-flex align-items-center gap-1 shrink-0">
+                              <button
+                                type="button"
+                                (click)="openCreateTableForDatabaseFromTree(db.databaseName, $event)"
+                                class="ssms-action-icon-btn ssms-action-add"
+                              >
+                                <mat-icon>add</mat-icon>
+                              </button>
+                              <button
+                                type="button"
+                                (click)="openRenameSidebarModal('database', db.databaseName, '', null, $event)"
+                                class="ssms-action-icon-btn ssms-action-edit"
+                              >
+                                <mat-icon>edit</mat-icon>
+                              </button>
+                              @if (databases().length > 1) {
                                 <button
                                   type="button"
-                                  (click)="openAddColumnForTableFromTree(db.databaseName, tbl.tableName, $event)"
-                                  class="ssms-action-icon-btn ssms-action-add"
-                                >
-                                  <mat-icon>add</mat-icon>
-                                </button>
-                                <button
-                                  type="button"
-                                  (click)="openRenameSidebarModal('table', db.databaseName, tbl.tableName, null, $event)"
-                                  class="ssms-action-icon-btn ssms-action-edit"
-                                >
-                                  <mat-icon>edit</mat-icon>
-                                </button>
-                                <button
-                                  type="button"
-                                  (click)="deleteTable(tbl.tableName, $event, db.databaseName)"
+                                  (click)="deleteDatabase(db.databaseName, $event)"
                                   class="ssms-action-icon-btn ssms-action-danger"
                                 >
                                   <mat-icon>delete_outline</mat-icon>
                                 </button>
-                              </div>
+                              }
                             </div>
+                          </div>
 
-                            <!-- Level 4 Branch: Columns inside Table e.g. ID (PK, int, not null) -->
-                            @if (isTblExpanded) {
-                              <div class="manage-tree-branch mt-1 d-flex flex-column gap-1">
-                                @for (col of tblCols; track col.id) {
-                                  @let isColSelected = isTblActive && selectedColumnId() === col.id;
-                                  @let isColIdLocked = isIdPrimaryKeyColumn(col);
+                          <!-- Level 3 Branch: Tables inside Database -->
+                          @if (isDbExpanded) {
+                            <div class="manage-tree-branch mt-1 d-flex flex-column gap-1">
+                              @for (tbl of db.tables; track tbl.tableName) {
+                                @let isTblActive = isDbActive && tbl.tableName.toLowerCase() === activeTableName().toLowerCase();
+                                @let isTblExpanded = isTableNodeExpanded(db.databaseName, tbl.tableName);
+                                @let tblCols = getColumnsForManageTable(db.databaseName, tbl);
+                                <div
+                                  class="ssms-tree-node-wrapper"
+                                  (contextmenu)="onSidebarContextMenu($event, 'table', db.databaseName, tbl.tableName)"
+                                >
+                                  <!-- Table Node Row -->
                                   <div
-                                    class="ssms-tree-node-wrapper"
-                                    (contextmenu)="onSidebarContextMenu($event, 'field', db.databaseName, tbl.tableName, col)"
+                                    class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
+                                    [class.ssms-table-selected]="isTblActive"
+                                    (click)="selectTableFromTree(db.databaseName, tbl.tableName, $event)"
+                                    (dblclick)="selectTableFromContextMenu(db.databaseName, tbl.tableName, $event)"
+                                    (keydown.enter)="selectTableFromTree(db.databaseName, tbl.tableName, $event)"
+                                    (contextmenu)="onSidebarContextMenu($event, 'table', db.databaseName, tbl.tableName)"
+                                    (touchstart)="onSidebarTouchStart($event, 'table', db.databaseName, tbl.tableName)"
+                                    (touchend)="onSidebarTouchEndOrMove()"
+                                    (touchmove)="onSidebarTouchEndOrMove()"
+                                    tabindex="0"
                                   >
-                                    <div
-                                      class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
-                                      [class.ssms-node-selected]="isColSelected"
-                                      tabindex="0"
-                                      role="treeitem"
-                                      [attr.aria-selected]="isColSelected"
-                                      (click)="selectColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
-                                      (keydown.enter)="selectColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
-                                      (dblclick)="!isColIdLocked ? openEditColumnFromTree(db.databaseName, tbl.tableName, col, $event) : null"
-                                      (contextmenu)="onSidebarContextMenu($event, 'field', db.databaseName, tbl.tableName, col)"
-                                      (touchstart)="onSidebarTouchStart($event, 'field', db.databaseName, tbl.tableName, col)"
-                                      (touchend)="onSidebarTouchEndOrMove()"
-                                      (touchmove)="onSidebarTouchEndOrMove()"
-                                    >
-                                      <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
-                                        <mat-icon
-                                          class="shrink-0"
-                                          [style.color]="col.isPrimaryKey || col.isIdentity ? '#FBBC05' : col.colType === 'formula' ? '#34A853' : '#4285F4'"
-                                        >
-                                          {{ col.isPrimaryKey || col.isIdentity ? 'vpn_key' : col.colType === 'formula' ? 'functions' : 'view_column' }}
-                                        </mat-icon>
-                                        <span class="truncate font-mono-tabular" style="font-size: 12px">
-                                          <span class="text-slate-900 font-semibold">{{ col.name }}</span>
-                                          @if (isColumnNotNull(col)) {
-                                            <span class="gridario-not-null-star">*</span>
-                                          }
-                                          <span class="ms-1" style="color: #000000">{{ formatColumnManageTreeMeta(col) }}</span>
-                                        </span>
-                                      </div>
+                                    <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
+                                      <button
+                                        type="button"
+                                        (click)="toggleTableNode(db.databaseName, tbl.tableName, $event)"
+                                        class="ssms-expander"
+                                      >
+                                        {{ isTblExpanded ? '−' : '+' }}
+                                      </button>
+                                      <mat-icon
+                                        class="shrink-0"
+                                        [style.color]="isTblActive ? '#34A853' : '#4285F4'"
+                                      >
+                                        table_chart
+                                      </mat-icon>
+                                      <span
+                                        class="truncate"
+                                        style="font-size: 12.5px"
+                                      >
+                                        {{ tbl.tableName }}
+                                      </span>
+                                    </div>
 
-                                      <div class="manage-node-actions d-flex align-items-center gap-1 shrink-0">
-                                        @if (!isColIdLocked) {
-                                          <button
-                                            type="button"
-                                            (click)="openEditColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
-                                            class="ssms-action-icon-btn ssms-action-edit"
-                                          >
-                                            <mat-icon>edit</mat-icon>
-                                          </button>
-                                          <button
-                                            type="button"
-                                            (click)="deleteColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
-                                            class="ssms-action-icon-btn ssms-action-danger"
-                                          >
-                                            <mat-icon>close</mat-icon>
-                                          </button>
-                                        } @else {
-                                          <span
-                                            class="d-inline-flex align-items-center px-1 text-slate-400"
-                                          >
-                                            <mat-icon style="font-size: 13px; width: 13px; height: 13px">lock</mat-icon>
-                                          </span>
-                                        }
-                                      </div>
+                                    <div class="manage-node-actions d-flex align-items-center gap-1 shrink-0">
+                                      <button
+                                        type="button"
+                                        (click)="openAddColumnForTableFromTree(db.databaseName, tbl.tableName, $event)"
+                                        class="ssms-action-icon-btn ssms-action-add"
+                                      >
+                                        <mat-icon>add</mat-icon>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        (click)="openRenameSidebarModal('table', db.databaseName, tbl.tableName, null, $event)"
+                                        class="ssms-action-icon-btn ssms-action-edit"
+                                      >
+                                        <mat-icon>edit</mat-icon>
+                                      </button>
+                                      <button
+                                        type="button"
+                                        (click)="deleteTable(tbl.tableName, $event, db.databaseName)"
+                                        class="ssms-action-icon-btn ssms-action-danger"
+                                      >
+                                        <mat-icon>delete_outline</mat-icon>
+                                      </button>
                                     </div>
                                   </div>
-                                }
-                              </div>
-                            }
-                          </div>
-                        }
-                      </div>
-                    }
-                  </div>
-                }
+
+                                  <!-- Level 4 Branch: Columns inside Table e.g. ID (PK, int, not null) -->
+                                  @if (isTblExpanded) {
+                                    <div class="manage-tree-branch mt-1 d-flex flex-column gap-1">
+                                      @for (col of tblCols; track col.id) {
+                                        @let isColSelected = isTblActive && selectedColumnId() === col.id;
+                                        @let isColIdLocked = isIdPrimaryKeyColumn(col);
+                                        <div
+                                          class="ssms-tree-node-wrapper"
+                                          (contextmenu)="onSidebarContextMenu($event, 'field', db.databaseName, tbl.tableName, col)"
+                                        >
+                                          <div
+                                            class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
+                                            [class.ssms-node-selected]="isColSelected"
+                                            tabindex="0"
+                                            role="treeitem"
+                                            [attr.aria-selected]="isColSelected"
+                                            (click)="selectColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
+                                            (keydown.enter)="selectColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
+                                            (dblclick)="!isColIdLocked ? openEditColumnFromTree(db.databaseName, tbl.tableName, col, $event) : null"
+                                            (contextmenu)="onSidebarContextMenu($event, 'field', db.databaseName, tbl.tableName, col)"
+                                            (touchstart)="onSidebarTouchStart($event, 'field', db.databaseName, tbl.tableName, col)"
+                                            (touchend)="onSidebarTouchEndOrMove()"
+                                            (touchmove)="onSidebarTouchEndOrMove()"
+                                          >
+                                            <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
+                                              <mat-icon
+                                                class="shrink-0"
+                                                [style.color]="col.isPrimaryKey || col.isIdentity ? '#FBBC05' : col.colType === 'formula' ? '#34A853' : '#4285F4'"
+                                              >
+                                                {{ col.isPrimaryKey || col.isIdentity ? 'vpn_key' : col.colType === 'formula' ? 'functions' : 'view_column' }}
+                                              </mat-icon>
+                                              <span class="truncate font-mono-tabular" style="font-size: 12px">
+                                                <span class="text-slate-900 font-semibold">{{ col.name }}</span>
+                                                @if (isColumnNotNull(col)) {
+                                                  <span class="gridario-not-null-star">*</span>
+                                                }
+                                                <span class="ms-1" style="color: #000000">{{ formatColumnManageTreeMeta(col) }}</span>
+                                              </span>
+                                            </div>
+
+                                            <div class="manage-node-actions d-flex align-items-center gap-1 shrink-0">
+                                              @if (!isColIdLocked) {
+                                                <button
+                                                  type="button"
+                                                  (click)="openEditColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
+                                                  class="ssms-action-icon-btn ssms-action-edit"
+                                                >
+                                                  <mat-icon>edit</mat-icon>
+                                                </button>
+                                                <button
+                                                  type="button"
+                                                  (click)="deleteColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
+                                                  class="ssms-action-icon-btn ssms-action-danger"
+                                                >
+                                                  <mat-icon>close</mat-icon>
+                                                </button>
+                                              } @else {
+                                                <span
+                                                  class="d-inline-flex align-items-center px-1 text-slate-400"
+                                                >
+                                                  <mat-icon style="font-size: 13px; width: 13px; height: 13px">lock</mat-icon>
+                                                </span>
+                                              }
+                                            </div>
+                                          </div>
+                                        </div>
+                                      }
+                                    </div>
+                                  }
+                                </div>
+                              }
+                            </div>
+                          }
+                        </div>
+                      }
+                    </div>
+                  }
+                </div>
               </div>
             }
           </div>
         </div>
-      }
-      }
-    </div>
+
+        @if (activeSidebarTab() === 'server_explorer') {
+          <!-- Server Explorer Tab Content (GitHub & Vercel Integrations) -->
+          <div class="manage-tree-scroll flex-grow-1 min-h-0 p-2.5 d-flex flex-column gap-2.5 bg-white text-slate-900">
+            <div class="d-flex align-items-center justify-content-between pb-1.5 border-b border-slate-200">
+              <div class="d-flex align-items-center gap-1.5 min-w-0">
+                <mat-icon style="color: #4285F4; font-size: 16px; width: 16px; height: 16px">cloud_upload</mat-icon>
+                <span class="font-bold text-xs text-slate-900 truncate">GitHub &amp; Vercel Hosting</span>
+              </div>
+              <span class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-mono-tabular" style="font-size: 10px">
+                Git + Vercel
+              </span>
+            </div>
+
+            <form [formGroup]="githubForm" (ngSubmit)="createGitHubRepoAndUpload()" class="d-flex flex-column gap-2.5">
+              <!-- Option A: Direct 1-Click Vercel Deployment Card -->
+              <div class="p-2.5 bg-slate-900 text-white rounded-lg border border-slate-800">
+                <div class="d-flex align-items-center justify-content-between gap-1.5 mb-1.5 flex-wrap">
+                  <div class="text-xs font-bold d-flex align-items-center gap-1">
+                    <mat-icon class="text-emerald-400" style="font-size: 15px; width: 15px; height: 15px">rocket_launch</mat-icon>
+                    <span>Host on Vercel (1-Click Deploy)</span>
+                  </div>
+                  <a
+                    href="https://vercel.com/account/tokens"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="text-blue-300 underline no-underline hover:text-white"
+                    style="font-size: 10.5px"
+                  >
+                    Get Vercel Token ↗
+                  </a>
+                </div>
+                <div class="d-flex flex-column gap-1.5 mt-1.5">
+                  <input
+                    type="password"
+                    formControlName="vercelToken"
+                    placeholder="Paste Vercel Access Token..."
+                    class="form-control form-control-sm font-mono-tabular text-xs"
+                  />
+                  <button
+                    type="button"
+                    (click)="deployDirectlyToVercel()"
+                    [disabled]="vercelDeployStatus() === 'deploying'"
+                    class="btn btn-sm btn-success d-inline-flex align-items-center justify-content-center gap-1 text-xs font-semibold w-100"
+                  >
+                    <mat-icon style="font-size: 14px; width: 14px; height: 14px">bolt</mat-icon>
+                    <span>
+                      {{ vercelDeployStatus() === 'deploying' ? 'Deploying to Vercel...' : 'Deploy to Vercel Now' }}
+                    </span>
+                  </button>
+                </div>
+                @if (vercelDeploymentUrl()) {
+                  <div class="mt-2 pt-1.5 border-t border-slate-700 d-flex flex-column gap-0.5 text-xs">
+                    <span class="text-emerald-300 font-semibold" style="font-size: 10.5px">Live Vercel URL:</span>
+                    <a
+                      [href]="vercelDeploymentUrl()"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="text-white font-bold underline d-inline-flex align-items-center gap-1 truncate"
+                      style="font-size: 11px"
+                    >
+                      <mat-icon style="font-size: 13px; width: 13px; height: 13px">open_in_new</mat-icon>
+                      <span class="truncate">{{ vercelDeploymentUrl() }}</span>
+                    </a>
+                  </div>
+                }
+              </div>
+
+              <!-- Option B: Authorize GitHub & Commit to Repository -->
+              <div class="p-2.5 rounded border border-slate-300 bg-slate-50">
+                <div class="d-flex align-items-center justify-content-between gap-1.5 flex-wrap mb-1.5">
+                  <div class="text-xs font-bold text-slate-900 d-flex align-items-center gap-1">
+                    <mat-icon class="text-slate-700" style="font-size: 14px; width: 14px; height: 14px">verified_user</mat-icon>
+                    <span>GitHub Authorization</span>
+                  </div>
+                  @if (githubAuthorizedUser()) {
+                    <span class="badge bg-emerald-600 text-white" style="font-size: 10px">
+                      &#64;{{ githubAuthorizedUser() }}
+                    </span>
+                  } @else {
+                    <button
+                      type="button"
+                      (click)="startGitHubDeviceAuth()"
+                      [disabled]="githubAuthStatus() === 'awaiting_device' || githubAuthStatus() === 'pushing'"
+                      class="btn btn-dark btn-sm font-semibold d-inline-flex align-items-center gap-1 text-xs py-0.5 px-2"
+                    >
+                      <mat-icon style="font-size: 13px; width: 13px; height: 13px">key</mat-icon>
+                      <span>{{ githubAuthStatus() === 'awaiting_device' ? 'Waiting...' : 'Authorize GitHub' }}</span>
+                    </button>
+                  }
+                </div>
+
+                @if (githubAuthStatus() === 'awaiting_device' && githubUserCode()) {
+                  <div class="mt-2 p-2 rounded bg-white border border-blue-200 text-center">
+                    <div class="text-slate-500 font-semibold uppercase" style="font-size: 10px">
+                      One-Time GitHub Device Code
+                    </div>
+                    <div class="font-mono-tabular font-bold text-slate-900 my-1" style="font-size: 15px; letter-spacing: 2px">
+                      {{ githubUserCode() }}
+                    </div>
+                    <div class="d-flex align-items-center justify-content-center gap-1.5 flex-wrap mt-1">
+                      <button
+                        type="button"
+                        (click)="copyGitHubUserCode()"
+                        class="btn btn-outline-dark btn-sm d-inline-flex align-items-center gap-1 py-0.5 px-2"
+                        style="font-size: 11px"
+                      >
+                        <mat-icon style="font-size: 13px; width: 13px; height: 13px">content_copy</mat-icon>
+                        <span>Copy</span>
+                      </button>
+                      <a
+                        [href]="githubVerificationUri()"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="btn btn-primary btn-sm d-inline-flex align-items-center gap-1 font-semibold py-0.5 px-2 no-underline"
+                        style="font-size: 11px"
+                      >
+                        <mat-icon style="font-size: 13px; width: 13px; height: 13px">open_in_new</mat-icon>
+                        <span>Open GitHub</span>
+                      </a>
+                    </div>
+                  </div>
+                }
+
+                <div class="mt-2 pt-2 border-t border-slate-200">
+                  <label class="form-label text-slate-600 font-semibold mb-0.5" style="font-size: 10.5px" for="se-gh-manual-token">
+                    Or Personal Access Token (<code>repo</code> scope):
+                  </label>
+                  <input
+                    id="se-gh-manual-token"
+                    type="password"
+                    formControlName="manualToken"
+                    placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                    class="form-control form-control-sm font-mono-tabular text-xs"
+                  />
+                </div>
+              </div>
+
+              <!-- Repository & Commit Details -->
+              <div class="d-flex flex-column gap-2">
+                <div>
+                  <label for="se-gh-repo-name" class="form-label text-xs font-semibold text-slate-700 mb-0.5">
+                    GitHub Repository URL or Name *
+                  </label>
+                  <input
+                    id="se-gh-repo-name"
+                    type="text"
+                    formControlName="repoName"
+                    placeholder="https://github.com/fushback/Grid.git"
+                    class="form-control form-control-sm font-mono-tabular text-xs"
+                  />
+                </div>
+
+                <div>
+                  <label for="se-gh-commit-msg" class="form-label text-xs font-semibold text-slate-700 mb-0.5">
+                    Git Commit Message *
+                  </label>
+                  <input
+                    id="se-gh-commit-msg"
+                    type="text"
+                    formControlName="commitMessage"
+                    placeholder="Commit Gridario full-stack application updates"
+                    class="form-control form-control-sm text-xs"
+                  />
+                </div>
+              </div>
+
+              @if (githubStatusMessage()) {
+                <div
+                  class="p-2 rounded border text-xs font-medium"
+                  [class.bg-red-50]="githubAuthStatus() === 'error' || vercelDeployStatus() === 'error'"
+                  [class.border-red-200]="githubAuthStatus() === 'error' || vercelDeployStatus() === 'error'"
+                  [class.text-red-800]="githubAuthStatus() === 'error' || vercelDeployStatus() === 'error'"
+                  [class.bg-emerald-50]="githubAuthStatus() === 'pushed' || githubAuthStatus() === 'authorized' || vercelDeployStatus() === 'deployed'"
+                  [class.border-emerald-200]="githubAuthStatus() === 'pushed' || githubAuthStatus() === 'authorized' || vercelDeployStatus() === 'deployed'"
+                  [class.text-emerald-800]="githubAuthStatus() === 'pushed' || githubAuthStatus() === 'authorized' || vercelDeployStatus() === 'deployed'"
+                  [class.bg-blue-50]="githubAuthStatus() === 'awaiting_device' || githubAuthStatus() === 'pushing' || vercelDeployStatus() === 'deploying'"
+                  [class.border-blue-200]="githubAuthStatus() === 'awaiting_device' || githubAuthStatus() === 'pushing' || vercelDeployStatus() === 'deploying'"
+                  [class.text-blue-800]="githubAuthStatus() === 'awaiting_device' || githubAuthStatus() === 'pushing' || vercelDeployStatus() === 'deploying'"
+                  style="font-size: 11px"
+                >
+                  <div class="break-words">{{ githubStatusMessage() }}</div>
+                  @if (githubPushedRepoUrl()) {
+                    <div class="mt-1.5 d-flex flex-column gap-1">
+                      <a
+                        [href]="githubPushedRepoUrl()"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="btn btn-sm btn-outline-dark d-inline-flex align-items-center justify-content-center gap-1 text-xs font-semibold no-underline py-0.5 px-2"
+                      >
+                        <mat-icon style="font-size: 13px; width: 13px; height: 13px">open_in_new</mat-icon>
+                        <span>Open GitHub Repo</span>
+                      </a>
+                      @if (vercelCloneUrl()) {
+                        <a
+                          [href]="vercelCloneUrl()"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          class="btn btn-sm btn-dark d-inline-flex align-items-center justify-content-center gap-1 text-xs font-semibold no-underline py-0.5 px-2"
+                        >
+                          <mat-icon style="font-size: 13px; width: 13px; height: 13px">rocket_launch</mat-icon>
+                          <span>1-Click Host on Vercel</span>
+                        </a>
+                      }
+                    </div>
+                  }
+                </div>
+              }
+
+              <button
+                type="submit"
+                [disabled]="githubAuthStatus() === 'pushing'"
+                class="btn btn-primary btn-sm font-semibold d-inline-flex align-items-center justify-content-center gap-1.5 w-100"
+              >
+                <mat-icon style="font-size: 15px; width: 15px; height: 15px">cloud_upload</mat-icon>
+                <span>
+                  {{
+                    githubAuthStatus() === 'pushing'
+                      ? 'Committing to GitHub...'
+                      : 'Commit & Push to GitHub'
+                  }}
+                </span>
+              </button>
+
+              <div class="d-flex align-items-center justify-content-between gap-1.5 pt-1 border-t border-slate-200">
+                <a
+                  href="https://github.com/fushback/Grid"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center justify-content-center gap-1 text-xs flex-grow-1 no-underline py-1"
+                  style="font-size: 11px"
+                >
+                  <mat-icon style="font-size: 13px; width: 13px; height: 13px">open_in_new</mat-icon>
+                  <span>fushback/Grid</span>
+                </a>
+                <a
+                  href="/api/download-project"
+                  download="gridpulse-complete-project.tar.gz"
+                  class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center justify-content-center gap-1 text-xs flex-grow-1 no-underline py-1"
+                  style="font-size: 11px"
+                >
+                  <mat-icon style="font-size: 13px; width: 13px; height: 13px">folder_zip</mat-icon>
+                  <span>Download .tar.gz</span>
+                </a>
+              </div>
+            </form>
+          </div>
+        }
 
         <!-- Object Explorer Bottom Connection Status Bar -->
         <div
@@ -1604,8 +1819,11 @@
               style="width: 6px; height: 6px"
               [style.background-color]="hasActiveConnection() ? '#34A853' : '#94a3b8'"
             ></span>
-            <span class="truncate">
-              {{ hasActiveConnection() ? 'Ready · ' + activeDatabaseName() : 'No Active Connection' }}
+            <span
+              class="truncate"
+              [title]="hasActiveConnection() ? serverHost() + '/' + serverName() + ' - (' + serverClusterName() + ')/' + serverLoginUser() + ' · ' + activeDatabaseName() : 'No Active Connection'"
+            >
+              {{ hasActiveConnection() ? serverHost() + '/' + serverName() + ' - (' + serverClusterName() + ')/' + serverLoginUser() + ' · ' + activeDatabaseName() : 'No Active Connection' }}
             </span>
           </div>
           <div class="d-flex align-items-center gap-1 shrink-0">
@@ -1628,28 +1846,37 @@
         <span class="gridpulse-split-grip-pill-v"></span>
       </div>
     } @else {
-      <!-- Collapsed SSMS Object Explorer Docked Tab Rail -->
+      <!-- Collapsed SSMS Object Explorer & Server Explorer Docked Tab Rail -->
       <aside
         class="manage-sidebar-collapsed d-flex flex-column align-items-center py-2 gap-2 shrink-0 select-none"
-        aria-label="Collapsed Object Explorer Sidebar"
+        aria-label="Collapsed Sidebar"
       >
         <button
           type="button"
           (click)="toggleManageSidebar($event)"
           class="btn btn-sm p-1.5 rounded bg-slate-900 text-white hover:bg-slate-800 d-inline-flex align-items-center justify-content-center shadow-2xs gridario-icon-only-btn"
-          title="Expand Object Explorer"
-          aria-label="Expand Object Explorer"
+          title="Expand Sidebar"
+          aria-label="Expand Sidebar"
         >
           <mat-icon style="color: #FBBC05">chevron_right</mat-icon>
         </button>
 
         <button
           type="button"
-          (click)="toggleManageSidebar($event)"
+          (click)="switchSidebarTab('object_explorer', $event)"
           class="mt-2 py-2 px-1 border-0 bg-transparent text-slate-700 hover:text-slate-950 font-bold text-xs uppercase manage-vertical-label cursor-pointer"
           title="Click to Expand Object Explorer"
         >
           Object Explorer ({{ databases().length }})
+        </button>
+
+        <button
+          type="button"
+          (click)="switchSidebarTab('server_explorer', $event)"
+          class="mt-2 py-2 px-1 border-0 bg-transparent text-slate-700 hover:text-slate-950 font-bold text-xs uppercase manage-vertical-label cursor-pointer"
+          title="Click to Expand Server Explorer"
+        >
+          Server Explorer
         </button>
       </aside>
     }
@@ -2234,6 +2461,8 @@
               @for (col of sortedColumns(); track col.id) {
                 @let isFocused = activeCell()?.rowId === row.id && activeCell()?.colId === col.id;
                 @let isInvalid = isCellInvalid(row.id, col.id);
+                @let isRedisPending = !isInvalid && isCellRedisPending(row.id, col.id);
+                @let isDbSaved = !isInvalid && !isRedisPending && isCellDbSaved(row.id, col.id);
                 @let cellErrorMsg = getCellErrorMessage(row.id, col.id);
                 @let remoteCollab = getCollaboratorOnCell(row.id, col.id);
 
@@ -2244,10 +2473,12 @@
                   [style.max-width.px]="col.width"
                   [class.cell-focused]="isFocused"
                   [class.cell-invalid]="isInvalid"
+                  [class.cell-redis-pending]="isRedisPending"
+                  [class.cell-db-saved]="isDbSaved"
                   [class.clipboard-copy-col]="isColInClipboard(col.id, 'copy')"
                   [class.clipboard-cut-col]="isColInClipboard(col.id, 'cut')"
                   [style.box-shadow]="remoteCollab ? 'inset 0 0 0 2px ' + remoteCollab.color : null"
-                  [title]="isInvalid ? cellErrorMsg : ''"
+                  [title]="isInvalid ? cellErrorMsg : isRedisPending ? 'Pushed to Redis — awaiting database save...' : isDbSaved ? 'Saved in database' : ''"
                   class="position-relative cursor-cell p-0 m-0"
                   (click)="selectCell(row.id, col.id)"
                   (contextmenu)="onContextMenu($event, 'cell', row.id, col.id, visualRowNum)"
@@ -3100,7 +3331,7 @@
       <div class="px-3 py-1.5 bg-slate-50 border-b border-slate-200 d-flex align-items-center justify-content-between">
         <span class="font-bold text-slate-800 truncate">
           @if (sidebarContextMenu().targetType === 'server') {
-            Server: {{ serverName() || 'localhost\\SQLEXPRESS' }}
+            Server: {{ serverHost() }}/{{ serverName() }} - ({{ serverClusterName() }})/{{ serverLoginUser() }}
           } @else if (sidebarContextMenu().targetType === 'databases_folder') {
             Databases Folder
           } @else if (sidebarContextMenu().targetType === 'database') {
@@ -3114,18 +3345,6 @@
       </div>
 
       @if (sidebarContextMenu().targetType === 'server') {
-        <button
-          type="button"
-          (click)="openConnectServerModal($event); closeAllMenus()"
-          class="w-100 text-start px-3 py-1.5 bg-blue-50/70 border-0 hover:bg-blue-100 d-flex align-items-center justify-content-between gap-2 font-semibold text-blue-800"
-        >
-          <span class="d-inline-flex align-items-center gap-2">
-            <mat-icon style="color: #4285F4">power</mat-icon>
-            <span>Connect to Server...</span>
-          </span>
-          <span class="px-1.5 py-0 rounded bg-blue-100 text-blue-800 font-mono-tabular" style="font-size: 10px">Login</span>
-        </button>
-
         <button
           type="button"
           (click)="refreshServerAndRetrieveObjects($event); closeAllMenus()"
@@ -3143,29 +3362,9 @@
           <mat-icon style="color: #FBBC05">create_new_folder</mat-icon>
           <span>New Database...</span>
         </button>
-
-        @if (isServerConnected()) {
-          <div class="border-t border-slate-100 my-1"></div>
-          <button
-            type="button"
-            (click)="disconnectServerFromExplorer($event); closeAllMenus()"
-            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-red-50 text-red-600 d-flex align-items-center gap-2"
-          >
-            <mat-icon style="color: #EA4335">link_off</mat-icon>
-            <span>Disconnect Server</span>
-          </button>
-        }
       }
 
       @if (sidebarContextMenu().targetType === 'databases_folder') {
-        <button
-          type="button"
-          (click)="openConnectServerModal($event); closeAllMenus()"
-          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 font-medium text-slate-800"
-        >
-          <mat-icon style="color: #4285F4">power</mat-icon>
-          <span>Connect to Server...</span>
-        </button>
         <button
           type="button"
           (click)="refreshServerAndRetrieveObjects($event); closeAllMenus()"
@@ -6069,183 +6268,6 @@
             Close
           </button>
         </div>
-      </div>
-    </div>
-  }
-
-  <!-- ===================================================================== -->
-  <!-- SQL SERVER MANAGEMENT STUDIO (SSMS) "CONNECT TO SERVER" LOGIN MODAL   -->
-  <!-- ===================================================================== -->
-  @if (activeModal() === 'connect_server') {
-    <div
-      class="fixed inset-0 bg-slate-900/40 z-50 d-flex align-items-center justify-content-center p-2 sm:p-3 gridpulse-modal-backdrop"
-      (click)="activeModal.set('none')"
-      (keydown.escape)="activeModal.set('none')"
-      tabindex="0"
-    >
-      <div
-        class="bg-white rounded-xl border border-slate-300 shadow-md w-100 overflow-hidden gridpulse-popup-card"
-        style="max-width: 460px"
-        (click)="$event.stopPropagation()"
-        (keydown.escape)="activeModal.set('none')"
-        tabindex="0"
-      >
-        <!-- SSMS Connect to Server Banner Header -->
-        <div class="px-4 py-3 bg-slate-900 text-white d-flex align-items-center justify-content-between border-b border-slate-800">
-          <div class="d-flex align-items-center gap-2.5">
-            <div class="p-1.5 rounded bg-slate-800 d-inline-flex align-items-center justify-content-center">
-              <mat-icon style="color: #FBBC05; font-size: 22px; width: 22px; height: 22px">dns</mat-icon>
-            </div>
-            <div>
-              <h2 class="text-sm font-bold text-white m-0">Connect to Server</h2>
-              <div class="text-[11px] text-slate-300">PostgreSQL / Supabase Database Engine</div>
-            </div>
-          </div>
-          <button
-            type="button"
-            (click)="activeModal.set('none')"
-            class="btn btn-sm p-0 border-0 bg-transparent text-slate-300 hover:text-white gridario-icon-only-btn"
-            aria-label="Close Connect to Server modal"
-          >
-            <mat-icon style="color: #EA4335">close</mat-icon>
-          </button>
-        </div>
-
-        <form [formGroup]="connectServerForm" (ngSubmit)="submitConnectServerModal()" class="p-4 d-flex flex-column gap-3 text-xs">
-          @if (connectServerErrorMessage()) {
-            <div class="p-2.5 rounded bg-red-50 border border-red-200 text-red-800 d-flex align-items-center gap-2">
-              <mat-icon style="color: #EA4335">error_outline</mat-icon>
-              <span>{{ connectServerErrorMessage() }}</span>
-            </div>
-          }
-
-          <!-- Server Host / Name -->
-          <div class="row align-items-center g-2">
-            <label class="col-4 font-semibold text-slate-700" for="ssmsServerName">Server / Host:</label>
-            <div class="col-8">
-              <input
-                id="ssmsServerName"
-                type="text"
-                formControlName="serverName"
-                (input)="onConnectServerHostInput()"
-                placeholder="e.g. aws-0-ap-southeast-1.pooler.supabase.com"
-                class="form-control form-control-sm text-xs font-mono-tabular"
-              />
-            </div>
-          </div>
-
-          <!-- Port & Database -->
-          <div class="row align-items-center g-2">
-            <label class="col-4 font-semibold text-slate-700" for="ssmsPort">Port / Database:</label>
-            <div class="col-3">
-              <input
-                id="ssmsPort"
-                type="text"
-                formControlName="port"
-                placeholder="5432"
-                class="form-control form-control-sm text-xs font-mono-tabular"
-              />
-            </div>
-            <div class="col-5">
-              <input
-                id="ssmsDatabaseName"
-                type="text"
-                formControlName="databaseName"
-                placeholder="postgres"
-                class="form-control form-control-sm text-xs font-mono-tabular"
-              />
-            </div>
-          </div>
-
-          <!-- Login -->
-          <div class="row align-items-center g-2">
-            <label class="col-4 font-semibold text-slate-700" for="ssmsLoginUser">Login / User:</label>
-            <div class="col-8">
-              <input
-                id="ssmsLoginUser"
-                type="text"
-                formControlName="loginUser"
-                placeholder="postgres or postgres.projectref"
-                class="form-control form-control-sm text-xs font-mono-tabular"
-              />
-            </div>
-          </div>
-
-          <!-- Password -->
-          <div class="row align-items-center g-2">
-            <label class="col-4 font-semibold text-slate-700" for="ssmsPassword">Password:</label>
-            <div class="col-8">
-              <div class="position-relative d-flex align-items-center">
-                <input
-                  id="ssmsPassword"
-                  [type]="showServerPassword() ? 'text' : 'password'"
-                  formControlName="password"
-                  placeholder="Enter PostgreSQL / Supabase password"
-                  class="form-control form-control-sm text-xs font-mono-tabular pe-4"
-                />
-                <button
-                  type="button"
-                  (click)="showServerPassword.set(!showServerPassword())"
-                  class="btn btn-sm p-0 border-0 bg-transparent position-absolute end-0 me-2 d-inline-flex align-items-center justify-content-center text-slate-500 hover:text-slate-800"
-                  [attr.aria-label]="showServerPassword() ? 'Hide password' : 'Show password'"
-                  [title]="showServerPassword() ? 'Hide password' : 'Show password'"
-                >
-                  <mat-icon style="font-size: 16px; width: 16px; height: 16px">
-                    {{ showServerPassword() ? 'visibility_off' : 'visibility' }}
-                  </mat-icon>
-                </button>
-              </div>
-            </div>
-          </div>
-
-          <div class="row align-items-center g-2">
-            <div class="col-4"></div>
-            <div class="col-8">
-              <label class="d-inline-flex align-items-center gap-1.5 text-slate-700 cursor-pointer">
-                <input
-                  type="checkbox"
-                  formControlName="rememberPassword"
-                  class="form-check-input m-0"
-                />
-                <span>Remember password</span>
-              </label>
-            </div>
-          </div>
-
-          <!-- Optional Connection String -->
-          <div class="d-flex flex-column gap-1.5 pt-1 border-t border-slate-100">
-            <label class="font-semibold text-slate-700" for="ssmsConnStr">
-              Or Paste Connection String (PostgreSQL / Supabase URI or Key-Value):
-            </label>
-            <textarea
-              id="ssmsConnStr"
-              rows="2"
-              formControlName="connectionString"
-              (input)="onConnectServerConnStrInput()"
-              placeholder="postgresql://postgres:password@host:5432/postgres&#10;or Host=...;Port=5432;Database=postgres;Username=postgres;Password=..."
-              class="form-control form-control-sm text-xs font-mono-tabular"
-            ></textarea>
-          </div>
-
-          <div class="d-flex align-items-center justify-content-end gap-2 pt-3 border-t border-slate-200 mt-1">
-            <button
-              type="submit"
-              [disabled]="isConnectingToServer()"
-              class="btn btn-sm btn-primary d-inline-flex align-items-center gap-1.5 text-xs font-semibold px-3"
-            >
-              <mat-icon>power</mat-icon>
-              <span>{{ isConnectingToServer() ? 'Connecting...' : 'Connect' }}</span>
-            </button>
-            <button
-              type="button"
-              (click)="activeModal.set('none')"
-              class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1 text-xs px-3"
-            >
-              <mat-icon>close</mat-icon>
-              <span>Cancel</span>
-            </button>
-          </div>
-        </form>
       </div>
     </div>
   }

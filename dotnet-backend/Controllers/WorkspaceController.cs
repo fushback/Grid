@@ -128,8 +128,46 @@ public class WorkspaceController : ControllerBase
             })
             .ToListAsync();
 
+        string serverName = string.Empty;
+        string serverHost = string.Empty;
+        string serverClusterName = string.Empty;
+        string serverVersion = string.Empty;
+        string serverEngine = string.Empty;
+        string serverLoginUser = string.Empty;
+        try
+        {
+            var conn = _db.Database.GetDbConnection();
+            if (conn.State != System.Data.ConnectionState.Open)
+            {
+                await conn.OpenAsync();
+            }
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "SELECT current_database(), current_user, current_setting('server_version'), host(inet_server_addr()), current_setting('cluster_name', true)";
+            using var reader = await cmd.ExecuteReaderAsync();
+            if (await reader.ReadAsync())
+            {
+                serverName = reader.IsDBNull(0) ? string.Empty : reader.GetString(0);
+                serverLoginUser = reader.IsDBNull(1) ? string.Empty : reader.GetString(1);
+                var rawVer = reader.IsDBNull(2) ? string.Empty : reader.GetString(2);
+                serverVersion = rawVer;
+                serverEngine = !string.IsNullOrWhiteSpace(rawVer) ? $"PostgreSQL {rawVer.Split(' ')[0]}" : string.Empty;
+                serverHost = reader.IsDBNull(3) ? string.Empty : reader.GetString(3);
+                serverClusterName = reader.IsDBNull(4) ? string.Empty : reader.GetString(4);
+            }
+        }
+        catch
+        {
+            // Leave empty if database connection is unavailable
+        }
+
         return Ok(new
         {
+            serverName,
+            serverHost,
+            serverClusterName,
+            serverVersion,
+            serverEngine,
+            serverLoginUser,
             activeDatabaseName = activeDb,
             activeTableName = activeTable,
             workspaceName = activeTable,

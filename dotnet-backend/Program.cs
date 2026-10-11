@@ -9,8 +9,7 @@ var connectionString =
     Environment.GetEnvironmentVariable("SUPABASE_POSTGRES_CONNECTION_STRING") ??
     Environment.GetEnvironmentVariable("POSTGRES_CONNECTION_STRING") ??
     builder.Configuration.GetConnectionString("SupabasePostgreSql") ??
-    builder.Configuration.GetConnectionString("PostgreSqlConnection") ??
-    "Host=localhost;Port=5432;Database=gridpulse_db;Username=postgres;Password=postgres";
+    builder.Configuration.GetConnectionString("PostgreSqlConnection");
 
 builder.Services.AddDbContext<GridPulseDbContext>(options =>
     options.UseNpgsql(connectionString, npgsqlOptions =>

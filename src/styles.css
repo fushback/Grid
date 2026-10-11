@@ -886,13 +886,57 @@ mat-icon.text-purple-700 {
 }
 
 /* Active cell focus ring (Excel Green #34A853 / #4285F4) directly on the cell border */
-.cell-focused,
-.gridpulse-table tbody td:focus-within:not(.sticky-col-check):not(.sticky-col-index):not(.cell-invalid) {
+.cell-focused:not(.cell-invalid):not(.cell-redis-pending):not(.cell-db-saved),
+.gridpulse-table tbody td:focus-within:not(.sticky-col-check):not(.sticky-col-index):not(.cell-invalid):not(.cell-redis-pending):not(.cell-db-saved) {
   box-shadow: inset 0 0 0 2px #34A853 !important;
   background-color: #FFFFFF !important;
   color: #000000 !important;
   z-index: 10;
   position: relative;
+}
+
+/* Cell data changed and pushed to Redis but not yet saved in database: highlighted in Yellow (#FBBC05) */
+.gridpulse-table tbody tr td.cell-redis-pending,
+.gridpulse-table tbody tr.row-selected td.cell-redis-pending,
+.gridpulse-table tbody tr:hover td.cell-redis-pending,
+.gridpulse-table tbody tr.gridario-first-row td.cell-redis-pending {
+  background: rgba(251, 188, 5, 0.34) !important;
+  background-color: rgba(251, 188, 5, 0.34) !important;
+  box-shadow: inset 0 0 0 2px #FBBC05 !important;
+  color: #000000 !important;
+  font-weight: 700;
+  z-index: 11;
+  position: relative;
+}
+
+.gridpulse-table tbody tr td.cell-redis-pending > div,
+.gridpulse-table tbody tr td.cell-redis-pending > input,
+.gridpulse-table tbody tr td.cell-redis-pending > select {
+  background: transparent !important;
+  background-color: transparent !important;
+  color: inherit !important;
+}
+
+/* Once saved in database: yellow highlight changes to Green (#34A853) for 3 seconds and then disappears */
+.gridpulse-table tbody tr td.cell-db-saved,
+.gridpulse-table tbody tr.row-selected td.cell-db-saved,
+.gridpulse-table tbody tr:hover td.cell-db-saved,
+.gridpulse-table tbody tr.gridario-first-row td.cell-db-saved {
+  background: rgba(52, 168, 83, 0.28) !important;
+  background-color: rgba(52, 168, 83, 0.28) !important;
+  box-shadow: inset 0 0 0 2px #34A853 !important;
+  color: #000000 !important;
+  font-weight: 700;
+  z-index: 11;
+  position: relative;
+}
+
+.gridpulse-table tbody tr td.cell-db-saved > div,
+.gridpulse-table tbody tr td.cell-db-saved > input,
+.gridpulse-table tbody tr td.cell-db-saved > select {
+  background: transparent !important;
+  background-color: transparent !important;
+  color: inherit !important;
 }
 
 /* Whole row marked light red (#EA4335 tint) when any cell in that row has a validation error */
@@ -914,13 +958,25 @@ mat-icon.text-purple-700 {
 
 /* Specific cell(s) highlighted in strong #EA4335 red where the actual validation error is */
 .gridpulse-table tbody tr td.cell-invalid,
-.gridpulse-table tbody tr.row-invalid td.cell-invalid {
-  background-color: rgba(234, 67, 53, 0.22) !important;
+.gridpulse-table tbody tr.row-invalid td.cell-invalid,
+.gridpulse-table tbody tr.row-selected td.cell-invalid,
+.gridpulse-table tbody tr:hover td.cell-invalid,
+.gridpulse-table tbody tr.gridario-first-row td.cell-invalid {
+  background: rgba(234, 67, 53, 0.28) !important;
+  background-color: rgba(234, 67, 53, 0.28) !important;
   box-shadow: inset 0 0 0 2px #EA4335 !important;
   color: #000000 !important;
   font-weight: 700;
   z-index: 12;
   position: relative;
+}
+
+.gridpulse-table tbody tr td.cell-invalid > div,
+.gridpulse-table tbody tr td.cell-invalid > input,
+.gridpulse-table tbody tr td.cell-invalid > select {
+  background: transparent !important;
+  background-color: transparent !important;
+  color: inherit !important;
 }
 
 /* Universal Vertical Scroll for all Popups, Dropdowns, Context Menus, and Modals on any screen size */
@@ -1533,8 +1589,8 @@ mat-icon.text-purple-700 {
   border-color: #27272a !important;
 }
 
-[data-theme='classic-dark'] .gridpulse-table tbody td.cell-focused,
-[data-theme='classic-dark'] .gridpulse-table tbody td:focus-within:not(.sticky-col-check):not(.sticky-col-index):not(.cell-invalid),
+[data-theme='classic-dark'] .gridpulse-table tbody td.cell-focused:not(.cell-invalid):not(.cell-redis-pending):not(.cell-db-saved),
+[data-theme='classic-dark'] .gridpulse-table tbody td:focus-within:not(.sticky-col-check):not(.sticky-col-index):not(.cell-invalid):not(.cell-redis-pending):not(.cell-db-saved),
 [data-theme='classic-dark'] .excel-schema-table tbody td:focus-within {
   background: #000000 !important;
   background-color: #000000 !important;
@@ -1542,11 +1598,74 @@ mat-icon.text-purple-700 {
   color: #FFFFFF !important;
 }
 
+[data-theme='classic-dark'] .gridpulse-table tbody td.cell-redis-pending,
+[data-theme='classic-dark'] .gridpulse-table tbody tr:hover td.cell-redis-pending,
+[data-theme='classic-dark'] .gridpulse-table tbody tr.row-selected td.cell-redis-pending,
+[data-theme='classic-dark'] .gridario-first-row td.cell-redis-pending {
+  background: rgba(251, 188, 5, 0.28) !important;
+  background-color: rgba(251, 188, 5, 0.28) !important;
+  box-shadow: inset 0 0 0 2px #FBBC05 !important;
+  color: #FBBC05 !important;
+}
+
+[data-theme='classic-dark'] .gridpulse-table tbody td.cell-redis-pending > div,
+[data-theme='classic-dark'] .gridpulse-table tbody td.cell-redis-pending > input,
+[data-theme='classic-dark'] .gridpulse-table tbody td.cell-redis-pending > select,
+[data-theme='classic-dark'] .gridpulse-table tbody tr:hover td.cell-redis-pending > div,
+[data-theme='classic-dark'] .gridario-first-row td.cell-redis-pending > div {
+  background: transparent !important;
+  background-color: transparent !important;
+  color: #FBBC05 !important;
+}
+
+[data-theme='classic-dark'] .gridpulse-table tbody td.cell-db-saved,
+[data-theme='classic-dark'] .gridpulse-table tbody tr:hover td.cell-db-saved,
+[data-theme='classic-dark'] .gridpulse-table tbody tr.row-selected td.cell-db-saved,
+[data-theme='classic-dark'] .gridario-first-row td.cell-db-saved {
+  background: rgba(52, 168, 83, 0.28) !important;
+  background-color: rgba(52, 168, 83, 0.28) !important;
+  box-shadow: inset 0 0 0 2px #34A853 !important;
+  color: #34A853 !important;
+}
+
+[data-theme='classic-dark'] .gridpulse-table tbody td.cell-db-saved > div,
+[data-theme='classic-dark'] .gridpulse-table tbody td.cell-db-saved > input,
+[data-theme='classic-dark'] .gridpulse-table tbody td.cell-db-saved > select,
+[data-theme='classic-dark'] .gridpulse-table tbody tr:hover td.cell-db-saved > div,
+[data-theme='classic-dark'] .gridario-first-row td.cell-db-saved > div {
+  background: transparent !important;
+  background-color: transparent !important;
+  color: #34A853 !important;
+}
+
+[data-theme='classic-dark'] .gridpulse-table tbody tr.row-invalid td:not(.cell-invalid) {
+  background: rgba(234, 67, 53, 0.12) !important;
+  background-color: rgba(234, 67, 53, 0.12) !important;
+}
+
+[data-theme='classic-dark'] .gridpulse-table tbody tr.row-invalid td:not(.cell-invalid) > div {
+  background: transparent !important;
+  background-color: transparent !important;
+}
+
 [data-theme='classic-dark'] .gridpulse-table tbody td.cell-invalid,
-[data-theme='classic-dark'] .gridpulse-table tbody tr.row-invalid td.cell-invalid {
-  background: #000000 !important;
-  background-color: #000000 !important;
+[data-theme='classic-dark'] .gridpulse-table tbody tr.row-invalid td.cell-invalid,
+[data-theme='classic-dark'] .gridpulse-table tbody tr:hover td.cell-invalid,
+[data-theme='classic-dark'] .gridpulse-table tbody tr.row-selected td.cell-invalid,
+[data-theme='classic-dark'] .gridario-first-row td.cell-invalid {
+  background: rgba(234, 67, 53, 0.28) !important;
+  background-color: rgba(234, 67, 53, 0.28) !important;
   box-shadow: inset 0 0 0 2px #EA4335 !important;
+  color: #EA4335 !important;
+}
+
+[data-theme='classic-dark'] .gridpulse-table tbody td.cell-invalid > div,
+[data-theme='classic-dark'] .gridpulse-table tbody td.cell-invalid > input,
+[data-theme='classic-dark'] .gridpulse-table tbody td.cell-invalid > select,
+[data-theme='classic-dark'] .gridpulse-table tbody tr:hover td.cell-invalid > div,
+[data-theme='classic-dark'] .gridario-first-row td.cell-invalid > div {
+  background: transparent !important;
+  background-color: transparent !important;
   color: #EA4335 !important;
 }
 

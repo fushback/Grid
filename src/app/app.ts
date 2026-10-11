@@ -66,7 +66,6 @@ export interface VersionCommitItem {
 
 type ActiveModalType =
   | 'none'
-  | 'connect_server'
   | 'multi_sort'
   | 'column_filter'
   | 'column_schema'
@@ -280,25 +279,13 @@ export class App implements OnInit, OnDestroy {
     return result;
   });
 
-  // SQL Server Management Studio (SSMS) Server Login & Instance State (from Database)
   readonly serverName = signal<string>('');
+  readonly serverHost = signal<string>('');
+  readonly serverClusterName = signal<string>('');
+  readonly serverVersion = signal<string>('');
   readonly serverEngine = signal<string>('');
   readonly serverLoginUser = signal<string>('');
-  readonly isServerConnected = signal<boolean>(true);
-  readonly isConnectingToServer = signal<boolean>(false);
-  readonly connectServerErrorMessage = signal<string>('');
-  readonly showServerPassword = signal<boolean>(false);
   readonly showAuthPassword = signal<boolean>(false);
-  readonly connectServerForm = this.fb.nonNullable.group({
-    serverType: ['Database Engine'],
-    serverName: ['localhost', [Validators.maxLength(240)]],
-    port: ['5432', [Validators.maxLength(10)]],
-    databaseName: ['postgres', [Validators.maxLength(120)]],
-    loginUser: ['postgres', [Validators.maxLength(120)]],
-    password: [''],
-    connectionString: [''],
-    rememberPassword: [true],
-  });
 
   // SQL Server Management Studio (SSMS) / Browser-Style Database Connection Tabs
   // Each tab represents an active Database connection page, and inside each Database Tab
@@ -310,9 +297,7 @@ export class App implements OnInit, OnDestroy {
     const list = this.databaseTabs();
     return list.find((t) => t.tabId === id) || list[0] || null;
   });
-  readonly hasActiveConnection = computed<boolean>(() => {
-    return this.isServerConnected() && this.databaseTabs().length > 0;
-  });
+  readonly hasActiveConnection = computed<boolean>(() => this.databaseTabs().length > 0);
   readonly isCurrentTabAwaitingDbSelection = computed<boolean>(() => {
     const tab = this.activeDatabaseTab();
     return Boolean(tab && !tab.databaseName);
@@ -380,7 +365,7 @@ export class App implements OnInit, OnDestroy {
   // Excel-Style Column Resize State
   readonly resizingColId = signal<string | null>(null);
 
-  // "Manage" Object Explorer Sidebar State + Split-Screen / Expand-Contract State
+  // "Manage" Object Explorer & Server Explorer Sidebar State + Split-Screen / Expand-Contract State
   readonly isManageSidebarOpen = signal<boolean>(true);
   readonly sidebarWidthPx = signal<number>(316);
   readonly sidebarTreeHeightPx = signal<number>(520);
@@ -400,8 +385,8 @@ export class App implements OnInit, OnDestroy {
 
   readonly manageTreeSearchQuery = signal<string>('');
   readonly manageTreeSearchControl = this.fb.nonNullable.control('');
-  readonly isServerNodeExpanded = signal<boolean>(false);
-  readonly isDatabasesFolderExpanded = signal<boolean>(false);
+  readonly isServerNodeExpanded = signal<boolean>(true);
+  readonly isDatabasesFolderExpanded = signal<boolean>(true);
   readonly expandedDatabaseNodes = signal<Set<string>>(new Set<string>());
   readonly expandedTableNodes = signal<Set<string>>(new Set<string>());
   private readonly sidebarTreeStorageKey = 'gridario_sidebar_tree_state';
@@ -486,8 +471,9 @@ export class App implements OnInit, OnDestroy {
     message: ['Snapshot of current columns, formulas, and verified rows'],
   });
 
-  // Active Navigation Section / Modal State
+  // Active Navigation Section / Modal / Sidebar Tab State
   readonly activeNavTab = signal<'grid' | 'sort' | 'filter' | 'schema' | 'activity'>('grid');
+  readonly activeSidebarTab = signal<'object_explorer' | 'server_explorer'>('object_explorer');
   readonly activeModal = signal<ActiveModalType>('none');
   readonly isSettingsDropdownOpen = signal<boolean>(false);
 
@@ -596,6 +582,12 @@ export class App implements OnInit, OnDestroy {
   readonly pendingUnsavedRowIds = signal<Set<string>>(new Set<string>());
   readonly pendingUnsavedColIds = signal<Set<string>>(new Set<string>());
   private lastValidRowSnapshots = new Map<string, GridRow>();
+
+  // Redis Pending (Yellow) -> Database Saved (Green for 3s -> Disappear) Cell Highlight State
+  readonly redisPendingCells = signal<Record<string, number>>({});
+  readonly dbSavedGreenCells = signal<Record<string, number>>({});
+  private readonly dbSavedGreenTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private redisFlushCheckTimer: ReturnType<typeof setTimeout> | null = null;
 
   // Clipboard State (Rows or Column Copy / Cut / Paste + Excel System Clipboard)
   readonly clipboard = signal<ClipboardBuffer | null>(null);
@@ -1665,7 +1657,6 @@ export class App implements OnInit, OnDestroy {
   });
 
   private readonly databasesBackupStorageKey = 'gridario_workspace_databases_backup_v1';
-  private readonly serverConnectionStorageKey = 'gridario_server_connection_v1';
   private isRestoringClientBackup = false;
 
   private saveDatabasesBackupToStorage(dbs: DbDatabaseSummary[] = this.databases()): void {
@@ -1725,6 +1716,11 @@ export class App implements OnInit, OnDestroy {
         databases?: DbDatabaseSummary[];
       };
       if (!Array.isArray(parsed?.databases) || parsed.databases.length === 0) return;
+
+      parsed.databases = parsed.databases.filter(
+        (bDb) => (bDb.databaseName || '').toLowerCase() !== 'systemdatabase'
+      );
+      if (parsed.databases.length === 0) return;
 
       // Determine if the local backup has any databases or tables that are missing on the server
       // (e.g. after a container cold-start reset to default single GridPulse_DB)
@@ -1787,9 +1783,11 @@ export class App implements OnInit, OnDestroy {
       .get<{
         ok: boolean;
         serverName?: string;
+        serverHost?: string;
+        serverClusterName?: string;
+        serverVersion?: string;
         serverEngine?: string;
         serverLoginUser?: string;
-        isServerConnected?: boolean;
         activeDatabaseName?: string;
         activeTableName?: string;
         databases?: DbDatabaseSummary[];
@@ -1798,12 +1796,12 @@ export class App implements OnInit, OnDestroy {
       .subscribe({
         next: (res) => {
           if (res?.ok) {
-            if (res.serverName) this.serverName.set(res.serverName);
-            if (res.serverEngine) this.serverEngine.set(res.serverEngine);
-            if (res.serverLoginUser) this.serverLoginUser.set(res.serverLoginUser);
-            if (res.isServerConnected !== undefined) {
-              this.isServerConnected.set(res.isServerConnected);
-            }
+            if (res.serverName !== undefined) this.serverName.set(res.serverName);
+            if (res.serverHost !== undefined) this.serverHost.set(res.serverHost);
+            if (res.serverClusterName !== undefined) this.serverClusterName.set(res.serverClusterName);
+            if (res.serverVersion !== undefined) this.serverVersion.set(res.serverVersion);
+            if (res.serverEngine !== undefined) this.serverEngine.set(res.serverEngine);
+            if (res.serverLoginUser !== undefined) this.serverLoginUser.set(res.serverLoginUser);
             if (Array.isArray(res.databases)) {
               this.databases.set(res.databases);
               this.syncTablesSignalForActiveDatabase(res.databases);
@@ -2299,15 +2297,11 @@ export class App implements OnInit, OnDestroy {
 
   public selectDatabaseFromTree(dbName: string, event?: Event): void {
     event?.stopPropagation();
-    // Database selection only happens from the DB dropdown inside the sidebar;
-    // clicking a database node in the tree only expands/collapses its tables node.
     this.toggleDatabaseNode(dbName, event);
   }
 
   public selectTableFromTree(dbName: string, tableName: string, event?: Event): void {
     event?.stopPropagation();
-    // Clicking or double-clicking a table in Object Explorer only toggles its column tree;
-    // opening the table onto the screen is done via right-click -> "Select".
     this.toggleTableNode(dbName, tableName, event);
   }
 
@@ -2926,366 +2920,14 @@ export class App implements OnInit, OnDestroy {
   }
 
   // =========================================================================
-  // SQL SERVER LOGIN TO SERVER & MULTI-DATABASE ENGINE
+  // MULTI-DATABASE & MULTI-TABLE ENGINE (SQL SERVER OBJECT EXPLORER)
   // =========================================================================
-
-  public openConnectServerModal(event?: Event): void {
-    event?.stopPropagation();
-    this.closeAllMenus();
-    this.connectServerErrorMessage.set('');
-    this.connectServerForm.patchValue({
-      serverType: 'Database Engine',
-      serverName: this.serverName() || 'localhost',
-      loginUser: this.serverLoginUser() || 'postgres',
-    });
-    this.activeModal.set('connect_server');
-  }
-
-  private parseConnStrIntoFormFields(rawInput: string): void {
-    const raw = rawInput.trim().replace(/^["']|["']$/g, '');
-    if (!raw) return;
-
-    if (
-      !raw.startsWith('postgres://') &&
-      !raw.startsWith('postgresql://') &&
-      /host\s*=/i.test(raw)
-    ) {
-      const kv = new Map<string, string>();
-      for (const part of raw.split(';')) {
-        const eq = part.indexOf('=');
-        if (eq <= 0) continue;
-        const k = part.slice(0, eq).trim().toLowerCase();
-        const v = part.slice(eq + 1).trim();
-        if (k) kv.set(k, v);
-      }
-      const host = kv.get('host') || kv.get('server') || kv.get('data source') || '';
-      const port = kv.get('port') || '5432';
-      const database = kv.get('database') || kv.get('initial catalog') || 'postgres';
-      const user =
-        kv.get('username') || kv.get('user id') || kv.get('uid') || kv.get('user') || 'postgres';
-      const password = kv.get('password') || kv.get('pwd') || '';
-      if (host) {
-        this.connectServerForm.patchValue(
-          {
-            serverName: host,
-            port,
-            databaseName: database,
-            loginUser: user,
-            ...(password ? { password } : {}),
-          },
-          { emitEvent: false }
-        );
-      }
-      return;
-    }
-
-    if (raw.startsWith('postgres://') || raw.startsWith('postgresql://')) {
-      try {
-        const m = raw.match(/^(postgres(?:ql)?:\/\/[^:]+:)(.+)(@[^@]+)$/);
-        const safeUri = m && m[2].includes('@') ? m[1] + encodeURIComponent(m[2]) + m[3] : raw;
-        const u = new URL(safeUri);
-        const host = u.hostname || '';
-        const port = u.port || '5432';
-        const database = decodeURIComponent((u.pathname || '').replace(/^\//, '') || 'postgres');
-        const user = decodeURIComponent(u.username || 'postgres');
-        const password = decodeURIComponent(u.password || '');
-        if (host) {
-          this.connectServerForm.patchValue(
-            {
-              serverName: host,
-              port,
-              databaseName: database,
-              loginUser: user,
-              ...(password ? { password } : {}),
-            },
-            { emitEvent: false }
-          );
-        }
-      } catch {
-        // Ignore partial URI while typing
-      }
-    }
-  }
-
-  public onConnectServerConnStrInput(): void {
-    const connStr = this.connectServerForm.controls.connectionString.value;
-    this.parseConnStrIntoFormFields(connStr);
-  }
-
-  public onConnectServerHostInput(): void {
-    const srv = this.connectServerForm.controls.serverName.value.trim();
-    if (
-      srv.startsWith('postgres://') ||
-      srv.startsWith('postgresql://') ||
-      /host\s*=/i.test(srv)
-    ) {
-      this.connectServerForm.patchValue({ connectionString: srv }, { emitEvent: false });
-      this.parseConnStrIntoFormFields(srv);
-    }
-  }
-
-  public submitConnectServerModal(): void {
-    if (this.isConnectingToServer()) return;
-    this.connectServerErrorMessage.set('');
-    const raw = this.connectServerForm.getRawValue();
-    const serverName = raw.serverName.trim();
-    const connStr = raw.connectionString.trim();
-    if (!serverName && !connStr) {
-      this.connectServerErrorMessage.set(
-        'Please enter a PostgreSQL / Supabase Server host or paste a Connection String.'
-      );
-      return;
-    }
-
-    this.isConnectingToServer.set(true);
-    this.http
-      .post<{
-        ok: boolean;
-        error?: string;
-        serverName?: string;
-        serverEngine?: string;
-        serverLoginUser?: string;
-        isServerConnected?: boolean;
-        activeDatabaseName?: string;
-        databases?: DbDatabaseSummary[];
-        activeTableName?: string;
-        tables?: DbTableSummary[];
-        columns?: GridColumn[];
-        rows?: GridRow[];
-        totalRows?: number;
-        filteredTotalRows?: number;
-        hasMore?: boolean;
-        uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
-        activities?: ActivityLogItem[];
-        stats?: {
-          databaseCount: number;
-          tableCount: number;
-          fieldCount: number;
-          rowCount?: number;
-        };
-      }>('/api/workspace/server/connect', {
-        serverName,
-        port: raw.port.trim() || '5432',
-        databaseName: raw.databaseName.trim() || 'postgres',
-        loginUser: raw.loginUser.trim() || 'postgres',
-        password: raw.password,
-        connectionString: connStr,
-        userName: this.currentUserName(),
-        userColor: this.currentUserColor(),
-      })
-      .subscribe({
-        next: (res) => {
-          this.isConnectingToServer.set(false);
-          if (!res?.ok) {
-            this.connectServerErrorMessage.set(
-              res?.error || 'Could not log in to the specified PostgreSQL / Supabase server.'
-            );
-            return;
-          }
-
-          this.serverName.set(res.serverName || serverName || 'localhost');
-          this.serverEngine.set(res.serverEngine || 'PostgreSQL 16.0');
-          this.serverLoginUser.set(res.serverLoginUser || raw.loginUser.trim() || 'postgres');
-          this.isServerConnected.set(true);
-
-          const allDbs = Array.isArray(res.databases) ? res.databases : [];
-          this.databases.set(allDbs);
-
-          const activeDb =
-            res.activeDatabaseName ||
-            allDbs[0]?.databaseName ||
-            this.activeDatabaseName() ||
-            'postgres';
-          const activeTbl =
-            res.activeTableName ||
-            allDbs.find((d) => d.databaseName.toLowerCase() === activeDb.toLowerCase())
-              ?.tables?.[0]?.tableName ||
-            '';
-
-          this.activeDatabaseName.set(activeDb);
-          this.syncTablesSignalForActiveDatabase(allDbs, activeDb);
-          this.activeTableName.set(activeTbl);
-
-          // Rebuild open table tabs and database tabs to reflect the newly connected server's objects
-          const nextOpenTablesMap: Record<string, string[]> = {};
-          for (const d of allDbs) {
-            const tblNames = (d.tables || []).map((t) => t.tableName);
-            if (tblNames.length > 0) {
-              nextOpenTablesMap[d.databaseName] = tblNames;
-            }
-          }
-          this.openTableTabsByDb.set(nextOpenTablesMap);
-
-          const nextDbTabs: DatabaseWorkspaceTab[] = allDbs.map((d, idx) => ({
-            tabId: `db_tab_${idx}_${d.databaseName}`,
-            databaseName: d.databaseName,
-            activeTableName: d.activeTableName || d.tables?.[0]?.tableName || '',
-          }));
-          if (nextDbTabs.length > 0) {
-            this.databaseTabs.set(nextDbTabs);
-            const activeTab =
-              nextDbTabs.find((t) => t.databaseName.toLowerCase() === activeDb.toLowerCase()) ||
-              nextDbTabs[0];
-            this.activeDatabaseTabId.set(activeTab.tabId);
-          }
-
-          const cols = Array.isArray(res.columns) ? res.columns : [];
-          const rows = Array.isArray(res.rows)
-            ? this.sanitizeClientRowsAgainstColumns(cols, res.rows)
-            : [];
-          this.columns.set(cols);
-          this.rows.set(rows);
-          this.snapshotValidRows(rows);
-          this.dbTotalRows.set(res.totalRows ?? rows.length);
-          this.dbFilteredTotalRows.set(res.filteredTotalRows ?? res.totalRows ?? rows.length);
-          this.dbHasMoreRows.set(Boolean(res.hasMore));
-          this.dbUniqueValuesByColumn.set(res.uniqueValuesByColumn || {});
-          if (Array.isArray(res.activities)) {
-            this.activities.set(res.activities);
-          }
-
-          // Expand server, databases, and tables tree nodes so all retrieved objects are visible
-          const dbSet = new Set<string>();
-          const tblSet = new Set<string>();
-          for (const d of allDbs) {
-            dbSet.add(d.databaseName);
-            for (const t of d.tables || []) {
-              tblSet.add(`${d.databaseName}::${t.tableName}`);
-            }
-          }
-          this.isServerNodeExpanded.set(true);
-          this.isDatabasesFolderExpanded.set(true);
-          this.expandedDatabaseNodes.set(dbSet);
-          this.expandedTableNodes.set(tblSet);
-          this.saveSidebarTreeStateToStorage();
-          this.saveDatabasesBackupToStorage(allDbs);
-          if (this.isBrowser) {
-            try {
-              localStorage.setItem(
-                this.serverConnectionStorageKey,
-                JSON.stringify({
-                  serverName: this.serverName(),
-                  port: raw.port.trim() || '5432',
-                  databaseName: raw.databaseName.trim() || 'postgres',
-                  loginUser: this.serverLoginUser(),
-                })
-              );
-            } catch {
-              // Ignore storage errors
-            }
-          }
-
-          this.activeModal.set('none');
-          const st = res.stats;
-          this.showBanner(
-            'success',
-            st
-              ? `Connected to "${this.serverName()}" (${this.serverLoginUser()}) — retrieved ${st.databaseCount} database(s), ${st.tableCount} table(s), ${st.fieldCount} field(s), and ${st.rowCount ?? rows.length} row(s).`
-              : `Connected to PostgreSQL server "${this.serverName()}".`
-          );
-        },
-        error: () => {
-          this.isConnectingToServer.set(false);
-          this.connectServerErrorMessage.set('Network error while connecting to server.');
-        },
-      });
-  }
 
   public refreshServerAndRetrieveObjects(event?: Event): void {
     event?.stopPropagation();
     this.closeAllMenus();
-    const raw = this.connectServerForm.getRawValue();
-    this.http
-      .post<{
-        ok: boolean;
-        error?: string;
-        serverName?: string;
-        serverEngine?: string;
-        serverLoginUser?: string;
-        activeDatabaseName?: string;
-        databases?: DbDatabaseSummary[];
-        activeTableName?: string;
-        columns?: GridColumn[];
-        rows?: GridRow[];
-        totalRows?: number;
-        filteredTotalRows?: number;
-        hasMore?: boolean;
-        uniqueValuesByColumn?: Record<string, { label: string; count: number }[]>;
-        stats?: {
-          databaseCount: number;
-          tableCount: number;
-          fieldCount: number;
-          rowCount?: number;
-        };
-      }>('/api/workspace/server/connect', {
-        serverName: this.serverName() || raw.serverName,
-        port: raw.port.trim() || '5432',
-        databaseName: raw.databaseName.trim() || 'postgres',
-        loginUser: this.serverLoginUser() || raw.loginUser,
-        password: raw.password,
-        connectionString: raw.connectionString.trim(),
-        userName: this.currentUserName(),
-        userColor: this.currentUserColor(),
-      })
-      .subscribe({
-        next: (res) => {
-          if (!res?.ok) {
-            this.showBanner(
-              'error',
-              res?.error || 'Could not refresh from PostgreSQL / Supabase server.'
-            );
-            return;
-          }
-          if (Array.isArray(res.databases)) {
-            if (res.serverName) this.serverName.set(res.serverName);
-            if (res.serverEngine) this.serverEngine.set(res.serverEngine);
-            if (res.serverLoginUser) this.serverLoginUser.set(res.serverLoginUser);
-            this.isServerConnected.set(true);
-            this.databases.set(res.databases);
-            this.syncTablesSignalForActiveDatabase(res.databases);
-            if (Array.isArray(res.columns) && Array.isArray(res.rows)) {
-              const sanitized = this.sanitizeClientRowsAgainstColumns(res.columns, res.rows);
-              this.columns.set(res.columns);
-              this.rows.set(sanitized);
-              this.snapshotValidRows(sanitized);
-              this.dbTotalRows.set(res.totalRows ?? sanitized.length);
-              this.dbFilteredTotalRows.set(
-                res.filteredTotalRows ?? res.totalRows ?? sanitized.length
-              );
-              this.dbHasMoreRows.set(Boolean(res.hasMore));
-            }
-            const dbSet = new Set<string>();
-            for (const d of res.databases) {
-              dbSet.add(d.databaseName);
-            }
-            this.isServerNodeExpanded.set(true);
-            this.isDatabasesFolderExpanded.set(true);
-            this.expandedDatabaseNodes.set(dbSet);
-            this.saveSidebarTreeStateToStorage();
-            const st = res.stats;
-            this.showBanner(
-              'success',
-              st
-                ? `Retrieved ${st.databaseCount} database(s), ${st.tableCount} table(s), ${st.fieldCount} field(s), and ${st.rowCount ?? 0} row(s) from "${this.serverName()}".`
-                : `Refreshed server "${this.serverName()}".`
-            );
-          }
-        },
-      });
-  }
-
-  public disconnectServerFromExplorer(event?: Event): void {
-    event?.stopPropagation();
-    this.closeAllMenus();
-    this.http.post('/api/workspace/server/disconnect', {}).subscribe({
-      next: () => {
-        this.isServerConnected.set(false);
-        this.showBanner('info', `Disconnected from server "${this.serverName()}". Click Connect to log in again.`);
-      },
-      error: () => {
-        this.isServerConnected.set(false);
-      },
-    });
+    this.refreshObjectExplorerTreeFromDb(true);
+    this.refreshTableData(event);
   }
 
   public openCreateDatabaseModal(event?: Event): void {
@@ -5764,9 +5406,11 @@ export class App implements OnInit, OnDestroy {
         workspaceId: string;
         workspaceName: string;
         serverName?: string;
+        serverHost?: string;
+        serverClusterName?: string;
+        serverVersion?: string;
         serverEngine?: string;
         serverLoginUser?: string;
-        isServerConnected?: boolean;
         activeDatabaseName?: string;
         databases?: DbDatabaseSummary[];
         activeTableName?: string;
@@ -5785,12 +5429,12 @@ export class App implements OnInit, OnDestroy {
       .subscribe({
         next: (res) => {
           if (res && Array.isArray(res.columns) && Array.isArray(res.rows)) {
-            if (res.serverName) this.serverName.set(res.serverName);
-            if (res.serverEngine) this.serverEngine.set(res.serverEngine);
-            if (res.serverLoginUser) this.serverLoginUser.set(res.serverLoginUser);
-            if (res.isServerConnected !== undefined) {
-              this.isServerConnected.set(res.isServerConnected);
-            }
+            if (res.serverName !== undefined) this.serverName.set(res.serverName);
+            if (res.serverHost !== undefined) this.serverHost.set(res.serverHost);
+            if (res.serverClusterName !== undefined) this.serverClusterName.set(res.serverClusterName);
+            if (res.serverVersion !== undefined) this.serverVersion.set(res.serverVersion);
+            if (res.serverEngine !== undefined) this.serverEngine.set(res.serverEngine);
+            if (res.serverLoginUser !== undefined) this.serverLoginUser.set(res.serverLoginUser);
             const activeDb =
               requestedDatabaseName || res.activeDatabaseName || this.activeDatabaseName() || 'GridPulse_DB';
             let activeTbl = res.activeTableName ?? '';
@@ -6082,6 +5726,9 @@ export class App implements OnInit, OnDestroy {
       try {
         const status = JSON.parse(event.data);
         this.realtimeSync.handleServerStreamEvent('write_behind_status', status);
+        if (status && typeof status.dirtyRowCount === 'number' && status.dirtyRowCount === 0) {
+          this.transitionRedisCellsToDbSavedGreen();
+        }
       } catch {
         // Ignore
       }
@@ -6153,6 +5800,7 @@ export class App implements OnInit, OnDestroy {
 
     if (activeTableDeltas.length > 0) {
       const cols = this.columns();
+      const remoteChangedCellKeys: string[] = [];
       this.rows.update((currentRows) =>
         currentRows.map((row) => {
           const matching = activeTableDeltas.filter((d) => d.rowId === row.id);
@@ -6170,6 +5818,7 @@ export class App implements OnInit, OnDestroy {
             const check = validateCellValue(this.getLiveLookupColumn(col), d.rawValue);
             nextCells[col.name] = check.normalizedValue;
             nextCells[col.id] = check.normalizedValue;
+            remoteChangedCellKeys.push(`${row.id}:${col.id}`);
             latestUser = d.userName || latestUser;
             latestIso = new Date(d.clientTimestampMs || Date.now()).toISOString();
           }
@@ -6181,6 +5830,9 @@ export class App implements OnInit, OnDestroy {
           };
         })
       );
+      if (remoteChangedCellKeys.length > 0) {
+        this.markCellsPendingInRedis(remoteChangedCellKeys);
+      }
       this.syncLocalActiveTableIntoDatabasesTree();
       this.scheduleGridSelectDomSync();
       this.cloudSyncStatus.set('synced');
@@ -6888,6 +6540,8 @@ export class App implements OnInit, OnDestroy {
     // Clicking/focusing a cell or row is a pure UI selection — do NOT call broadcastPresence() or trigger any Redis/DB call!
   }
 
+  private idleLiveCellCommitTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
   public onContentEditableCellInput(rowId: string, colId: string, event: Event): void {
     const el = event.target as HTMLElement | null;
     if (!el) return;
@@ -6895,14 +6549,58 @@ export class App implements OnInit, OnDestroy {
     const row = this.rows().find((r) => r.id === rowId);
     const col = this.columns().find((c) => c.id === colId);
     const currentDomText = row && col ? this.getEditableCellDomText(row, col) : '';
+    const cellKey = `${rowId}:${colId}`;
+
+    const existingIdleTimer = this.idleLiveCellCommitTimers.get(cellKey);
+    if (existingIdleTimer) {
+      clearTimeout(existingIdleTimer);
+      this.idleLiveCellCommitTimers.delete(cellKey);
+    }
 
     if (rawText === currentDomText) {
-      this.liveCellDraftMap.delete(`${rowId}:${colId}`);
+      this.liveCellDraftMap.delete(cellKey);
       this.recomputeRowDirtyFlag(rowId);
     } else {
-      this.liveCellDraftMap.set(`${rowId}:${colId}`, rawText);
+      this.liveCellDraftMap.set(cellKey, rawText);
       this.dirtyRowIds.add(rowId);
     }
+
+    if (col && !col.isPrimaryKey && !col.isIdentity && col.colType !== 'formula') {
+      const check = validateCellValue(this.getLiveLookupColumn(col), rawText);
+      if (!check.valid) {
+        this.cellValidationErrors.update((prev) => ({
+          ...prev,
+          [cellKey]: check.errorMessage,
+        }));
+        this.clearCellFromRedisAndDbHighlight(cellKey);
+        this.invalidCellKey.set(cellKey);
+        this.showBanner('error', `Validation Error: ${check.errorMessage}`);
+      } else {
+        if (this.cellValidationErrors()[cellKey]) {
+          this.cellValidationErrors.update((prev) => {
+            const next = { ...prev };
+            delete next[cellKey];
+            return next;
+          });
+          if (Object.keys(this.cellValidationErrors()).length === 0) {
+            this.invalidCellKey.set(null);
+            if (this.validationBanner()?.type === 'error') {
+              this.dismissBanner();
+            }
+          }
+        }
+        if (rawText !== currentDomText && this.isBrowser) {
+          const timer = setTimeout(() => {
+            this.idleLiveCellCommitTimers.delete(cellKey);
+            if (this.liveCellDraftMap.has(cellKey)) {
+              this.commitLiveCellDraft(rowId, colId, el);
+            }
+          }, 650);
+          this.idleLiveCellCommitTimers.set(cellKey, timer);
+        }
+      }
+    }
+
     this.formulaBarControl.setValue(rawText, { emitEvent: false });
   }
 
@@ -6947,6 +6645,10 @@ export class App implements OnInit, OnDestroy {
         this.dirtyRowIds.add(rowId);
         return;
       }
+    }
+    if (this.isRowInvalid(rowId) || this.pendingUnsavedRowIds().has(rowId)) {
+      this.dirtyRowIds.add(rowId);
+      return;
     }
     const row = this.rows().find((r) => r.id === rowId);
     if (!row) {
@@ -7079,12 +6781,15 @@ export class App implements OnInit, OnDestroy {
     });
 
     this.rows.set(updatedRows);
-    this.recomputeRowDirtyFlag(rowId);
     this.formulaBarControl.setValue(String(validation.normalizedValue ?? ''), {
       emitEvent: false,
     });
 
-    if (domEl && domEl.isContentEditable) {
+    if (
+      domEl &&
+      domEl.isContentEditable &&
+      (!this.isBrowser || document.activeElement !== domEl)
+    ) {
       const updatedRow = updatedRows.find((r) => r.id === rowId);
       const cleanDom =
         col.colType === 'lookup' && updatedRow
@@ -7098,6 +6803,33 @@ export class App implements OnInit, OnDestroy {
       if (domEl.value !== cleanSelectVal) {
         domEl.value = cleanSelectVal;
       }
+    }
+
+    const cellKey = `${rowId}:${col.id}`;
+    if (!validation.valid) {
+      this.cellValidationErrors.update((prev) => ({
+        ...prev,
+        [cellKey]: validation.errorMessage,
+      }));
+      this.pendingUnsavedRowIds.update((prev) => {
+        const next = new Set(prev);
+        next.add(rowId);
+        return next;
+      });
+      this.dirtyRowIds.add(rowId);
+      this.clearCellFromRedisAndDbHighlight(cellKey);
+      this.validateAndSyncRows(
+        [rowId],
+        [],
+        'Cell Updated',
+        `Validation check on "${col.name}"`
+      );
+      return;
+    }
+
+    this.recomputeRowDirtyFlag(rowId);
+    if (this.dirtyRowIds.has(rowId) || wasCellAlreadyInvalid) {
+      this.flushRowAutoSave(rowId);
     }
   }
 
@@ -7432,6 +7164,31 @@ export class App implements OnInit, OnDestroy {
       (v) => v.trim().length > 0
     );
     this.hasNewRowLiveDraft.set(anyLive);
+    const col = this.columns().find((c) => c.id === colId);
+    if (col && !this.isProtectedIdColumn(col) && col.colType !== 'formula') {
+      const trimmed = rawText.trim();
+      if (trimmed.length > 0) {
+        const check = validateCellValue(this.getLiveLookupColumn(col), trimmed);
+        if (!check.valid) {
+          this.newRowValidationErrors.update((prev) => ({
+            ...prev,
+            [col.id]: check.errorMessage,
+          }));
+        } else if (this.newRowValidationErrors()[col.id]) {
+          this.newRowValidationErrors.update((prev) => {
+            const next = { ...prev };
+            delete next[col.id];
+            return next;
+          });
+        }
+      } else if (this.newRowValidationErrors()[col.id]) {
+        this.newRowValidationErrors.update((prev) => {
+          const next = { ...prev };
+          delete next[col.id];
+          return next;
+        });
+      }
+    }
     this.formulaBarControl.setValue(rawText, { emitEvent: false });
   }
 
@@ -7479,11 +7236,27 @@ export class App implements OnInit, OnDestroy {
         }
         return next;
       });
-      this.newRowValidationErrors.update((prev) => {
-        const next = { ...prev };
-        delete next[col.id];
-        return next;
-      });
+      if (trimmed !== '') {
+        const check = validateCellValue(this.getLiveLookupColumn(col), trimmed);
+        if (!check.valid) {
+          this.newRowValidationErrors.update((prev) => ({
+            ...prev,
+            [col.id]: check.errorMessage,
+          }));
+        } else {
+          this.newRowValidationErrors.update((prev) => {
+            const next = { ...prev };
+            delete next[col.id];
+            return next;
+          });
+        }
+      } else {
+        this.newRowValidationErrors.update((prev) => {
+          const next = { ...prev };
+          delete next[col.id];
+          return next;
+        });
+      }
       if (domEl && domEl.isContentEditable && domEl.textContent !== trimmed) {
         domEl.textContent = trimmed;
       }
@@ -8150,44 +7923,25 @@ export class App implements OnInit, OnDestroy {
 
   private applyCellMutation(rowId: string, colId: string, rawInput: unknown): void {
     const col = this.columns().find((c) => c.id === colId);
-    const row = this.rows().find((r) => r.id === rowId);
-    if (!col || !row || col.isPrimaryKey || col.isIdentity) return;
+    if (!col || col.isPrimaryKey || col.isIdentity) return;
 
-    const validation = validateCellValue(this.getLiveLookupColumn(col), rawInput);
-    const prevVal = row.cells[col.name] !== undefined ? row.cells[col.name] : row.cells[col.id];
-    const wasCellAlreadyInvalid = this.isCellInvalid(rowId, colId);
-    if (prevVal === validation.normalizedValue && validation.valid && !wasCellAlreadyInvalid) {
+    if (rowId === this.newRowSentinelId) {
+      const domEl = this.isBrowser
+        ? (document.getElementById(`new-row-inline-input-${colId}`) as HTMLElement | null)
+        : null;
+      this.newRowLiveDraftMap.set(colId, String(rawInput ?? ''));
+      this.commitNewRowLiveCellDraft(colId, domEl);
       return;
     }
 
-    this.recordHistorySnapshot(`Edit "${col.name}"`);
+    const row = this.rows().find((r) => r.id === rowId);
+    if (!row) return;
 
-    const nowIso = new Date().toISOString();
-    const updatedRows = this.rows().map((r) => {
-      if (r.id === rowId) {
-        return {
-          ...r,
-          cells: {
-            ...r.cells,
-            [col.name]: validation.normalizedValue,
-            [col.id]: validation.normalizedValue,
-          },
-          updatedBy: this.currentUserName(),
-          updatedAt: nowIso,
-        };
-      }
-      return r;
-    });
-
-    this.rows.set(updatedRows);
-    this.formulaBarControl.setValue(String(validation.normalizedValue));
-
-    this.validateAndSyncRows(
-      [rowId],
-      [],
-      'Cell Updated',
-      `Set "${col.name}" to "${String(validation.normalizedValue)}"`
-    );
+    const domEl = this.isBrowser
+      ? (document.getElementById(`grid-cell-${rowId}-${colId}`) as HTMLElement | null)
+      : null;
+    this.liveCellDraftMap.delete(`${rowId}:${colId}`);
+    this.stageCellEditInRow(rowId, colId, rawInput, domEl);
   }
 
   /**
@@ -8251,6 +8005,7 @@ export class App implements OnInit, OnDestroy {
         if (!check.valid) {
           rowHasError = true;
           nextErrors[cellKey] = check.errorMessage;
+          this.clearCellFromRedisAndDbHighlight(cellKey);
           if (!firstErrorMsg) {
             firstErrorMsg = check.errorMessage;
           }
@@ -8321,6 +8076,43 @@ export class App implements OnInit, OnDestroy {
       nextPendingCols.clear();
       this.pendingUnsavedColIds.set(nextPendingCols);
 
+      const editableCols = cols.filter(
+        (c) => !c.isPrimaryKey && !c.isIdentity && c.colType !== 'formula'
+      );
+      const changedCellKeys: string[] = [];
+      const deltas: CellDeltaPayload[] = [];
+      const nowMs = Date.now();
+
+      for (const validRow of newlyValidatedRows) {
+        const prevSnap = this.lastValidRowSnapshots.get(validRow.id);
+        for (const col of editableCols) {
+          const nextVal =
+            validRow.cells[col.name] !== undefined
+              ? validRow.cells[col.name]
+              : validRow.cells[col.id];
+          const prevVal = prevSnap
+            ? prevSnap.cells[col.name] !== undefined
+              ? prevSnap.cells[col.name]
+              : prevSnap.cells[col.id]
+            : undefined;
+          if (!prevSnap || String(nextVal ?? '') !== String(prevVal ?? '')) {
+            changedCellKeys.push(`${validRow.id}:${col.id}`);
+            deltas.push({
+              mutationId: `mut_${nowMs.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
+              databaseName: this.activeDatabaseName(),
+              tableName: this.activeTableName(),
+              rowId: validRow.id,
+              columnId: col.id,
+              rawValue: nextVal === null || nextVal === undefined ? '' : String(nextVal),
+              userId: this.currentClientId(),
+              userName: this.currentUserName(),
+              userColor: this.currentUserColor(),
+              clientTimestampMs: nowMs,
+            });
+          }
+        }
+      }
+
       const isPureCellDeltaEdit =
         (actionType === 'Cell Updated' || actionType === 'Row Auto-Saved') &&
         colsToSync.length === 0 &&
@@ -8328,44 +8120,14 @@ export class App implements OnInit, OnDestroy {
         (!renamedColumns || renamedColumns.length === 0);
 
       if (isPureCellDeltaEdit) {
-        // Stream minute cell-level deltas via SignalR/WebSocket to the in-memory Redis Write-Behind Buffer
-        // instead of posting the entire table over HTTP on every cell edit
-        const deltas: CellDeltaPayload[] = [];
-        const editableCols = cols.filter((c) => !c.isPrimaryKey && !c.isIdentity && c.colType !== 'formula');
-        const nowMs = Date.now();
-        for (const validRow of newlyValidatedRows) {
-          const prevSnap = this.lastValidRowSnapshots.get(validRow.id);
-          for (const col of editableCols) {
-            const nextVal =
-              validRow.cells[col.name] !== undefined
-                ? validRow.cells[col.name]
-                : validRow.cells[col.id];
-            const prevVal = prevSnap
-              ? prevSnap.cells[col.name] !== undefined
-                ? prevSnap.cells[col.name]
-                : prevSnap.cells[col.id]
-              : undefined;
-            if (!prevSnap || String(nextVal ?? '') !== String(prevVal ?? '')) {
-              deltas.push({
-                mutationId: `mut_${nowMs.toString(36)}_${Math.random().toString(36).slice(2, 8)}`,
-                databaseName: this.activeDatabaseName(),
-                tableName: this.activeTableName(),
-                rowId: validRow.id,
-                columnId: col.id,
-                rawValue: nextVal === null || nextVal === undefined ? '' : String(nextVal),
-                userId: this.currentClientId(),
-                userName: this.currentUserName(),
-                userColor: this.currentUserColor(),
-                clientTimestampMs: nowMs,
-              });
-            }
-          }
-        }
-
         if (deltas.length === 0 && totalErrorCells === 0) {
           // No actual cell values changed compared to the last saved row snapshot:
           // do NOT store anything in Redis, do NOT trigger DB updates, and do NOT show a save banner.
           return;
+        }
+
+        if (changedCellKeys.length > 0) {
+          this.markCellsPendingInRedis(changedCellKeys);
         }
 
         this.syncLocalActiveTableIntoDatabasesTree();
@@ -8377,6 +8139,9 @@ export class App implements OnInit, OnDestroy {
           this.realtimeSync.queueCellMutationBatch(deltas);
         }
       } else {
+        if (changedCellKeys.length > 0) {
+          this.markCellsPendingInRedis(changedCellKeys);
+        }
         this.persistToCloud(
           actionType,
           actionDetail,
@@ -11573,8 +11338,24 @@ export class App implements OnInit, OnDestroy {
   }
 
   // =========================================================================
-  // VALIDATION STATE HELPERS FOR TEMPLATES
+  // VALIDATION & REDIS/DB HIGHLIGHT STATE HELPERS FOR TEMPLATES
   // =========================================================================
+
+  public switchSidebarTab(
+    tab: 'object_explorer' | 'server_explorer',
+    event?: Event
+  ): void {
+    event?.stopPropagation();
+    this.activeSidebarTab.set(tab);
+    if (!this.isManageSidebarOpen()) {
+      this.isManageSidebarOpen.set(true);
+      this.saveSidebarTreeStateToStorage();
+    }
+  }
+
+  public hasNewRowValidationErrors(): boolean {
+    return Object.keys(this.newRowValidationErrors()).length > 0;
+  }
 
   public isRowInvalid(rowId: string): boolean {
     return this.invalidRowIds().has(rowId);
@@ -11586,6 +11367,132 @@ export class App implements OnInit, OnDestroy {
 
   public getCellErrorMessage(rowId: string, colId: string): string {
     return this.cellValidationErrors()[`${rowId}:${colId}`] || '';
+  }
+
+  public isCellRedisPending(rowId: string, colId: string): boolean {
+    return Boolean(this.redisPendingCells()[`${rowId}:${colId}`]);
+  }
+
+  public isCellDbSaved(rowId: string, colId: string): boolean {
+    return Boolean(this.dbSavedGreenCells()[`${rowId}:${colId}`]);
+  }
+
+  private clearCellFromRedisAndDbHighlight(cellKey: string): void {
+    if (this.redisPendingCells()[cellKey]) {
+      this.redisPendingCells.update((prev) => {
+        const next = { ...prev };
+        delete next[cellKey];
+        return next;
+      });
+    }
+    if (this.dbSavedGreenCells()[cellKey]) {
+      this.dbSavedGreenCells.update((prev) => {
+        const next = { ...prev };
+        delete next[cellKey];
+        return next;
+      });
+    }
+    const existingTimer = this.dbSavedGreenTimers.get(cellKey);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      this.dbSavedGreenTimers.delete(cellKey);
+    }
+  }
+
+  public markCellsPendingInRedis(cellKeys: string[]): void {
+    if (!cellKeys || cellKeys.length === 0) return;
+    const now = Date.now();
+    this.redisPendingCells.update((prev) => {
+      const next = { ...prev };
+      for (const k of cellKeys) {
+        if (k && !this.cellValidationErrors()[k]) {
+          next[k] = now;
+        }
+      }
+      return next;
+    });
+    this.dbSavedGreenCells.update((prev) => {
+      const next = { ...prev };
+      for (const k of cellKeys) {
+        delete next[k];
+        const t = this.dbSavedGreenTimers.get(k);
+        if (t) {
+          clearTimeout(t);
+          this.dbSavedGreenTimers.delete(k);
+        }
+      }
+      return next;
+    });
+    this.scheduleRedisFlushVerification();
+  }
+
+  public transitionRedisCellsToDbSavedGreen(specificKeys?: string[]): void {
+    const pendingMap = this.redisPendingCells();
+    const keysToTransition =
+      specificKeys && specificKeys.length > 0
+        ? specificKeys.filter((k) => Boolean(pendingMap[k]))
+        : Object.keys(pendingMap);
+    if (keysToTransition.length === 0) return;
+
+    const now = Date.now();
+    this.redisPendingCells.update((prev) => {
+      const next = { ...prev };
+      for (const k of keysToTransition) {
+        delete next[k];
+      }
+      return next;
+    });
+
+    const validTransitionKeys = keysToTransition.filter(
+      (k) => !this.cellValidationErrors()[k]
+    );
+    if (validTransitionKeys.length === 0) return;
+
+    this.dbSavedGreenCells.update((prev) => {
+      const next = { ...prev };
+      for (const k of validTransitionKeys) {
+        next[k] = now;
+      }
+      return next;
+    });
+
+    if (this.isBrowser) {
+      for (const k of validTransitionKeys) {
+        const prevTimer = this.dbSavedGreenTimers.get(k);
+        if (prevTimer) {
+          clearTimeout(prevTimer);
+        }
+        const timer = setTimeout(() => {
+          this.dbSavedGreenTimers.delete(k);
+          this.dbSavedGreenCells.update((prev) => {
+            if (!prev[k]) return prev;
+            const next = { ...prev };
+            delete next[k];
+            return next;
+          });
+        }, 3000);
+        this.dbSavedGreenTimers.set(k, timer);
+      }
+    }
+  }
+
+  private scheduleRedisFlushVerification(): void {
+    if (!this.isBrowser) return;
+    if (this.redisFlushCheckTimer) {
+      clearTimeout(this.redisFlushCheckTimer);
+    }
+    this.redisFlushCheckTimer = setTimeout(async () => {
+      this.redisFlushCheckTimer = null;
+      if (Object.keys(this.redisPendingCells()).length === 0) {
+        return;
+      }
+      const status = await this.realtimeSync.triggerManualPostgresFlush();
+      if (!status || status.dirtyRowCount === 0) {
+        this.transitionRedisCellsToDbSavedGreen();
+      } else {
+        this.scheduleRedisFlushVerification();
+      }
+    }, 1300);
   }
 
   public getRowErrorSummary(rowId: string): string {
@@ -11759,7 +11666,7 @@ export class App implements OnInit, OnDestroy {
   public openGitHubModal(event?: Event): void {
     event?.stopPropagation();
     this.closeAllMenus();
-    this.activeModal.set('github_push');
+    this.switchSidebarTab('server_explorer');
     if (
       !this.githubAccessToken() &&
       !this.githubForm.getRawValue().manualToken.trim() &&
@@ -11807,7 +11714,10 @@ export class App implements OnInit, OnDestroy {
           const pollIntervalMs = Math.max(5, Number(res.interval || 5)) * 1000;
 
           this.githubPollTimer = setInterval(() => {
-            if (this.activeModal() !== 'github_push') {
+            if (
+              this.activeModal() !== 'github_push' &&
+              !(this.isManageSidebarOpen() && this.activeSidebarTab() === 'server_explorer')
+            ) {
               if (this.githubPollTimer) {
                 clearInterval(this.githubPollTimer);
                 this.githubPollTimer = null;
