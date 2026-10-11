@@ -5150,6 +5150,7 @@ export class App implements OnInit, OnDestroy {
 
   readonly activeRibbonTab = signal<'home' | 'rows' | 'columns' | 'database'>('home');
   readonly isRibbonCollapsed = signal<boolean>(false);
+  readonly isRibbonTextVisible = signal<boolean>(true);
   readonly isRibbonPasteMenuOpen = signal<boolean>(false);
 
   public setRibbonTab(
@@ -5169,6 +5170,11 @@ export class App implements OnInit, OnDestroy {
   public toggleRibbonCollapsed(event?: Event): void {
     event?.stopPropagation();
     this.isRibbonCollapsed.update((v) => !v);
+  }
+
+  public toggleRibbonTextMode(event?: Event): void {
+    event?.stopPropagation();
+    this.isRibbonTextVisible.update((v) => !v);
   }
 
   public toggleRibbonPasteMenu(event?: Event): void {

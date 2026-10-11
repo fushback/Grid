@@ -44,7 +44,7 @@
   <!-- COMPACT TOP HEADER ALIGNED WITH TOOLBAR & GRID DESIGN                 -->
   <!-- ===================================================================== -->
   <header class="gridario-compact-header shrink-0 z-40">
-    <!-- Left Hand Side: Compact Brand + Clear Sort/Filter -->
+    <!-- Left Hand Side: Compact Brand -->
     <div class="d-flex align-items-center gap-2 flex-wrap">
       <a
         href="/"
@@ -60,19 +60,6 @@
         </span>
         <span>Gridario</span>
       </a>
-
-      @if (sortRules().length > 0 || activeFilterCount() > 0 || globalSearchQuery().length > 0) {
-        <button
-          type="button"
-          (click)="clearAllFiltersAndSearch(); clearAllSorts()"
-          class="btn btn-sm btn-outline-danger py-0 px-1.5 d-inline-flex align-items-center gap-1 font-medium whitespace-nowrap"
-          style="height: 20px; font-size: 10.5px; line-height: 1"
-          data-office-tip="Clear Sort / Filter"
-        >
-          <mat-icon style="font-size: 13px; width: 13px; height: 13px">filter_alt_off</mat-icon>
-          <span>Clear Sort/Filter</span>
-        </button>
-      }
     </div>
 
     <!-- Right Hand Side: Compact Login + 24x24 Circular User Avatar -->
@@ -318,10 +305,11 @@
   <!-- ===================================================================== -->
   <section
     class="gridario-office-ribbon shrink-0"
+    [class.ribbon-icon-only]="!isRibbonTextVisible()"
     aria-label="Office & SQL Server Command Ribbon"
     (mouseleave)="clearActionTooltip()"
   >
-    <!-- RIBBON TOP TAB BAR (Submenu Categories + Active Context Badge + Collapse Toggle) -->
+    <!-- RIBBON TOP TAB BAR (Submenu Categories + Active Context Badge + Icon/Text Toggle + Collapse Toggle) -->
     <div class="gridario-ribbon-tab-bar">
       <div class="d-flex flex-nowrap align-items-center gap-0.5 shrink-0">
         <button
@@ -369,7 +357,7 @@
         </button>
       </div>
 
-      <!-- Right Side of Ribbon Tab Bar: Active Cell / Column Indicator & Collapse Button -->
+      <!-- Right Side of Ribbon Tab Bar: Active Cell Indicator + Icon/Text Toggle + Collapse Button -->
       <div class="d-flex align-items-center gap-1.5 pe-0.5 shrink-0">
         <div
           class="hidden sm:inline-flex align-items-center gap-1 px-2 py-0.5 rounded bg-white border border-slate-300 text-[10px] font-semibold text-slate-800"
@@ -387,6 +375,36 @@
             </span>
           }
         </div>
+
+        <!-- Toggle: Show Toolbar Header & Buttons with Icon + Text vs Icon Without Text -->
+        <button
+          type="button"
+          role="switch"
+          [attr.aria-checked]="isRibbonTextVisible()"
+          (click)="toggleRibbonTextMode($event)"
+          class="d-inline-flex align-items-center gap-1.5 px-2 py-0.5 rounded bg-white border border-slate-300 text-slate-800 cursor-pointer transition-all"
+          style="height: 22px; font-size: 10.5px"
+          [attr.data-office-tip]="isRibbonTextVisible() ? 'Toolbar Labels: Icon + Text (Click for Icon Only)' : 'Toolbar Labels: Icon Only (Click for Icon + Text)'"
+          aria-label="Toggle toolbar icon text labels"
+        >
+          <mat-icon
+            style="font-size: 13px; width: 13px; height: 13px; min-width: 13px; min-height: 13px; color: #4285F4"
+          >
+            {{ isRibbonTextVisible() ? 'text_fields' : 'apps' }}
+          </mat-icon>
+          <span class="font-semibold whitespace-nowrap">{{ isRibbonTextVisible() ? 'Icon + Text' : 'Icon Only' }}</span>
+          <span
+            class="gridario-theme-switch-btn"
+            style="width: 28px; height: 15px; padding: 1.5px"
+            [class.is-dark]="isRibbonTextVisible()"
+          >
+            <span
+              class="gridario-theme-switch-thumb"
+              style="width: 10px; height: 10px"
+              [style.transform]="isRibbonTextVisible() ? 'translateX(13px)' : 'translateX(0)'"
+            ></span>
+          </span>
+        </button>
 
         <button
           type="button"
@@ -1516,81 +1534,84 @@
         </div>
 
         @if (activeSidebarTab() === 'server_explorer') {
-          <!-- Server Explorer Tab Content (GitHub & Vercel Integrations) -->
-          <div class="manage-tree-scroll flex-grow-1 min-h-0 p-2.5 d-flex flex-column gap-2.5 bg-white text-slate-900">
-            <div class="d-flex align-items-center justify-content-between pb-1.5 border-b border-slate-200">
-              <div class="d-flex align-items-center gap-1.5 min-w-0">
-                <mat-icon style="color: #4285F4; font-size: 16px; width: 16px; height: 16px">cloud_upload</mat-icon>
-                <span class="font-bold text-xs text-slate-900 truncate">GitHub &amp; Vercel Hosting</span>
+          <!-- Server Explorer Tab Content (Redesigned Professional GitHub & Vercel Hosting) -->
+          <div class="manage-tree-scroll flex-grow-1 min-h-0 p-3 d-flex flex-column gap-3 bg-white text-slate-900">
+            <!-- Clean Executive Header -->
+            <div class="d-flex align-items-center justify-content-between pb-2 border-b border-slate-200">
+              <div class="d-flex flex-column min-w-0">
+                <span class="font-bold text-xs text-slate-900 truncate">Cloud Hosting &amp; Git Sync</span>
+                <span class="text-slate-500 font-mono-tabular truncate" style="font-size: 10.5px">
+                  fushback/Grid · Full-Stack SSR
+                </span>
               </div>
-              <span class="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 font-mono-tabular" style="font-size: 10px">
-                Git + Vercel
-              </span>
+              <a
+                href="https://github.com/fushback/Grid"
+                target="_blank"
+                rel="noopener noreferrer"
+                class="text-slate-600 hover:text-slate-900 d-inline-flex align-items-center gap-1 no-underline font-medium shrink-0"
+                style="font-size: 11px"
+                title="Open fushback/Grid on GitHub"
+              >
+                <span>Repo</span>
+                <mat-icon style="font-size: 13px; width: 13px; height: 13px">open_in_new</mat-icon>
+              </a>
             </div>
 
-            <form [formGroup]="githubForm" (ngSubmit)="createGitHubRepoAndUpload()" class="d-flex flex-column gap-2.5">
-              <!-- Option A: Direct 1-Click Vercel Deployment Card -->
-              <div class="p-2.5 bg-slate-900 text-white rounded-lg border border-slate-800">
-                <div class="d-flex align-items-center justify-content-between gap-1.5 mb-1.5 flex-wrap">
-                  <div class="text-xs font-bold d-flex align-items-center gap-1">
-                    <mat-icon class="text-emerald-400" style="font-size: 15px; width: 15px; height: 15px">rocket_launch</mat-icon>
-                    <span>Host on Vercel (1-Click Deploy)</span>
-                  </div>
-                  <a
-                    href="https://vercel.com/account/tokens"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    class="text-blue-300 underline no-underline hover:text-white"
-                    style="font-size: 10.5px"
-                  >
-                    Get Vercel Token ↗
-                  </a>
-                </div>
-                <div class="d-flex flex-column gap-1.5 mt-1.5">
-                  <input
-                    type="password"
-                    formControlName="vercelToken"
-                    placeholder="Paste Vercel Access Token..."
-                    class="form-control form-control-sm font-mono-tabular text-xs"
-                  />
-                  <button
-                    type="button"
-                    (click)="deployDirectlyToVercel()"
-                    [disabled]="vercelDeployStatus() === 'deploying'"
-                    class="btn btn-sm btn-success d-inline-flex align-items-center justify-content-center gap-1 text-xs font-semibold w-100"
-                  >
-                    <mat-icon style="font-size: 14px; width: 14px; height: 14px">bolt</mat-icon>
-                    <span>
-                      {{ vercelDeployStatus() === 'deploying' ? 'Deploying to Vercel...' : 'Deploy to Vercel Now' }}
-                    </span>
-                  </button>
-                </div>
-                @if (vercelDeploymentUrl()) {
-                  <div class="mt-2 pt-1.5 border-t border-slate-700 d-flex flex-column gap-0.5 text-xs">
-                    <span class="text-emerald-300 font-semibold" style="font-size: 10.5px">Live Vercel URL:</span>
+            <!-- Live Status / Action Feedback Banner -->
+            @if (githubStatusMessage()) {
+              <div
+                class="p-2.5 rounded border text-xs"
+                [class.bg-red-50]="githubAuthStatus() === 'error' || vercelDeployStatus() === 'error'"
+                [class.border-red-200]="githubAuthStatus() === 'error' || vercelDeployStatus() === 'error'"
+                [class.text-red-800]="githubAuthStatus() === 'error' || vercelDeployStatus() === 'error'"
+                [class.bg-emerald-50]="githubAuthStatus() === 'pushed' || githubAuthStatus() === 'authorized' || vercelDeployStatus() === 'deployed'"
+                [class.border-emerald-200]="githubAuthStatus() === 'pushed' || githubAuthStatus() === 'authorized' || vercelDeployStatus() === 'deployed'"
+                [class.text-emerald-800]="githubAuthStatus() === 'pushed' || githubAuthStatus() === 'authorized' || vercelDeployStatus() === 'deployed'"
+                [class.bg-blue-50]="githubAuthStatus() === 'awaiting_device' || githubAuthStatus() === 'pushing' || vercelDeployStatus() === 'deploying'"
+                [class.border-blue-200]="githubAuthStatus() === 'awaiting_device' || githubAuthStatus() === 'pushing' || vercelDeployStatus() === 'deploying'"
+                [class.text-blue-800]="githubAuthStatus() === 'awaiting_device' || githubAuthStatus() === 'pushing' || vercelDeployStatus() === 'deploying'"
+                style="font-size: 11px; line-height: 1.4"
+              >
+                <div class="font-medium break-words">{{ githubStatusMessage() }}</div>
+                @if (githubPushedRepoUrl()) {
+                  <div class="mt-2 pt-2 border-t border-slate-200/80 d-flex align-items-center gap-1.5 flex-wrap">
                     <a
-                      [href]="vercelDeploymentUrl()"
+                      [href]="githubPushedRepoUrl()"
                       target="_blank"
                       rel="noopener noreferrer"
-                      class="text-white font-bold underline d-inline-flex align-items-center gap-1 truncate"
-                      style="font-size: 11px"
+                      class="btn btn-sm btn-outline-dark d-inline-flex align-items-center justify-content-center gap-1 font-semibold no-underline py-1 px-2 flex-grow-1"
+                      style="font-size: 10.5px"
                     >
-                      <mat-icon style="font-size: 13px; width: 13px; height: 13px">open_in_new</mat-icon>
-                      <span class="truncate">{{ vercelDeploymentUrl() }}</span>
+                      <mat-icon style="font-size: 12px; width: 12px; height: 12px">open_in_new</mat-icon>
+                      <span>GitHub Repo</span>
                     </a>
+                    @if (vercelCloneUrl()) {
+                      <a
+                        [href]="vercelCloneUrl()"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        class="btn btn-sm btn-dark d-inline-flex align-items-center justify-content-center gap-1 font-semibold no-underline py-1 px-2 flex-grow-1"
+                        style="font-size: 10.5px"
+                      >
+                        <mat-icon style="font-size: 12px; width: 12px; height: 12px">rocket_launch</mat-icon>
+                        <span>Import to Vercel</span>
+                      </a>
+                    }
                   </div>
                 }
               </div>
+            }
 
-              <!-- Option B: Authorize GitHub & Commit to Repository -->
-              <div class="p-2.5 rounded border border-slate-300 bg-slate-50">
-                <div class="d-flex align-items-center justify-content-between gap-1.5 flex-wrap mb-1.5">
-                  <div class="text-xs font-bold text-slate-900 d-flex align-items-center gap-1">
-                    <mat-icon class="text-slate-700" style="font-size: 14px; width: 14px; height: 14px">verified_user</mat-icon>
-                    <span>GitHub Authorization</span>
+            <form [formGroup]="githubForm" (ngSubmit)="createGitHubRepoAndUpload()" class="d-flex flex-column gap-3">
+              <!-- SECTION 1: GitHub Source Control -->
+              <div class="p-2.5 rounded border border-slate-200 bg-white d-flex flex-column gap-2">
+                <div class="d-flex align-items-center justify-content-between gap-2 pb-1.5 border-b border-slate-100">
+                  <div class="d-flex align-items-center gap-1.5 min-w-0">
+                    <mat-icon class="text-slate-800" style="font-size: 15px; width: 15px; height: 15px">terminal</mat-icon>
+                    <span class="font-bold text-xs text-slate-900 truncate">01. GitHub Source Sync</span>
                   </div>
                   @if (githubAuthorizedUser()) {
-                    <span class="badge bg-emerald-600 text-white" style="font-size: 10px">
+                    <span class="text-emerald-700 font-mono-tabular font-semibold truncate" style="font-size: 10.5px">
                       &#64;{{ githubAuthorizedUser() }}
                     </span>
                   } @else {
@@ -1598,65 +1619,48 @@
                       type="button"
                       (click)="startGitHubDeviceAuth()"
                       [disabled]="githubAuthStatus() === 'awaiting_device' || githubAuthStatus() === 'pushing'"
-                      class="btn btn-dark btn-sm font-semibold d-inline-flex align-items-center gap-1 text-xs py-0.5 px-2"
+                      class="btn btn-outline-dark btn-sm font-semibold d-inline-flex align-items-center gap-1 py-0.5 px-2 whitespace-nowrap shrink-0"
+                      style="font-size: 10.5px; height: 22px"
                     >
-                      <mat-icon style="font-size: 13px; width: 13px; height: 13px">key</mat-icon>
-                      <span>{{ githubAuthStatus() === 'awaiting_device' ? 'Waiting...' : 'Authorize GitHub' }}</span>
+                      <mat-icon style="font-size: 12px; width: 12px; height: 12px">key</mat-icon>
+                      <span>{{ githubAuthStatus() === 'awaiting_device' ? 'Waiting...' : 'Connect OAuth' }}</span>
                     </button>
                   }
                 </div>
 
                 @if (githubAuthStatus() === 'awaiting_device' && githubUserCode()) {
-                  <div class="mt-2 p-2 rounded bg-white border border-blue-200 text-center">
-                    <div class="text-slate-500 font-semibold uppercase" style="font-size: 10px">
-                      One-Time GitHub Device Code
-                    </div>
-                    <div class="font-mono-tabular font-bold text-slate-900 my-1" style="font-size: 15px; letter-spacing: 2px">
-                      {{ githubUserCode() }}
-                    </div>
-                    <div class="d-flex align-items-center justify-content-center gap-1.5 flex-wrap mt-1">
+                  <div class="p-2 rounded bg-slate-50 border border-slate-200 d-flex flex-column gap-1.5">
+                    <div class="d-flex align-items-center justify-content-between">
+                      <span class="text-slate-500 font-medium" style="font-size: 10.5px">Device Verification Code</span>
                       <button
                         type="button"
                         (click)="copyGitHubUserCode()"
-                        class="btn btn-outline-dark btn-sm d-inline-flex align-items-center gap-1 py-0.5 px-2"
-                        style="font-size: 11px"
+                        class="btn btn-link p-0 text-slate-700 hover:text-slate-900 no-underline d-inline-flex align-items-center gap-0.5 font-semibold"
+                        style="font-size: 10.5px"
                       >
-                        <mat-icon style="font-size: 13px; width: 13px; height: 13px">content_copy</mat-icon>
+                        <mat-icon style="font-size: 12px; width: 12px; height: 12px">content_copy</mat-icon>
                         <span>Copy</span>
                       </button>
-                      <a
-                        [href]="githubVerificationUri()"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="btn btn-primary btn-sm d-inline-flex align-items-center gap-1 font-semibold py-0.5 px-2 no-underline"
-                        style="font-size: 11px"
-                      >
-                        <mat-icon style="font-size: 13px; width: 13px; height: 13px">open_in_new</mat-icon>
-                        <span>Open GitHub</span>
-                      </a>
                     </div>
+                    <div class="py-1 px-2 rounded bg-white border border-slate-200 text-center font-mono-tabular font-bold text-slate-900" style="font-size: 14px; letter-spacing: 0.12em">
+                      {{ githubUserCode() }}
+                    </div>
+                    <a
+                      [href]="githubVerificationUri()"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="btn btn-dark btn-sm d-inline-flex align-items-center justify-content-center gap-1 font-semibold py-1 px-2 no-underline w-100"
+                      style="font-size: 11px"
+                    >
+                      <mat-icon style="font-size: 13px; width: 13px; height: 13px">open_in_new</mat-icon>
+                      <span>Activate on GitHub</span>
+                    </a>
                   </div>
                 }
 
-                <div class="mt-2 pt-2 border-t border-slate-200">
-                  <label class="form-label text-slate-600 font-semibold mb-0.5" style="font-size: 10.5px" for="se-gh-manual-token">
-                    Or Personal Access Token (<code>repo</code> scope):
-                  </label>
-                  <input
-                    id="se-gh-manual-token"
-                    type="password"
-                    formControlName="manualToken"
-                    placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
-                    class="form-control form-control-sm font-mono-tabular text-xs"
-                  />
-                </div>
-              </div>
-
-              <!-- Repository & Commit Details -->
-              <div class="d-flex flex-column gap-2">
                 <div>
-                  <label for="se-gh-repo-name" class="form-label text-xs font-semibold text-slate-700 mb-0.5">
-                    GitHub Repository URL or Name *
+                  <label for="se-gh-repo-name" class="form-label text-slate-600 font-medium mb-0.5 d-block" style="font-size: 11px">
+                    Repository URL or Slug
                   </label>
                   <input
                     id="se-gh-repo-name"
@@ -1664,113 +1668,142 @@
                     formControlName="repoName"
                     placeholder="https://github.com/fushback/Grid.git"
                     class="form-control form-control-sm font-mono-tabular text-xs"
+                    style="height: 28px; font-size: 11px"
                   />
                 </div>
 
                 <div>
-                  <label for="se-gh-commit-msg" class="form-label text-xs font-semibold text-slate-700 mb-0.5">
-                    Git Commit Message *
+                  <label for="se-gh-commit-msg" class="form-label text-slate-600 font-medium mb-0.5 d-block" style="font-size: 11px">
+                    Commit Message
                   </label>
                   <input
                     id="se-gh-commit-msg"
                     type="text"
                     formControlName="commitMessage"
-                    placeholder="Commit Gridario full-stack application updates"
+                    placeholder="Sync full-stack workspace state"
                     class="form-control form-control-sm text-xs"
+                    style="height: 28px; font-size: 11px"
                   />
                 </div>
+
+                <div>
+                  <label for="se-gh-manual-token" class="form-label text-slate-500 font-medium mb-0.5 d-block" style="font-size: 10.5px">
+                    Personal Access Token <span class="text-slate-400">(optional if connected)</span>
+                  </label>
+                  <input
+                    id="se-gh-manual-token"
+                    type="password"
+                    formControlName="manualToken"
+                    placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+                    class="form-control form-control-sm font-mono-tabular text-xs"
+                    style="height: 28px; font-size: 11px"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  [disabled]="githubAuthStatus() === 'pushing'"
+                  class="btn btn-dark btn-sm font-semibold d-inline-flex align-items-center justify-content-center gap-1.5 w-100 mt-0.5"
+                  style="height: 30px; font-size: 11.5px"
+                >
+                  <mat-icon style="font-size: 14px; width: 14px; height: 14px">cloud_upload</mat-icon>
+                  <span>
+                    {{ githubAuthStatus() === 'pushing' ? 'Pushing to GitHub...' : 'Commit & Push to GitHub' }}
+                  </span>
+                </button>
               </div>
 
-              @if (githubStatusMessage()) {
-                <div
-                  class="p-2 rounded border text-xs font-medium"
-                  [class.bg-red-50]="githubAuthStatus() === 'error' || vercelDeployStatus() === 'error'"
-                  [class.border-red-200]="githubAuthStatus() === 'error' || vercelDeployStatus() === 'error'"
-                  [class.text-red-800]="githubAuthStatus() === 'error' || vercelDeployStatus() === 'error'"
-                  [class.bg-emerald-50]="githubAuthStatus() === 'pushed' || githubAuthStatus() === 'authorized' || vercelDeployStatus() === 'deployed'"
-                  [class.border-emerald-200]="githubAuthStatus() === 'pushed' || githubAuthStatus() === 'authorized' || vercelDeployStatus() === 'deployed'"
-                  [class.text-emerald-800]="githubAuthStatus() === 'pushed' || githubAuthStatus() === 'authorized' || vercelDeployStatus() === 'deployed'"
-                  [class.bg-blue-50]="githubAuthStatus() === 'awaiting_device' || githubAuthStatus() === 'pushing' || vercelDeployStatus() === 'deploying'"
-                  [class.border-blue-200]="githubAuthStatus() === 'awaiting_device' || githubAuthStatus() === 'pushing' || vercelDeployStatus() === 'deploying'"
-                  [class.text-blue-800]="githubAuthStatus() === 'awaiting_device' || githubAuthStatus() === 'pushing' || vercelDeployStatus() === 'deploying'"
-                  style="font-size: 11px"
-                >
-                  <div class="break-words">{{ githubStatusMessage() }}</div>
-                  @if (githubPushedRepoUrl()) {
-                    <div class="mt-1.5 d-flex flex-column gap-1">
-                      <a
-                        [href]="githubPushedRepoUrl()"
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        class="btn btn-sm btn-outline-dark d-inline-flex align-items-center justify-content-center gap-1 text-xs font-semibold no-underline py-0.5 px-2"
-                      >
-                        <mat-icon style="font-size: 13px; width: 13px; height: 13px">open_in_new</mat-icon>
-                        <span>Open GitHub Repo</span>
-                      </a>
-                      @if (vercelCloneUrl()) {
-                        <a
-                          [href]="vercelCloneUrl()"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          class="btn btn-sm btn-dark d-inline-flex align-items-center justify-content-center gap-1 text-xs font-semibold no-underline py-0.5 px-2"
-                        >
-                          <mat-icon style="font-size: 13px; width: 13px; height: 13px">rocket_launch</mat-icon>
-                          <span>1-Click Host on Vercel</span>
-                        </a>
-                      }
-                    </div>
-                  }
+              <!-- SECTION 2: Vercel Production Hosting -->
+              <div class="p-2.5 rounded border border-slate-200 bg-white d-flex flex-column gap-2">
+                <div class="d-flex align-items-center justify-content-between gap-2 pb-1.5 border-b border-slate-100">
+                  <div class="d-flex align-items-center gap-1.5 min-w-0">
+                    <mat-icon class="text-blue-600" style="font-size: 15px; width: 15px; height: 15px">rocket_launch</mat-icon>
+                    <span class="font-bold text-xs text-slate-900 truncate">02. Vercel Cloud Deploy</span>
+                  </div>
+                  <a
+                    href="https://vercel.com/account/tokens"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    class="text-blue-600 hover:text-blue-800 no-underline font-medium whitespace-nowrap shrink-0 d-inline-flex align-items-center gap-0.5"
+                    style="font-size: 10.5px"
+                  >
+                    <span>Get Token</span>
+                    <mat-icon style="font-size: 11px; width: 11px; height: 11px">open_in_new</mat-icon>
+                  </a>
                 </div>
-              }
 
-              <button
-                type="submit"
-                [disabled]="githubAuthStatus() === 'pushing'"
-                class="btn btn-primary btn-sm font-semibold d-inline-flex align-items-center justify-content-center gap-1.5 w-100"
-              >
-                <mat-icon style="font-size: 15px; width: 15px; height: 15px">cloud_upload</mat-icon>
-                <span>
-                  {{
-                    githubAuthStatus() === 'pushing'
-                      ? 'Committing to GitHub...'
-                      : 'Commit & Push to GitHub'
-                  }}
-                </span>
-              </button>
+                <div>
+                  <label for="se-vercel-token" class="form-label text-slate-600 font-medium mb-0.5 d-block" style="font-size: 11px">
+                    Vercel Access Token
+                  </label>
+                  <input
+                    id="se-vercel-token"
+                    type="password"
+                    formControlName="vercelToken"
+                    placeholder="Paste token from vercel.com/account/tokens"
+                    class="form-control form-control-sm font-mono-tabular text-xs"
+                    style="height: 28px; font-size: 11px"
+                  />
+                </div>
 
-              <button
-                type="button"
-                (click)="openVersionControlModal($event)"
-                class="w-100 btn btn-sm btn-outline-primary d-flex align-items-center justify-content-between text-xs font-semibold mt-1"
-              >
-                <span class="d-inline-flex align-items-center gap-1.5">
-                  <mat-icon style="font-size: 14px; width: 14px; height: 14px">history</mat-icon>
-                  <span>Version Control &amp; Snapshots</span>
-                </span>
-                <span class="px-1.5 py-0.5 rounded bg-blue-100 text-blue-800 font-mono-tabular" style="font-size: 10px">
-                  {{ versions().length }} saved
-                </span>
-              </button>
+                <button
+                  type="button"
+                  (click)="deployDirectlyToVercel()"
+                  [disabled]="vercelDeployStatus() === 'deploying'"
+                  class="btn btn-primary btn-sm font-semibold d-inline-flex align-items-center justify-content-center gap-1.5 w-100 mt-0.5"
+                  style="height: 30px; font-size: 11.5px"
+                >
+                  <mat-icon style="font-size: 14px; width: 14px; height: 14px">bolt</mat-icon>
+                  <span>
+                    {{ vercelDeployStatus() === 'deploying' ? 'Deploying to Vercel...' : 'Deploy to Production' }}
+                  </span>
+                </button>
 
-              <div class="d-flex align-items-center justify-content-between gap-1.5 pt-1 border-t border-slate-200">
-                <a
-                  href="https://github.com/fushback/Grid"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center justify-content-center gap-1 text-xs flex-grow-1 no-underline py-1"
+                @if (vercelDeploymentUrl()) {
+                  <div class="pt-1.5 border-t border-slate-100 d-flex align-items-center justify-content-between gap-2">
+                    <span class="text-emerald-700 font-semibold whitespace-nowrap" style="font-size: 10.5px">Live URL</span>
+                    <a
+                      [href]="vercelDeploymentUrl()"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      class="text-slate-900 font-mono-tabular font-semibold underline d-inline-flex align-items-center gap-1 truncate"
+                      style="font-size: 11px"
+                    >
+                      <span class="truncate">{{ vercelDeploymentUrl() }}</span>
+                      <mat-icon style="font-size: 12px; width: 12px; height: 12px">open_in_new</mat-icon>
+                    </a>
+                  </div>
+                }
+              </div>
+
+              <!-- SECTION 3: Snapshots & Source Archive -->
+              <div class="pt-1 d-flex flex-column gap-1.5">
+                <button
+                  type="button"
+                  (click)="openVersionControlModal($event)"
+                  class="w-100 btn btn-sm btn-outline-secondary d-flex align-items-center justify-content-between text-slate-800 font-medium py-1.5 px-2.5"
                   style="font-size: 11px"
                 >
-                  <mat-icon style="font-size: 13px; width: 13px; height: 13px">open_in_new</mat-icon>
-                  <span>fushback/Grid</span>
-                </a>
+                  <span class="d-inline-flex align-items-center gap-1.5">
+                    <mat-icon style="font-size: 14px; width: 14px; height: 14px">history</mat-icon>
+                    <span>Version Control Snapshots</span>
+                  </span>
+                  <span class="text-slate-500 font-mono-tabular" style="font-size: 10.5px">
+                    {{ versions().length }} saved
+                  </span>
+                </button>
+
                 <a
                   href="/api/download-project"
                   download="gridpulse-complete-project.tar.gz"
-                  class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center justify-content-center gap-1 text-xs flex-grow-1 no-underline py-1"
+                  class="w-100 btn btn-sm btn-outline-secondary d-flex align-items-center justify-content-between text-slate-800 font-medium no-underline py-1.5 px-2.5"
                   style="font-size: 11px"
                 >
-                  <mat-icon style="font-size: 13px; width: 13px; height: 13px">folder_zip</mat-icon>
-                  <span>Download .tar.gz</span>
+                  <span class="d-inline-flex align-items-center gap-1.5">
+                    <mat-icon style="font-size: 14px; width: 14px; height: 14px">folder_zip</mat-icon>
+                    <span>Download Project Archive</span>
+                  </span>
+                  <span class="text-slate-500 font-mono-tabular" style="font-size: 10.5px">.tar.gz</span>
                 </a>
               </div>
             </form>
@@ -2019,7 +2052,7 @@
               </div>
             </th>
 
-            <!-- Row Index # Header -->
+            <!-- Row Index # Header with Clear Filter/Sort Button -->
             <th
               class="sticky-col-index text-center font-mono-tabular align-middle cursor-pointer"
               (contextmenu)="onContextMenu($event, 'table', null, null)"
@@ -2027,8 +2060,23 @@
               (touchend)="onTouchEndOrMove()"
               (touchmove)="onTouchEndOrMove()"
             >
-              <div class="d-flex align-items-center justify-content-center px-2 py-2 text-slate-500">
-                <span>#</span>
+              <div class="d-flex flex-column align-items-center justify-content-center px-1 py-1 gap-1 text-slate-500">
+                <span class="font-bold leading-none" style="font-size: 11px">#</span>
+                <button
+                  type="button"
+                  (click)="clearAllFiltersAndSearch(); clearAllSorts(); $event.stopPropagation()"
+                  [disabled]="sortRules().length === 0 && activeFilterCount() === 0 && globalSearchQuery().length === 0"
+                  [class.btn-danger]="sortRules().length > 0 || activeFilterCount() > 0 || globalSearchQuery().length > 0"
+                  [class.text-white]="sortRules().length > 0 || activeFilterCount() > 0 || globalSearchQuery().length > 0"
+                  [class.btn-outline-secondary]="sortRules().length === 0 && activeFilterCount() === 0 && globalSearchQuery().length === 0"
+                  class="btn btn-sm p-0 d-inline-flex align-items-center justify-content-center gap-0.5 font-semibold whitespace-nowrap"
+                  style="height: 18px; width: 44px; font-size: 9px; line-height: 1"
+                  data-office-tip="Clear Sort / Filter"
+                  title="Clear Sort / Filter"
+                >
+                  <mat-icon style="font-size: 11px; width: 11px; height: 11px">filter_alt_off</mat-icon>
+                  <span>Clear</span>
+                </button>
               </div>
             </th>
 

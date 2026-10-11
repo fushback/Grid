@@ -5,7 +5,7 @@ import { GridRealtimeSyncService } from './grid-realtime-sync';
 /**
  * Unified service managing the lifecycle of cell status highlights:
  * 1. Yellow (.cell-redis-pending): Cell data changed and pushed to Redis write-behind buffer, not yet saved in PostgreSQL.
- * 2. Green (.cell-db-saved): Cell data flushed from Redis and saved in PostgreSQL; highlighted green for 3 seconds, then automatically cleared.
+ * 2. Green (.cell-db-saved): Cell data flushed from Redis and saved in PostgreSQL; highlighted green for 5 seconds, then automatically cleared.
  */
 @Injectable({
   providedIn: 'root',
@@ -16,15 +16,15 @@ export class CellHighlightState implements OnDestroy {
   private readonly isBrowser = isPlatformBrowser(this.platformId);
 
   /** Duration (in ms) that a cell remains highlighted green after being saved to PostgreSQL. */
-  public readonly greenHighlightDurationMs = 3000;
+  public readonly greenHighlightDurationMs = 5000;
 
   /** Map of `${rowId}:${colId}` -> timestamp when marked pending in Redis (Yellow highlight). */
   public readonly redisPendingCells = signal<Record<string, number>>({});
 
-  /** Map of `${rowId}:${colId}` -> timestamp when saved in PostgreSQL (Green highlight for 3s). */
+  /** Map of `${rowId}:${colId}` -> timestamp when saved in PostgreSQL (Green highlight for 5s). */
   public readonly dbSavedGreenCells = signal<Record<string, number>>({});
 
-  /** Per-cell 3-second cleanup timers keyed by `${rowId}:${colId}`. */
+  /** Per-cell 5-second cleanup timers keyed by `${rowId}:${colId}`. */
   private readonly greenHighlightTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
   /** Central timer that verifies/flushes the Redis write-behind buffer into PostgreSQL. */
@@ -38,7 +38,7 @@ export class CellHighlightState implements OnDestroy {
   }
 
   /**
-   * Returns true if the given cell was recently saved to PostgreSQL and is within its 3-second Green highlight window.
+   * Returns true if the given cell was recently saved to PostgreSQL and is within its 5-second Green highlight window.
    */
   public isCellDbSaved(rowId: string, colId: string): boolean {
     return Boolean(this.dbSavedGreenCells()[`${rowId}:${colId}`]);
