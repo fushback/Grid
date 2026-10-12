@@ -100,7 +100,10 @@ mat-icon.text-amber-800 {
 
 mat-icon.text-red-600,
 mat-icon.text-red-700,
-mat-icon.text-red-800 {
+mat-icon.text-red-800,
+.text-red-600 mat-icon,
+.text-red-700 mat-icon,
+.text-red-800 mat-icon {
   color: #EA4335 !important;
 }
 
@@ -112,9 +115,12 @@ mat-icon.text-purple-700 {
 /* Icons inside solid buttons use #FBBC05 (Yellow) so they are never white or black */
 .btn-primary mat-icon,
 .btn-dark mat-icon,
-.btn-success mat-icon,
-.btn-danger mat-icon {
+.btn-success mat-icon {
   color: #FBBC05 !important;
+}
+
+.btn-danger mat-icon {
+  color: #EA4335 !important;
 }
 
 /* Icons inside outline buttons use semantic #4285F4 / #EA4335 / #34A853 and #FBBC05 on hover */
@@ -130,12 +136,9 @@ mat-icon.text-purple-700 {
   color: #FBBC05 !important;
 }
 
-.btn-outline-danger mat-icon {
-  color: #EA4335 !important;
-}
-
+.btn-outline-danger mat-icon,
 .btn-outline-danger:hover mat-icon {
-  color: #FBBC05 !important;
+  color: #EA4335 !important;
 }
 
 /* Primary Buttons (#4285F4 with White #FFFFFF text) */
@@ -1252,10 +1255,18 @@ mat-icon.text-purple-700 {
   overflow: visible !important;
 }
 
-.ssms-toolbar-btn:hover {
+.ssms-toolbar-btn:hover:not(:disabled) {
   background-color: rgba(66, 133, 244, 0.14);
   border-color: #4285F4;
   color: #4285F4;
+}
+
+.ssms-toolbar-btn:disabled,
+.ssms-toolbar-btn[disabled] {
+  opacity: 0.35 !important;
+  cursor: not-allowed !important;
+  background-color: transparent !important;
+  border-color: transparent !important;
 }
 
 .ssms-db-selector {
@@ -1323,34 +1334,65 @@ mat-icon.text-purple-700 {
   border-radius: 3px;
 }
 
-/* SSMS Square [+] / [-] Expander Box */
+/* SSMS Square [+] / [-] Expander Box & Loader */
 .ssms-expander {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 16px;
-  height: 16px;
-  min-width: 16px;
-  min-height: 16px;
-  border: 1px solid #000000;
-  background-color: #FFFFFF;
-  color: #000000;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
+  border: 1px solid #000000 !important;
+  background-color: #FFFFFF !important;
+  color: #000000 !important;
   font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: 700;
-  line-height: 1;
-  border-radius: 3px;
-  padding: 0;
+  font-size: 12px !important;
+  font-weight: 700 !important;
+  line-height: 1 !important;
+  border-radius: 0px !important;
+  padding: 0 !important;
   margin-right: 2px;
   cursor: pointer;
   user-select: none;
   flex-shrink: 0;
 }
 
-.ssms-expander:hover {
-  border-color: #4285F4;
-  background-color: #4285F4;
-  color: #FFFFFF;
+.ssms-expander:hover:not(.ssms-expander-loading) {
+  border-color: #4285F4 !important;
+  background-color: #4285F4 !important;
+  color: #FFFFFF !important;
+}
+
+.ssms-expander.ssms-expander-loading,
+.ssms-expander.ssms-expander-loading:hover {
+  border-color: transparent !important;
+  background: transparent !important;
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+
+.ssms-expander-loader {
+  display: inline-block !important;
+  width: 14px !important;
+  height: 14px !important;
+  min-width: 14px !important;
+  min-height: 14px !important;
+  border: none !important;
+  background: transparent !important;
+  color: #4285F4 !important;
+  animation: ssms-expander-spin 0.65s linear infinite !important;
+  flex-shrink: 0 !important;
+}
+
+.ssms-expander-loader path {
+  stroke: #4285F4 !important;
+}
+
+@keyframes ssms-expander-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 /* SSMS Dotted Hierarchy Guide Lines */
@@ -1493,7 +1535,7 @@ mat-icon.text-purple-700 {
 .excel-col-resize-handle {
   position: absolute;
   top: 0;
-  right: -3px;
+  right: 0;
   bottom: 0;
   width: 7px;
   cursor: col-resize;
@@ -1514,10 +1556,11 @@ mat-icon.text-purple-700 {
   position: absolute;
   top: 22%;
   bottom: 22%;
-  left: 3px;
-  width: 1px;
-  background-color: rgba(66, 133, 244, 0.45);
+  right: 2px;
+  width: 1.5px;
+  background-color: #000000;
 }
+
 
 /* ========================================================================= */
 /* SMART OVERFLOW HOVER TOOLTIP (SHOWN ONLY WHEN TEXT IS TRUNCATED/CLIPPED)  */
@@ -1665,12 +1708,37 @@ mat-icon.text-purple-700 {
 }
 
 [data-theme='classic-dark'] .ssms-expander {
+  background: #000000 !important;
+  background-color: #000000 !important;
+  color: #FFFFFF !important;
+  border: 1px solid #FFFFFF !important;
+  border-color: #FFFFFF !important;
+  border-radius: 0px !important;
+  box-shadow: none !important;
+}
+
+[data-theme='classic-dark'] .ssms-expander:hover:not(.ssms-expander-loading) {
+  border-color: #4285F4 !important;
+  background-color: #4285F4 !important;
+  color: #FFFFFF !important;
+}
+
+[data-theme='classic-dark'] .ssms-expander.ssms-expander-loading,
+[data-theme='classic-dark'] .ssms-expander.ssms-expander-loading:hover {
+  border-color: transparent !important;
   background: transparent !important;
   background-color: transparent !important;
-  color: #FFFFFF !important;
-  border: none !important;
-  border-color: transparent !important;
   box-shadow: none !important;
+}
+
+[data-theme='classic-dark'] .ssms-expander-loader {
+  border: none !important;
+  background: transparent !important;
+  color: #4285F4 !important;
+}
+
+[data-theme='classic-dark'] .ssms-expander-loader path {
+  stroke: #4285F4 !important;
 }
 
 [data-theme='classic-dark'] .table,

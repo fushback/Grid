@@ -116,6 +116,32 @@ $cell-error-bg: #fca5a5;
         z-index: 12;
         position: relative;
       }
+
+      &.cell-redis-pending {
+        background: rgba(251, 188, 5, 0.34) !important;
+        background-color: rgba(251, 188, 5, 0.34) !important;
+        box-shadow: inset 0 0 0 2px #FBBC05 !important;
+        z-index: 11;
+        position: relative;
+
+        input[type="checkbox"].form-check-input {
+          box-shadow: 0 0 0 2px #FBBC05 !important;
+          border-color: #FBBC05 !important;
+        }
+      }
+
+      &.cell-db-saved {
+        background: rgba(52, 168, 83, 0.28) !important;
+        background-color: rgba(52, 168, 83, 0.28) !important;
+        box-shadow: inset 0 0 0 2px #34A853 !important;
+        z-index: 11;
+        position: relative;
+
+        input[type="checkbox"].form-check-input {
+          box-shadow: 0 0 0 2px #34A853 !important;
+          border-color: #34A853 !important;
+        }
+      }
     }
 
     tr {

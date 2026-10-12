@@ -504,14 +504,52 @@ interface ServerActivity {
   timestamp: string;
 }
 
+interface RolePermissionConfig {
+  id: string;
+  roleName: string;
+  description: string;
+  canCreate: boolean;
+  canRead: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+  isSystemRole: boolean;
+  createdAt: string;
+}
+
+interface OAuthTokenRecord {
+  id: string;
+  userId: string;
+  identifier: string;
+  accessToken: string;
+  refreshToken: string;
+  grantType: string;
+  scope: string;
+  expiresAt: string;
+  issuedAt: string;
+}
+
 interface ServerUser {
   id: string;
+  identifier?: string;
   email: string;
+  phoneNumber?: string;
   passwordHash: string;
+  currentOtp?: string;
+  otpDeliveryChannel?: 'email' | 'sms_whatsapp';
+  otpExpiresAt?: string;
   displayName: string;
   role: string;
   color: string;
+  isReviewedByAdmin?: boolean;
+  hasAllDatabaseAccess?: boolean;
+  canCreate?: boolean;
+  canRead?: boolean;
+  canUpdate?: boolean;
+  canDelete?: boolean;
+  databasePermissions?: Record<string, boolean>;
+  tablePermissions?: Record<string, Record<string, boolean>>;
   createdAt: string;
+  lastLoginAt?: string;
 }
 
 interface ServerVersionCommit {
@@ -580,6 +618,8 @@ interface CloudWorkspaceState {
   presence: Record<string, ServerPresence>;
   activities: ServerActivity[];
   users?: ServerUser[];
+  roles?: RolePermissionConfig[];
+  oauthTokens?: OAuthTokenRecord[];
   sessions?: Record<string, string>;
   versions?: ServerVersionCommit[];
 }
@@ -818,6 +858,7 @@ function ensurePrimaryKeyIdentityColumn(columns: ServerColumn[]): ServerColumn[]
     formula: '',
     optionsCsv: '',
   };
+
   const nonPkCols = columns.filter(
     (c) =>
       c !== existingPk &&
@@ -826,6 +867,7 @@ function ensurePrimaryKeyIdentityColumn(columns: ServerColumn[]): ServerColumn[]
       c.id.toLowerCase() !== pkName.toLowerCase() &&
       c.name.toLowerCase() !== pkName.toLowerCase()
   );
+
   return [
     pkCol,
     ...nonPkCols.map((c, idx) => ({
@@ -1013,25 +1055,133 @@ function sanitizeRowsAgainstSchema(columns: ServerColumn[], rows: ServerRow[]): 
   });
 }
 
+function buildDefaultRoles(): RolePermissionConfig[] {
+  const nowIso = new Date().toISOString();
+  return [
+    {
+      id: 'role_admin',
+      roleName: 'Admin',
+      description: 'Full administrative access to all databases, tables, CRUD actions, and Admin Panel',
+      canCreate: true,
+      canRead: true,
+      canUpdate: true,
+      canDelete: true,
+      isSystemRole: true,
+      createdAt: nowIso,
+    },
+    {
+      id: 'role_basic',
+      roleName: 'Basic',
+      description: 'Default role assigned to new users — View-Only (Read) permission on permitted databases/tables',
+      canCreate: false,
+      canRead: true,
+      canUpdate: false,
+      canDelete: false,
+      isSystemRole: true,
+      createdAt: nowIso,
+    },
+    {
+      id: 'role_contributor',
+      roleName: 'Contributor',
+      description: 'Read and Write (Update) existing records without creating or deleting objects',
+      canCreate: false,
+      canRead: true,
+      canUpdate: true,
+      canDelete: false,
+      isSystemRole: true,
+      createdAt: nowIso,
+    },
+    {
+      id: 'role_editor',
+      roleName: 'Editor',
+      description: 'Create, Read, and Write (Update) permissions without Delete access',
+      canCreate: true,
+      canRead: true,
+      canUpdate: true,
+      canDelete: false,
+      isSystemRole: true,
+      createdAt: nowIso,
+    },
+    {
+      id: 'role_full_crud',
+      roleName: 'Full CRUD',
+      description: 'Create, Read, Write (Update), and Delete permissions on permitted databases and tables',
+      canCreate: true,
+      canRead: true,
+      canUpdate: true,
+      canDelete: true,
+      isSystemRole: true,
+      createdAt: nowIso,
+    },
+  ];
+}
+
 function buildDefaultUsers(): ServerUser[] {
   const nowIso = new Date().toISOString();
   return [
     {
-      id: 'usr_pg_1',
-      email: 'alex.rivera@gridpulse.io',
-      passwordHash: 'GridPulse@2026',
-      displayName: 'Alex Rivera',
-      role: 'Workspace Admin',
-      color: '#ca8a04',
+      id: 'usr_sys_admin',
+      identifier: 'admin@gridario.io',
+      email: 'admin@gridario.io',
+      phoneNumber: '+15550109999',
+      passwordHash: '1234',
+      currentOtp: '1234',
+      otpDeliveryChannel: 'email',
+      displayName: 'System Admin',
+      role: 'Admin',
+      color: '#4285F4',
+      isReviewedByAdmin: true,
+      hasAllDatabaseAccess: true,
+      canCreate: true,
+      canRead: true,
+      canUpdate: true,
+      canDelete: true,
+      databasePermissions: {},
+      tablePermissions: {},
       createdAt: nowIso,
+      lastLoginAt: nowIso,
+    },
+    {
+      id: 'usr_pg_1',
+      identifier: 'alex.rivera@gridpulse.io',
+      email: 'alex.rivera@gridpulse.io',
+      phoneNumber: '+15550108888',
+      passwordHash: '1234',
+      currentOtp: '1234',
+      otpDeliveryChannel: 'email',
+      displayName: 'Alex Rivera',
+      role: 'Admin',
+      color: '#4285F4',
+      isReviewedByAdmin: true,
+      hasAllDatabaseAccess: true,
+      canCreate: true,
+      canRead: true,
+      canUpdate: true,
+      canDelete: true,
+      databasePermissions: {},
+      tablePermissions: {},
+      createdAt: nowIso,
+      lastLoginAt: nowIso,
     },
     {
       id: 'usr_pg_2',
+      identifier: 'elena.rostova@gridpulse.io',
       email: 'elena.rostova@gridpulse.io',
-      passwordHash: 'GridPulse@2026',
+      phoneNumber: '+15550107777',
+      passwordHash: '4829',
+      currentOtp: '4829',
+      otpDeliveryChannel: 'email',
       displayName: 'Elena Rostova',
-      role: 'Operations Lead',
-      color: '#059669',
+      role: 'Basic',
+      color: '#34A853',
+      isReviewedByAdmin: false,
+      hasAllDatabaseAccess: false,
+      canCreate: false,
+      canRead: true,
+      canUpdate: false,
+      canDelete: false,
+      databasePermissions: {},
+      tablePermissions: {},
       createdAt: nowIso,
     },
   ];
@@ -2453,6 +2603,485 @@ function normalizeServerTable(t: ServerTable): ServerTable {
   return t;
 }
 
+function resolveRolePermissions(
+  roleName: string,
+  roles: RolePermissionConfig[]
+): { canCreate: boolean; canRead: boolean; canUpdate: boolean; canDelete: boolean } {
+  const clean = (roleName || '').trim().toLowerCase();
+  if (clean === 'admin' || clean === 'workspace admin') {
+    return { canCreate: true, canRead: true, canUpdate: true, canDelete: true };
+  }
+  const matched = roles.find((r) => r.roleName.trim().toLowerCase() === clean);
+  if (matched) {
+    return {
+      canCreate: Boolean(matched.canCreate),
+      canRead: Boolean(matched.canRead),
+      canUpdate: Boolean(matched.canUpdate),
+      canDelete: Boolean(matched.canDelete),
+    };
+  }
+  // Default Basic role: view-only (Read = true, Create/Update/Delete = false)
+  return { canCreate: false, canRead: true, canUpdate: false, canDelete: false };
+}
+
+function normalizeServerUsersAndRoles(state: CloudWorkspaceState): void {
+  if (!Array.isArray(state.roles) || state.roles.length === 0) {
+    state.roles = buildDefaultRoles();
+  } else {
+    const defaultRoles = buildDefaultRoles();
+    for (const defRole of defaultRoles) {
+      if (
+        !state.roles.some(
+          (r) => r.roleName.trim().toLowerCase() === defRole.roleName.toLowerCase()
+        )
+      ) {
+        state.roles.push(defRole);
+      }
+    }
+  }
+
+  if (!Array.isArray(state.users) || state.users.length === 0) {
+    state.users = buildDefaultUsers();
+  }
+
+  // Ensure Default Admin ('admin@gridario.io') always exists with Admin role and full access
+  const hasSysAdmin = state.users.some(
+    (u) =>
+      (u.email || '').toLowerCase() === 'admin@gridario.io' ||
+      (u.identifier || '').toLowerCase() === 'admin@gridario.io'
+  );
+  if (!hasSysAdmin) {
+    state.users.unshift(buildDefaultUsers()[0]);
+  }
+
+  if (!Array.isArray(state.oauthTokens)) {
+    state.oauthTokens = [];
+  }
+
+  const allDbs = (state.databases || []).filter(
+    (d) => d.databaseName.toLowerCase() !== 'systemdatabase'
+  );
+
+  for (const u of state.users) {
+    if (!u.identifier) {
+      u.identifier = u.email || u.phoneNumber || u.id;
+    }
+    if (
+      u.role === 'Workspace Admin' ||
+      (u.email || '').toLowerCase() === 'admin@gridario.io' ||
+      (u.email || '').toLowerCase() === 'alex.rivera@gridpulse.io'
+    ) {
+      u.role = 'Admin';
+    } else if (!u.role || u.role === 'Operations Lead') {
+      u.role = 'Basic';
+    }
+
+    const isAdmin = u.role.trim().toLowerCase() === 'admin';
+    const rolePerms = resolveRolePermissions(u.role, state.roles);
+
+    if (isAdmin) {
+      u.isReviewedByAdmin = true;
+      u.hasAllDatabaseAccess = true;
+      u.canCreate = true;
+      u.canRead = true;
+      u.canUpdate = true;
+      u.canDelete = true;
+    } else {
+      u.isReviewedByAdmin = Boolean(u.isReviewedByAdmin);
+      u.hasAllDatabaseAccess = Boolean(u.hasAllDatabaseAccess);
+      u.canCreate = u.canCreate !== undefined ? Boolean(u.canCreate) : rolePerms.canCreate;
+      u.canRead = u.canRead !== undefined ? Boolean(u.canRead) : rolePerms.canRead;
+      u.canUpdate = u.canUpdate !== undefined ? Boolean(u.canUpdate) : rolePerms.canUpdate;
+      u.canDelete = u.canDelete !== undefined ? Boolean(u.canDelete) : rolePerms.canDelete;
+    }
+
+    if (!u.currentOtp) {
+      u.currentOtp = /^\d{4}$/.test(u.passwordHash || '') ? u.passwordHash : '1234';
+      u.passwordHash = u.currentOtp;
+    }
+
+    if (!u.databasePermissions || typeof u.databasePermissions !== 'object') {
+      u.databasePermissions = {};
+    }
+    if (!u.tablePermissions || typeof u.tablePermissions !== 'object') {
+      u.tablePermissions = {};
+    }
+
+    for (const db of allDbs) {
+      const dbName = db.databaseName;
+      const existingDbPerm =
+        u.databasePermissions[dbName] ??
+        u.databasePermissions[dbName.toLowerCase()];
+      const dbAllowed = isAdmin || u.hasAllDatabaseAccess ? true : Boolean(existingDbPerm);
+      u.databasePermissions[dbName] = dbAllowed;
+
+      if (!u.tablePermissions[dbName] || typeof u.tablePermissions[dbName] !== 'object') {
+        u.tablePermissions[dbName] = {};
+      }
+      for (const tbl of db.tables || []) {
+        const tblName = tbl.tableName;
+        const existingTblPerm = u.tablePermissions[dbName][tblName];
+        if (isAdmin || u.hasAllDatabaseAccess) {
+          u.tablePermissions[dbName][tblName] = true;
+        } else if (existingTblPerm !== undefined) {
+          u.tablePermissions[dbName][tblName] = Boolean(existingTblPerm);
+        } else {
+          // If database permission is true and table was not explicitly unchecked, default to true; else false
+          u.tablePermissions[dbName][tblName] = dbAllowed ? true : false;
+        }
+      }
+    }
+  }
+}
+
+function buildSystemHelperTable(
+  tableName: string,
+  colDefs: {
+    name: string;
+    colType: ServerColumn['colType'];
+    width?: number;
+    isPrimaryKey?: boolean;
+  }[],
+  rowObjects: Record<string, string | number | boolean>[],
+  nowIso: string
+): ServerTable {
+  const columns: ServerColumn[] = colDefs.map((c, idx) => ({
+    id: c.name,
+    name: c.name,
+    colType: c.colType,
+    orderIndex: idx,
+    width: c.width || (c.isPrimaryKey ? 85 : 150),
+    required: Boolean(c.isPrimaryKey),
+    isNullable: !c.isPrimaryKey,
+    isPrimaryKey: Boolean(c.isPrimaryKey),
+    isIdentity: Boolean(c.isPrimaryKey),
+    identitySeed: 1,
+    identityIncrement: 1,
+    defaultValue: '',
+    formula: '',
+    optionsCsv: '',
+  }));
+
+  const rows: ServerRow[] = rowObjects.map((obj, idx) => {
+    const pkVal = Number(obj['ID']) || idx + 1;
+    return {
+      id: `sys_${tableName.toLowerCase()}_${pkVal}`,
+      orderIndex: (idx + 1) * 10,
+      cells: {
+        ...obj,
+        ID: pkVal,
+      },
+      updatedBy: 'System Auth Engine',
+      updatedAt: nowIso,
+    };
+  });
+
+  return normalizeServerTable({
+    tableName,
+    columns,
+    rows,
+    identitySeed: 1,
+    identityIncrement: 1,
+    nextIdentityValue: rows.length + 1,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  });
+}
+
+function syncSystemDatabaseTablesInState(
+  state: CloudWorkspaceState,
+  flushToPostgres = false
+): ServerDatabase {
+  const nowIso = new Date().toISOString();
+  normalizeServerUsersAndRoles(state);
+
+  const users = state.users || [];
+  const roles = state.roles || [];
+  const oauthTokens = state.oauthTokens || [];
+  const allDbs = (state.databases || []).filter(
+    (d) => d.databaseName.toLowerCase() !== 'systemdatabase'
+  );
+
+  // 1. Users Table
+  const usersTable = buildSystemHelperTable(
+    'Users',
+    [
+      { name: 'ID', colType: 'number', isPrimaryKey: true, width: 80 },
+      { name: 'UserId', colType: 'text', width: 135 },
+      { name: 'Identifier', colType: 'text', width: 190 },
+      { name: 'Email', colType: 'text', width: 190 },
+      { name: 'PhoneNumber', colType: 'text', width: 140 },
+      { name: 'DisplayName', colType: 'text', width: 155 },
+      { name: 'RoleName', colType: 'text', width: 120 },
+      { name: 'CurrentOtp', colType: 'text', width: 110 },
+      { name: 'OtpDeliveryChannel', colType: 'text', width: 140 },
+      { name: 'IsReviewedByAdmin', colType: 'checkbox', width: 140 },
+      { name: 'HasAllDatabaseAccess', colType: 'checkbox', width: 155 },
+      { name: 'CanCreate', colType: 'checkbox', width: 105 },
+      { name: 'CanRead', colType: 'checkbox', width: 105 },
+      { name: 'CanUpdate', colType: 'checkbox', width: 105 },
+      { name: 'CanDelete', colType: 'checkbox', width: 105 },
+      { name: 'LastLoginAt', colType: 'date', width: 155 },
+      { name: 'CreatedAt', colType: 'date', width: 155 },
+    ],
+    users.map((u, idx) => ({
+      ID: idx + 1,
+      UserId: u.id,
+      Identifier: u.identifier || u.email || u.phoneNumber || '',
+      Email: u.email || '',
+      PhoneNumber: u.phoneNumber || '',
+      DisplayName: u.displayName || '',
+      RoleName: u.role || 'Basic',
+      CurrentOtp: u.currentOtp || u.passwordHash || '',
+      OtpDeliveryChannel: u.otpDeliveryChannel || (u.phoneNumber && !u.email ? 'sms_whatsapp' : 'email'),
+      IsReviewedByAdmin: Boolean(u.isReviewedByAdmin),
+      HasAllDatabaseAccess: Boolean(u.hasAllDatabaseAccess),
+      CanCreate: Boolean(u.canCreate),
+      CanRead: Boolean(u.canRead ?? true),
+      CanUpdate: Boolean(u.canUpdate),
+      CanDelete: Boolean(u.canDelete),
+      LastLoginAt: (u.lastLoginAt || u.createdAt || nowIso).slice(0, 10),
+      CreatedAt: (u.createdAt || nowIso).slice(0, 10),
+    })),
+    nowIso
+  );
+
+  // 2. Roles Table
+  const rolesTable = buildSystemHelperTable(
+    'Roles',
+    [
+      { name: 'ID', colType: 'number', isPrimaryKey: true, width: 80 },
+      { name: 'RoleName', colType: 'text', width: 135 },
+      { name: 'Description', colType: 'text', width: 280 },
+      { name: 'CanCreate', colType: 'checkbox', width: 110 },
+      { name: 'CanRead', colType: 'checkbox', width: 110 },
+      { name: 'CanUpdate', colType: 'checkbox', width: 110 },
+      { name: 'CanDelete', colType: 'checkbox', width: 110 },
+      { name: 'IsSystemRole', colType: 'checkbox', width: 120 },
+      { name: 'CreatedAt', colType: 'date', width: 140 },
+    ],
+    roles.map((r, idx) => ({
+      ID: idx + 1,
+      RoleName: r.roleName,
+      Description: r.description,
+      CanCreate: Boolean(r.canCreate),
+      CanRead: Boolean(r.canRead),
+      CanUpdate: Boolean(r.canUpdate),
+      CanDelete: Boolean(r.canDelete),
+      IsSystemRole: Boolean(r.isSystemRole),
+      CreatedAt: (r.createdAt || nowIso).slice(0, 10),
+    })),
+    nowIso
+  );
+
+  // 3. UserClaims Table
+  const claimRows: Record<string, string | number | boolean>[] = [];
+  let claimIdx = 1;
+  for (const u of users) {
+    const ident = u.identifier || u.email || u.phoneNumber || u.id;
+    const pairs: [string, string][] = [
+      ['oauth2:role', u.role || 'Basic'],
+      ['permission:create', String(Boolean(u.canCreate))],
+      ['permission:read', String(Boolean(u.canRead ?? true))],
+      ['permission:update', String(Boolean(u.canUpdate))],
+      ['permission:delete', String(Boolean(u.canDelete))],
+      ['admin:reviewed', String(Boolean(u.isReviewedByAdmin))],
+    ];
+    for (const [claimType, claimValue] of pairs) {
+      claimRows.push({
+        ID: claimIdx++,
+        UserId: u.id,
+        Identifier: ident,
+        ClaimType: claimType,
+        ClaimValue: claimValue,
+        UpdatedAt: nowIso.slice(0, 10),
+      });
+    }
+  }
+  const userClaimsTable = buildSystemHelperTable(
+    'UserClaims',
+    [
+      { name: 'ID', colType: 'number', isPrimaryKey: true, width: 80 },
+      { name: 'UserId', colType: 'text', width: 140 },
+      { name: 'Identifier', colType: 'text', width: 190 },
+      { name: 'ClaimType', colType: 'text', width: 165 },
+      { name: 'ClaimValue', colType: 'text', width: 140 },
+      { name: 'UpdatedAt', colType: 'date', width: 140 },
+    ],
+    claimRows,
+    nowIso
+  );
+
+  // 4. DatabasePermissions Table
+  const dbPermRows: Record<string, string | number | boolean>[] = [];
+  let dbPermIdx = 1;
+  for (const u of users) {
+    const ident = u.identifier || u.email || u.phoneNumber || u.id;
+    const isAdmin = (u.role || '').toLowerCase() === 'admin';
+    for (const db of allDbs) {
+      const hasAccess =
+        isAdmin ||
+        Boolean(u.hasAllDatabaseAccess) ||
+        Boolean(u.databasePermissions?.[db.databaseName]);
+      dbPermRows.push({
+        ID: dbPermIdx++,
+        UserId: u.id,
+        Identifier: ident,
+        DatabaseName: db.databaseName,
+        HasAccess: hasAccess,
+        UpdatedAt: nowIso.slice(0, 10),
+      });
+    }
+  }
+  const dbPermissionsTable = buildSystemHelperTable(
+    'DatabasePermissions',
+    [
+      { name: 'ID', colType: 'number', isPrimaryKey: true, width: 80 },
+      { name: 'UserId', colType: 'text', width: 140 },
+      { name: 'Identifier', colType: 'text', width: 190 },
+      { name: 'DatabaseName', colType: 'text', width: 175 },
+      { name: 'HasAccess', colType: 'checkbox', width: 120 },
+      { name: 'UpdatedAt', colType: 'date', width: 140 },
+    ],
+    dbPermRows,
+    nowIso
+  );
+
+  // 5. TablePermissions Table
+  const tblPermRows: Record<string, string | number | boolean>[] = [];
+  let tblPermIdx = 1;
+  for (const u of users) {
+    const ident = u.identifier || u.email || u.phoneNumber || u.id;
+    const isAdmin = (u.role || '').toLowerCase() === 'admin';
+    for (const db of allDbs) {
+      if (db.databaseName.toLowerCase() === 'system' && !isAdmin) {
+        continue;
+      }
+      for (const tbl of db.tables || []) {
+        const hasAccess =
+          isAdmin ||
+          Boolean(u.hasAllDatabaseAccess) ||
+          Boolean(u.tablePermissions?.[db.databaseName]?.[tbl.tableName]);
+        tblPermRows.push({
+          ID: tblPermIdx++,
+          UserId: u.id,
+          Identifier: ident,
+          DatabaseName: db.databaseName,
+          TableName: tbl.tableName,
+          HasAccess: hasAccess,
+          UpdatedAt: nowIso.slice(0, 10),
+        });
+      }
+    }
+  }
+  const tblPermissionsTable = buildSystemHelperTable(
+    'TablePermissions',
+    [
+      { name: 'ID', colType: 'number', isPrimaryKey: true, width: 80 },
+      { name: 'UserId', colType: 'text', width: 135 },
+      { name: 'Identifier', colType: 'text', width: 185 },
+      { name: 'DatabaseName', colType: 'text', width: 165 },
+      { name: 'TableName', colType: 'text', width: 165 },
+      { name: 'HasAccess', colType: 'checkbox', width: 120 },
+      { name: 'UpdatedAt', colType: 'date', width: 140 },
+    ],
+    tblPermRows,
+    nowIso
+  );
+
+  // 6. OAuthTokens Table
+  const oauthTable = buildSystemHelperTable(
+    'OAuthTokens',
+    [
+      { name: 'ID', colType: 'number', isPrimaryKey: true, width: 80 },
+      { name: 'UserId', colType: 'text', width: 135 },
+      { name: 'Identifier', colType: 'text', width: 185 },
+      { name: 'GrantType', colType: 'text', width: 140 },
+      { name: 'Scope', colType: 'text', width: 185 },
+      { name: 'AccessToken', colType: 'text', width: 210 },
+      { name: 'IssuedAt', colType: 'date', width: 140 },
+      { name: 'ExpiresAt', colType: 'date', width: 140 },
+    ],
+    oauthTokens.slice(0, 200).map((tok, idx) => ({
+      ID: idx + 1,
+      UserId: tok.userId,
+      Identifier: tok.identifier,
+      GrantType: tok.grantType,
+      Scope: tok.scope,
+      AccessToken: tok.accessToken,
+      IssuedAt: (tok.issuedAt || nowIso).slice(0, 10),
+      ExpiresAt: (tok.expiresAt || nowIso).slice(0, 10),
+    })),
+    nowIso
+  );
+
+  const systemTables = [
+    usersTable,
+    rolesTable,
+    userClaimsTable,
+    dbPermissionsTable,
+    tblPermissionsTable,
+    oauthTable,
+  ];
+
+  let sysDb = state.databases.find((d) => d.databaseName.toLowerCase() === 'system');
+  if (!sysDb) {
+    sysDb = {
+      databaseName: 'System',
+      activeTableName: 'Users',
+      tables: systemTables,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    state.databases.push(sysDb);
+  } else {
+    sysDb.databaseName = 'System';
+    sysDb.tables = systemTables;
+    if (
+      !sysDb.activeTableName ||
+      !systemTables.some((t) => t.tableName.toLowerCase() === sysDb!.activeTableName.toLowerCase())
+    ) {
+      sysDb.activeTableName = 'Users';
+    }
+    sysDb.updatedAt = nowIso;
+  }
+
+  if (flushToPostgres) {
+    void createDatabaseInRealBackend('System');
+    for (const t of systemTables) {
+      void syncTableToRealDatabase(t, 'System');
+    }
+  }
+
+  return sysDb;
+}
+
+function serializeAuthUser(u: ServerUser, state: CloudWorkspaceState) {
+  normalizeServerUsersAndRoles(state);
+  const isAdmin = (u.role || '').trim().toLowerCase() === 'admin';
+  return {
+    id: u.id,
+    identifier: u.identifier || u.email || u.phoneNumber || '',
+    email: u.email || u.identifier || '',
+    phoneNumber: u.phoneNumber || '',
+    displayName: u.displayName || u.identifier || 'User',
+    role: u.role || 'Basic',
+    color: u.color || '#4285F4',
+    currentOtp: u.currentOtp || u.passwordHash || '',
+    otpDeliveryChannel: u.otpDeliveryChannel || 'email',
+    isReviewedByAdmin: isAdmin ? true : Boolean(u.isReviewedByAdmin),
+    hasAllDatabaseAccess: isAdmin ? true : Boolean(u.hasAllDatabaseAccess),
+    canCreate: isAdmin ? true : Boolean(u.canCreate),
+    canRead: isAdmin ? true : Boolean(u.canRead ?? true),
+    canUpdate: isAdmin ? true : Boolean(u.canUpdate),
+    canDelete: isAdmin ? true : Boolean(u.canDelete),
+    databasePermissions: u.databasePermissions || {},
+    tablePermissions: u.tablePermissions || {},
+    createdAt: u.createdAt,
+    lastLoginAt: u.lastLoginAt || u.createdAt,
+  };
+}
+
 function ensureDatabasesHierarchy(state: CloudWorkspaceState): void {
   const nowIso = new Date().toISOString();
   if (Array.isArray(state.databases)) {
@@ -2460,7 +3089,10 @@ function ensureDatabasesHierarchy(state: CloudWorkspaceState): void {
       (d) => d.databaseName.toLowerCase() !== 'systemdatabase'
     );
   }
-  if (!Array.isArray(state.databases) || state.databases.length === 0) {
+  const nonSystemDbs = (state.databases || []).filter(
+    (d) => d.databaseName.toLowerCase() !== 'system'
+  );
+  if (!Array.isArray(state.databases) || nonSystemDbs.length === 0) {
     const existingTables =
       Array.isArray(state.tables) && state.tables.length > 0
         ? state.tables.map(normalizeServerTable)
@@ -2477,7 +3109,9 @@ function ensureDatabasesHierarchy(state: CloudWorkspaceState): void {
             }),
           ];
     const defaultDbName =
-      state.activeDatabaseName && state.activeDatabaseName.toLowerCase() !== 'systemdatabase'
+      state.activeDatabaseName &&
+      state.activeDatabaseName.toLowerCase() !== 'systemdatabase' &&
+      state.activeDatabaseName.toLowerCase() !== 'system'
         ? state.activeDatabaseName
         : 'GridPulse_DB';
     state.databases = [
@@ -2503,9 +3137,13 @@ function ensureDatabasesHierarchy(state: CloudWorkspaceState): void {
       !state.activeDatabaseName ||
       state.activeDatabaseName.toLowerCase() === 'systemdatabase'
     ) {
-      state.activeDatabaseName = state.databases[0].databaseName;
+      const preferredDb =
+        state.databases.find((d) => d.databaseName.toLowerCase() !== 'system') ||
+        state.databases[0];
+      state.activeDatabaseName = preferredDb.databaseName;
     }
   }
+  syncSystemDatabaseTablesInState(state, false);
   syncAllLinkedLookupColumnsInState(state);
 }
 
@@ -3566,7 +4204,517 @@ async function ensurePostgresHydrated(forceRefresh = false): Promise<void> {
   return pgHydrationPromise;
 }
 
-void ensurePostgresHydrated(true);
+async function ensurePgPoolResolved(): Promise<{ pool: pg.Pool | null; connStr: string }> {
+  let connStr = getEffectiveConnectionString();
+  lastHydratedRawConnStr = connStr;
+  if (!connStr) {
+    pgConnectionVerified = false;
+    livePgServerInfo = null;
+    return { pool: null, connStr: '' };
+  }
+  connStr = await resolveSupabaseIpv4PoolerConnectionString(connStr);
+  if (connStr !== cachedPgConnStr || !cachedPgPool) {
+    cachedPgConnStr = connStr;
+    if (cachedPgPool) {
+      await cachedPgPool.end().catch(() => null);
+    }
+    cachedPgPool = createPgPoolForConnectionString(connStr);
+  }
+  return { pool: cachedPgPool || getPgPool(), connStr };
+}
+
+async function queryLivePostgresServerOnly(): Promise<ServerConnectionInfo> {
+  const { pool } = await ensurePgPoolResolved();
+  if (!pool) {
+    return resolveServerConnectionInfo(cloudState);
+  }
+  try {
+    const metaQuery = await pool.query<{
+      db: string;
+      usr: string;
+      ver: string;
+      cluster_name: string | null;
+      srv_addr: string | null;
+      srv_port: number | null;
+    }>(
+      `SELECT current_database() AS db, current_user AS usr, current_setting('server_version') AS ver, current_setting('cluster_name', true) AS cluster_name, host(inet_server_addr()) AS srv_addr, inet_server_port() AS srv_port`
+    );
+    const metaRow = metaQuery.rows[0];
+    if (metaRow) {
+      pgConnectionVerified = true;
+      const rawServerVersion = (metaRow.ver || '').trim();
+      const cleanVer = rawServerVersion.split(' ')[0];
+      const dbConnectionName = (metaRow.db || '').trim();
+      const dbClusterName = (metaRow.cluster_name || '').trim();
+      const dbLoginUser = (metaRow.usr || '').trim();
+      const dbHost = (metaRow.srv_addr || '').trim();
+      const nowIso = new Date().toISOString();
+      livePgServerInfo = {
+        serverName: dbConnectionName,
+        clusterName: dbClusterName,
+        serverVersion: rawServerVersion,
+        serverEngine: cleanVer ? `PostgreSQL ${cleanVer}` : '',
+        loginUser: dbLoginUser,
+        host: dbHost,
+        port: Number(metaRow.srv_port || 5432),
+        database: dbConnectionName,
+        isLivePostgres: true,
+        isConnected: true,
+        connectedAt: nowIso,
+      };
+      cloudState.serverInfo = livePgServerInfo;
+    }
+  } catch {
+    // Keep existing serverInfo if transient error occurs
+  }
+  return resolveServerConnectionInfo(cloudState);
+}
+
+async function queryLivePostgresDatabaseListOnly(): Promise<DbDatabaseSummary[]> {
+  const { pool } = await ensurePgPoolResolved();
+  const nowIso = new Date().toISOString();
+  if (!pool) {
+    return (cloudState.databases || []).map((db) => ({
+      databaseName: db.databaseName,
+      activeTableName: '',
+      tables: [],
+      createdAt: db.createdAt || nowIso,
+      updatedAt: db.updatedAt || nowIso,
+    }));
+  }
+
+  const excludedSqlList = SYSTEM_EXCLUDED_SCHEMAS.map((s) => `'${s}'`).join(', ');
+  const [schemasRes, publicHasTablesRes, catalogDbsRes, metaRes] = await Promise.all([
+    pool
+      .query<{ schema_name: string }>(`
+        SELECT schema_name
+        FROM information_schema.schemata
+        WHERE schema_name NOT IN (${excludedSqlList})
+          AND schema_name NOT LIKE 'pg_%'
+        ORDER BY schema_name ASC
+      `)
+      .catch(() => ({ rows: [] as { schema_name: string }[] })),
+    pool
+      .query<{ has_tables: boolean }>(`
+        SELECT EXISTS (
+          SELECT 1
+          FROM information_schema.tables
+          WHERE table_schema = 'public'
+            AND table_type IN ('BASE TABLE', 'VIEW', 'FOREIGN', 'PARTITIONED TABLE')
+            AND table_name NOT LIKE '__gridpulse%'
+            AND table_name NOT LIKE 'pg_%'
+        ) AS has_tables
+      `)
+      .catch(() => ({ rows: [{ has_tables: false }] })),
+    pool
+      .query<{ datname: string }>(`
+        SELECT datname
+        FROM pg_database
+        WHERE datistemplate = false
+          AND datallowconn = true
+        ORDER BY datname ASC
+      `)
+      .catch(() => ({ rows: [] as { datname: string }[] })),
+    pool
+      .query<{ state_json: string }>(
+        `SELECT "state_json" FROM "public"."__gridpulse_workspace_state" WHERE "workspace_id" = $1 LIMIT 1`,
+        ['ws_gridpulse_main']
+      )
+      .catch(() => ({ rows: [] as { state_json: string }[] })),
+  ]);
+
+  let savedMetaState: CloudWorkspaceState | null = null;
+  if (metaRes.rows.length > 0 && metaRes.rows[0].state_json) {
+    savedMetaState = parseAndHydrateWorkspaceState(metaRes.rows[0].state_json);
+  }
+
+  const publicHasTables = Boolean(publicHasTablesRes.rows[0]?.has_tables);
+  const schemaRows = schemasRes.rows.map((r) => (r.schema_name || '').trim()).filter(Boolean);
+  const dbNamesOrdered: string[] = [];
+  const seenLower = new Set<string>();
+
+  const addDbName = (name: string) => {
+    const clean = stripDboPrefix(name).trim();
+    if (!clean || clean.toLowerCase() === 'systemdatabase') return;
+    const lower = clean.toLowerCase();
+    if (seenLower.has(lower)) return;
+    seenLower.add(lower);
+    dbNamesOrdered.push(clean);
+  };
+
+  for (const schemaName of schemaRows) {
+    if (
+      schemaName.toLowerCase() === 'public' &&
+      !publicHasTables &&
+      schemaRows.length > 1
+    ) {
+      const hadPublicExplicitly =
+        savedMetaState?.databases?.some((d) => d.databaseName.toLowerCase() === 'public') ||
+        cloudState.databases?.some((d) => d.databaseName.toLowerCase() === 'public');
+      if (!hadPublicExplicitly) continue;
+    }
+    addDbName(schemaName);
+  }
+
+  const primaryDbName = (livePgServerInfo?.database || 'postgres').toLowerCase();
+  for (const r of catalogDbsRes.rows) {
+    const datName = (r.datname || '').trim();
+    if (!datName) continue;
+    const lowerDat = datName.toLowerCase();
+    if (SYSTEM_EXCLUDED_DATABASES.has(lowerDat) || lowerDat === primaryDbName) continue;
+    addDbName(datName);
+  }
+
+  if (savedMetaState?.databases) {
+    for (const metaDb of savedMetaState.databases) {
+      addDbName(metaDb.databaseName);
+    }
+  }
+  for (const localDb of cloudState.databases || []) {
+    addDbName(localDb.databaseName);
+  }
+
+  // Ensure cloudState knows about discovered database names (without populating tables/fields)
+  for (const dbName of dbNamesOrdered) {
+    if (
+      !cloudState.databases.some((d) => d.databaseName.toLowerCase() === dbName.toLowerCase())
+    ) {
+      cloudState.databases.push({
+        databaseName: dbName,
+        activeTableName: '',
+        tables: [],
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      });
+    }
+  }
+
+  return dbNamesOrdered.map((dbName) => ({
+    databaseName: dbName,
+    activeTableName: '',
+    tables: [],
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  }));
+}
+
+async function queryLivePostgresTablesForDatabaseOnly(
+  databaseName: string
+): Promise<DbTableSummary[]> {
+  const cleanDb = stripDboPrefix(databaseName).trim();
+  if (!cleanDb) return [];
+  const { pool } = await ensurePgPoolResolved();
+  const nowIso = new Date().toISOString();
+
+  if (!pool) {
+    const fallbackDb = cloudState.databases.find(
+      (d) => d.databaseName.toLowerCase() === cleanDb.toLowerCase()
+    );
+    return (fallbackDb?.tables || []).map((t) => ({
+      tableName: t.tableName,
+      rowCount: (t.rows || []).length,
+      columnCount: (t.columns || []).length,
+      columns: [],
+      rows: [],
+      identitySeed: t.identitySeed || 1,
+      identityIncrement: t.identityIncrement || 1,
+      nextIdentityValue: t.nextIdentityValue || 1,
+      createdAt: t.createdAt || nowIso,
+      updatedAt: t.updatedAt || nowIso,
+    }));
+  }
+
+  const [tablesRes, metaRes] = await Promise.all([
+    pool
+      .query<{ table_name: string }>(
+        `
+        SELECT t.table_name
+        FROM information_schema.tables t
+        WHERE t.table_type IN ('BASE TABLE', 'VIEW', 'FOREIGN', 'PARTITIONED TABLE')
+          AND LOWER(t.table_schema) = LOWER($1)
+          AND t.table_name NOT LIKE '__gridpulse%'
+          AND t.table_name NOT LIKE 'pg_%'
+        ORDER BY t.table_name ASC
+        `,
+        [cleanDb]
+      )
+      .catch(() => ({ rows: [] as { table_name: string }[] })),
+    pool
+      .query<{ state_json: string }>(
+        `SELECT "state_json" FROM "public"."__gridpulse_workspace_state" WHERE "workspace_id" = $1 LIMIT 1`,
+        ['ws_gridpulse_main']
+      )
+      .catch(() => ({ rows: [] as { state_json: string }[] })),
+  ]);
+
+  let savedMetaState: CloudWorkspaceState | null = null;
+  if (metaRes.rows.length > 0 && metaRes.rows[0].state_json) {
+    savedMetaState = parseAndHydrateWorkspaceState(metaRes.rows[0].state_json);
+  }
+
+  const tableNamesOrdered: string[] = [];
+  const seenLower = new Set<string>();
+  const addTblName = (tName: string) => {
+    const clean = stripDboPrefix(tName).trim();
+    if (!clean) return;
+    const lower = clean.toLowerCase();
+    if (seenLower.has(lower)) return;
+    seenLower.add(lower);
+    tableNamesOrdered.push(clean);
+  };
+
+  for (const r of tablesRes.rows) {
+    if (r.table_name) addTblName(r.table_name);
+  }
+
+  // Only include tables from metadata/memory if they are still pending in the write-behind buffer
+  for (const [dirtyKey, dirtyInfo] of writeBehindDirtyTables.entries()) {
+    if (
+      dirtyKey.startsWith(`${cleanDb.toLowerCase()}|`) &&
+      dirtyInfo.databaseName.toLowerCase() === cleanDb.toLowerCase()
+    ) {
+      addTblName(dirtyInfo.tableName);
+    }
+  }
+  if (tableNamesOrdered.length === 0) {
+    const metaDb = savedMetaState?.databases?.find(
+      (d) => d.databaseName.toLowerCase() === cleanDb.toLowerCase()
+    );
+    if (metaDb?.tables) {
+      for (const mt of metaDb.tables) {
+        addTblName(mt.tableName);
+      }
+    }
+  }
+
+  return tableNamesOrdered.map((tblName) => ({
+    tableName: tblName,
+    rowCount: 0,
+    columnCount: 0,
+    columns: [],
+    rows: [],
+    identitySeed: 1,
+    identityIncrement: 1,
+    nextIdentityValue: 1,
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  }));
+}
+
+async function queryLivePostgresFieldsForTableOnly(
+  databaseName: string,
+  tableName: string
+): Promise<ServerColumn[]> {
+  const cleanDb = stripDboPrefix(databaseName).trim();
+  const cleanTbl = stripDboPrefix(tableName).trim();
+  if (!cleanDb || !cleanTbl) return [];
+  const { pool } = await ensurePgPoolResolved();
+
+  const existingDb = cloudState.databases.find(
+    (d) => d.databaseName.toLowerCase() === cleanDb.toLowerCase()
+  );
+  const existingTbl = existingDb?.tables?.find(
+    (t) => t.tableName.toLowerCase() === cleanTbl.toLowerCase()
+  );
+
+  if (!pool) {
+    return existingTbl?.columns
+      ? [...existingTbl.columns].sort((a, b) => a.orderIndex - b.orderIndex)
+      : [];
+  }
+
+  const [colsRes, pkRes] = await Promise.all([
+    pool
+      .query<{
+        column_name: string;
+        data_type: string | null;
+        udt_name: string | null;
+        is_nullable: string | null;
+        column_default: string | null;
+        is_identity: string | null;
+        ordinal_position: number | null;
+      }>(
+        `
+        SELECT
+          c.column_name,
+          c.data_type,
+          c.udt_name,
+          c.is_nullable,
+          c.column_default,
+          c.is_identity,
+          c.ordinal_position
+        FROM information_schema.columns c
+        WHERE LOWER(c.table_schema) = LOWER($1)
+          AND LOWER(c.table_name) = LOWER($2)
+        ORDER BY c.ordinal_position ASC
+        `,
+        [cleanDb, cleanTbl]
+      )
+      .catch(() => ({ rows: [] })),
+    pool
+      .query<{ column_name: string }>(
+        `
+        SELECT kcu.column_name
+        FROM information_schema.table_constraints tc
+        INNER JOIN information_schema.key_column_usage kcu
+          ON tc.constraint_name = kcu.constraint_name
+         AND tc.table_schema = kcu.table_schema
+         AND tc.table_name = kcu.table_name
+        WHERE tc.constraint_type = 'PRIMARY KEY'
+          AND LOWER(tc.table_schema) = LOWER($1)
+          AND LOWER(tc.table_name) = LOWER($2)
+        `,
+        [cleanDb, cleanTbl]
+      )
+      .catch(() => ({ rows: [] as { column_name: string }[] })),
+  ]);
+
+  const pkSet = new Set(pkRes.rows.map((r) => (r.column_name || '').toLowerCase()));
+  const builtCols: ServerColumn[] = colsRes.rows.map((c, idx) => {
+    const prevCol = existingTbl?.columns?.find(
+      (ec) => ec.name.toLowerCase() === c.column_name.toLowerCase()
+    );
+    const isPk =
+      pkSet.size > 0
+        ? pkSet.has(c.column_name.toLowerCase())
+        : c.column_name.toLowerCase() === 'id' || idx === 0;
+    const isIdent =
+      isPk ||
+      c.is_identity === 'YES' ||
+      String(c.column_default || '').toLowerCase().includes('nextval');
+    const mappedType = mapPgDataTypeToColType(c.data_type || 'text', c.udt_name || 'text');
+
+    if (prevCol) {
+      return {
+        ...prevCol,
+        id: c.column_name,
+        name: c.column_name,
+        orderIndex: idx,
+        isPrimaryKey: isPk,
+        isIdentity: isIdent,
+        required: c.is_nullable === 'NO',
+        isNullable: c.is_nullable !== 'NO',
+      };
+    }
+
+    return {
+      id: c.column_name,
+      name: c.column_name,
+      colType: mappedType,
+      orderIndex: idx,
+      width: isPk ? 95 : 160,
+      required: c.is_nullable === 'NO',
+      isNullable: c.is_nullable !== 'NO',
+      isPrimaryKey: isPk,
+      isIdentity: isIdent,
+      identitySeed: 1,
+      identityIncrement: 1,
+      defaultValue: '',
+      formula: '',
+      optionsCsv: '',
+    };
+  });
+
+  if (existingTbl?.columns) {
+    for (const ec of existingTbl.columns) {
+      if (
+        ec.colType === 'formula' &&
+        !builtCols.some((bc) => bc.name.toLowerCase() === ec.name.toLowerCase())
+      ) {
+        builtCols.push({ ...ec, orderIndex: builtCols.length });
+      }
+    }
+  }
+
+  return ensurePrimaryKeyIdentityColumn(builtCols);
+}
+
+async function hydrateSingleTableFromPostgres(
+  databaseName: string,
+  tableName: string
+): Promise<void> {
+  const cleanDb = stripDboPrefix(databaseName).trim();
+  const cleanTbl = stripDboPrefix(tableName).trim();
+  if (!cleanDb || !cleanTbl) return;
+
+  await queryLivePostgresServerOnly();
+  const { pool } = await ensurePgPoolResolved();
+  if (!pool) return;
+
+  const builtCols = await queryLivePostgresFieldsForTableOnly(cleanDb, cleanTbl);
+  if (builtCols.length === 0) return;
+
+  const quotedSchemaTbl = `${quoteSqlIdent(cleanDb)}.${quoteSqlIdent(cleanTbl)}`;
+  const liveDataRes = await pool
+    .query<Record<string, unknown>>(
+      `SELECT * FROM ${quotedSchemaTbl} ORDER BY 1 ASC LIMIT 5000`
+    )
+    .catch(() => null);
+
+  if (!liveDataRes) return;
+
+  const nowIso = new Date().toISOString();
+  const metaUser = livePgServerInfo?.loginUser || 'PostgreSQL';
+  const liveRows: ServerRow[] = (liveDataRes.rows || []).map((r, rIdx) => {
+    const cells: Record<string, string | number | boolean> = {};
+    for (const col of builtCols) {
+      if (col.colType === 'formula') continue;
+      const rawVal = r[col.name] !== undefined ? r[col.name] : r[col.id];
+      const norm = formatPgCellValue(rawVal, col.colType);
+      cells[col.name] = norm;
+      cells[col.id] = norm;
+    }
+    const pkCol = builtCols.find((c) => c.isPrimaryKey || c.isIdentity);
+    const pkVal =
+      (pkCol ? cells[pkCol.name] ?? cells[pkCol.id] : undefined) ??
+      cells['ID'] ??
+      cells['id'] ??
+      rIdx + 1;
+    return {
+      id: `row_pg_${String(pkVal).replace(/[^a-zA-Z0-9_-]/g, '_')}_${rIdx}`,
+      orderIndex: (rIdx + 1) * 10,
+      cells,
+      updatedBy: metaUser,
+      updatedAt: nowIso,
+    };
+  });
+
+  const normalizedTbl = normalizeServerTable({
+    tableName: cleanTbl,
+    columns: builtCols,
+    rows: liveRows,
+    identitySeed: 1,
+    identityIncrement: 1,
+    nextIdentityValue: computeNextIdentityValue(builtCols, liveRows),
+    createdAt: nowIso,
+    updatedAt: nowIso,
+  });
+
+  let targetDb = cloudState.databases.find(
+    (d) => d.databaseName.toLowerCase() === cleanDb.toLowerCase()
+  );
+  if (!targetDb) {
+    targetDb = {
+      databaseName: cleanDb,
+      activeTableName: cleanTbl,
+      tables: [normalizedTbl],
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+    cloudState.databases.push(targetDb);
+  } else {
+    const tblIdx = targetDb.tables.findIndex(
+      (t) => t.tableName.toLowerCase() === cleanTbl.toLowerCase()
+    );
+    if (tblIdx === -1) {
+      targetDb.tables.push(normalizedTbl);
+    } else {
+      targetDb.tables[tblIdx] = normalizedTbl;
+    }
+    targetDb.activeTableName = cleanTbl;
+  }
+  syncAllLinkedLookupColumnsInState(cloudState);
+}
 
 // Connected SSE clients for real-time collaboration
 const sseClients = new Set<Response>();
@@ -3640,14 +4788,54 @@ app.get('/api/stream', (req: Request, res: Response) => {
 });
 
 /**
- * GET /api/workspace — returns workspace metadata, databases tree, tables list, active table columns, versions summary, and initial 10 lazy-loaded rows from database
+ * GET /api/workspace — returns workspace metadata, active table columns, versions summary, and initial 10 lazy-loaded rows from database
  */
 app.get('/api/workspace', async (req: Request, res: Response) => {
-  await ensurePostgresHydrated();
+  const noTable = req.query['noTable'] === '1' || req.query['noTable'] === 'true';
   const requestedDb =
-    typeof req.query['databaseName'] === 'string' ? req.query['databaseName'] : undefined;
+    typeof req.query['databaseName'] === 'string' ? req.query['databaseName'].trim() : undefined;
   const requestedTable =
-    typeof req.query['tableName'] === 'string' ? req.query['tableName'] : undefined;
+    typeof req.query['tableName'] === 'string' ? req.query['tableName'].trim() : undefined;
+
+  if (noTable) {
+    const srvInfo = await queryLivePostgresServerOnly();
+    res.json({
+      workspaceId: cloudState.workspaceId,
+      workspaceName: requestedDb || '',
+      serverName: srvInfo.serverName,
+      serverHost: srvInfo.host,
+      serverClusterName: srvInfo.clusterName || '',
+      serverVersion: srvInfo.serverVersion || '',
+      serverEngine: srvInfo.serverEngine,
+      serverLoginUser: srvInfo.loginUser,
+      isServerConnected: srvInfo.isConnected,
+      serverInfo: srvInfo,
+      activeDatabaseName: requestedDb || '',
+      databases: [],
+      activeTableName: '',
+      tables: [],
+      updatedAt: cloudState.updatedAt,
+      totalRows: 0,
+      filteredTotalRows: 0,
+      hasMore: false,
+      columns: [],
+      rows: [],
+      uniqueValuesByColumn: {},
+      presence: Object.values(cloudState.presence),
+      activities: cloudState.activities,
+      versions: [],
+    });
+    return;
+  }
+
+  const effectiveDb = requestedDb || cloudState.activeDatabaseName;
+  const effectiveTbl = requestedTable || cloudState.activeTableName;
+  if (effectiveDb && effectiveTbl) {
+    await hydrateSingleTableFromPostgres(effectiveDb, effectiveTbl);
+  } else {
+    await queryLivePostgresServerOnly();
+  }
+
   const prevDbName = cloudState.activeDatabaseName;
   const prevTableName = cloudState.activeTableName;
   const targetDb = getTargetDatabase(cloudState, requestedDb);
@@ -3720,9 +4908,106 @@ app.get('/api/workspace', async (req: Request, res: Response) => {
 
 /**
  * GET /api/workspace/tree — authoritative REST API endpoint for Sidebar Object Explorer tree
- * (Fetches server info, all databases, tables, fields, and nodes)
+ * Supports granular on-demand scopes:
+ * - scope=server: loads ONLY server name & connection info from PostgreSQL
+ * - scope=databases: loads ONLY database list from PostgreSQL (tables and fields closed/empty)
+ * - scope=tables&databaseName=...: loads ONLY table list for that particular database from PostgreSQL (fields closed/empty)
+ * - scope=fields&databaseName=...&tableName=...: loads ONLY field (column) list for that particular table from PostgreSQL
  */
 app.get('/api/workspace/tree', async (req: Request, res: Response) => {
+  const scope = typeof req.query['scope'] === 'string' ? req.query['scope'].trim().toLowerCase() : '';
+  const requestedDb =
+    typeof req.query['databaseName'] === 'string' ? req.query['databaseName'].trim() : '';
+  const requestedTbl =
+    typeof req.query['tableName'] === 'string' ? req.query['tableName'].trim() : '';
+
+  if (scope === 'server') {
+    const srvInfo = await queryLivePostgresServerOnly();
+    res.status(200).json({
+      ok: true,
+      scope: 'server',
+      serverName: srvInfo.serverName,
+      serverHost: srvInfo.host,
+      serverClusterName: srvInfo.clusterName || '',
+      serverVersion: srvInfo.serverVersion || '',
+      serverEngine: srvInfo.serverEngine,
+      serverLoginUser: srvInfo.loginUser,
+      isServerConnected: srvInfo.isConnected,
+      serverInfo: srvInfo,
+      databases: [],
+      tables: [],
+      updatedAt: cloudState.updatedAt,
+    });
+    return;
+  }
+
+  if (scope === 'databases') {
+    const srvInfo = await queryLivePostgresServerOnly();
+    const databases = await queryLivePostgresDatabaseListOnly();
+    res.status(200).json({
+      ok: true,
+      scope: 'databases',
+      serverName: srvInfo.serverName,
+      serverHost: srvInfo.host,
+      serverClusterName: srvInfo.clusterName || '',
+      serverVersion: srvInfo.serverVersion || '',
+      serverEngine: srvInfo.serverEngine,
+      serverLoginUser: srvInfo.loginUser,
+      isServerConnected: srvInfo.isConnected,
+      serverInfo: srvInfo,
+      databases,
+      tables: [],
+      updatedAt: cloudState.updatedAt,
+    });
+    return;
+  }
+
+  if (scope === 'tables') {
+    const srvInfo = await queryLivePostgresServerOnly();
+    const tables = requestedDb ? await queryLivePostgresTablesForDatabaseOnly(requestedDb) : [];
+    res.status(200).json({
+      ok: true,
+      scope: 'tables',
+      databaseName: requestedDb,
+      serverName: srvInfo.serverName,
+      serverHost: srvInfo.host,
+      serverClusterName: srvInfo.clusterName || '',
+      serverVersion: srvInfo.serverVersion || '',
+      serverEngine: srvInfo.serverEngine,
+      serverLoginUser: srvInfo.loginUser,
+      isServerConnected: srvInfo.isConnected,
+      serverInfo: srvInfo,
+      tables,
+      updatedAt: cloudState.updatedAt,
+    });
+    return;
+  }
+
+  if (scope === 'fields') {
+    const srvInfo = await queryLivePostgresServerOnly();
+    const columns =
+      requestedDb && requestedTbl
+        ? await queryLivePostgresFieldsForTableOnly(requestedDb, requestedTbl)
+        : [];
+    res.status(200).json({
+      ok: true,
+      scope: 'fields',
+      databaseName: requestedDb,
+      tableName: requestedTbl,
+      serverName: srvInfo.serverName,
+      serverHost: srvInfo.host,
+      serverClusterName: srvInfo.clusterName || '',
+      serverVersion: srvInfo.serverVersion || '',
+      serverEngine: srvInfo.serverEngine,
+      serverLoginUser: srvInfo.loginUser,
+      isServerConnected: srvInfo.isConnected,
+      serverInfo: srvInfo,
+      columns,
+      updatedAt: cloudState.updatedAt,
+    });
+    return;
+  }
+
   const forceRefresh = req.query['refresh'] === '1' || req.query['refresh'] === 'true';
   await ensurePostgresHydrated(forceRefresh);
   ensureDatabasesHierarchy(cloudState);
@@ -4925,133 +6210,364 @@ app.get('/api/workspace/lazy-rows', async (req: Request, res: Response) => {
 });
 
 /**
- * POST /api/auth/login — authenticates user from PostgreSQL users store
+ * Helper to find a user by Email ID or Phone Number / Identifier
  */
-app.post('/api/auth/login', (req: Request, res: Response) => {
-  const { email = '', password = '' } = (req.body || {}) as {
-    email?: string;
-    password?: string;
-  };
-  const cleanEmail = email.trim().toLowerCase();
-  if (!cleanEmail || !password) {
-    res.status(200).json({ ok: false, error: 'Email and password are required.' });
-    return;
-  }
+function findUserByIdentifier(state: CloudWorkspaceState, rawIdentifier: string): ServerUser | undefined {
+  normalizeServerUsersAndRoles(state);
+  const clean = (rawIdentifier || '').trim().toLowerCase();
+  if (!clean) return undefined;
+  const digitsOnly = clean.replace(/[^0-9+]/g, '');
+  return (state.users || []).find((u) => {
+    if ((u.identifier || '').trim().toLowerCase() === clean) return true;
+    if ((u.email || '').trim().toLowerCase() === clean) return true;
+    if ((u.phoneNumber || '').trim().toLowerCase() === clean) return true;
+    if (digitsOnly.length >= 7 && (u.phoneNumber || '').replace(/[^0-9+]/g, '') === digitsOnly) {
+      return true;
+    }
+    return false;
+  });
+}
 
-  if (!Array.isArray(cloudState.users)) {
-    cloudState.users = buildDefaultUsers();
-  }
-  const user = cloudState.users.find((u) => u.email.toLowerCase() === cleanEmail);
-  if (!user || user.passwordHash !== password) {
+function isPhoneNumberInput(rawIdentifier: string): boolean {
+  const clean = (rawIdentifier || '').trim();
+  if (clean.includes('@')) return false;
+  const digits = clean.replace(/[^0-9]/g, '');
+  return digits.length >= 6;
+}
+
+/**
+ * POST /api/oauth/request-otp — Standalone OAuth2 4-Digit OTP generator & dispatcher.
+ * - No separate registration needed: login itself is registration!
+ * - Every time a user logs in, a new 4-digit OTP is generated and becomes their new password.
+ * - If a phone number is provided, sends OTP via SMS / WhatsApp; if email is provided, sends OTP via Email.
+ */
+function handleRequestOtp(req: Request, res: Response): void {
+  const rawBody = (req.body || {}) as {
+    identifier?: string;
+    email?: string;
+    phone?: string;
+    displayName?: string;
+    loginSection?: 'user' | 'admin';
+    isAdminLogin?: boolean;
+  };
+  const rawIdentifier = (
+    rawBody.identifier ||
+    rawBody.email ||
+    rawBody.phone ||
+    ''
+  ).trim();
+  const displayName = (rawBody.displayName || '').trim();
+  const loginSection = (
+    rawBody.loginSection ||
+    (rawBody.isAdminLogin ? 'admin' : 'user')
+  );
+
+  const cleanIdent = rawIdentifier.trim();
+  if (!cleanIdent) {
     res.status(200).json({
       ok: false,
-      error: 'Invalid user email or password.',
+      error: 'Please enter your Email ID or Phone Number to receive a 4-digit OTP.',
     });
     return;
   }
 
-  const token = `pg_sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-  if (!cloudState.sessions) cloudState.sessions = {};
-  cloudState.sessions[token] = user.id;
+  const isPhone = isPhoneNumberInput(cleanIdent);
+  if (!isPhone && !cleanIdent.includes('@')) {
+    res.status(200).json({
+      ok: false,
+      error: 'Please enter a valid Email ID (e.g. user@domain.com) or Phone Number (e.g. +15550109999).',
+    });
+    return;
+  }
 
+  normalizeServerUsersAndRoles(cloudState);
+  let user = findUserByIdentifier(cloudState, cleanIdent);
+  let isNewRegistration = false;
+
+  if (loginSection === 'admin') {
+    if (!user || (user.role || '').trim().toLowerCase() !== 'admin') {
+      res.status(200).json({
+        ok: false,
+        error:
+          'Admin Login is restricted to accounts with the Admin role (Default Admin: admin@gridario.com or +15550109999).',
+      });
+      return;
+    }
+  }
+
+  if (!user) {
+    isNewRegistration = true;
+    const nowIso = new Date().toISOString();
+    const derivedName =
+      displayName ||
+      (isPhone
+        ? `User ${cleanIdent.slice(-4)}`
+        : cleanIdent.split('@')[0].replace(/[._-]+/g, ' '));
+    const formattedName =
+      derivedName.charAt(0).toUpperCase() + derivedName.slice(1);
+
+    const defaultDbPerms: Record<string, boolean> = {};
+    const defaultTblPerms: Record<string, Record<string, boolean>> = {};
+    for (const db of cloudState.databases || []) {
+      defaultDbPerms[db.databaseName] = false;
+      defaultTblPerms[db.databaseName] = {};
+      for (const tbl of db.tables || []) {
+        defaultTblPerms[db.databaseName][tbl.tableName] = false;
+      }
+    }
+
+    user = {
+      id: `usr_sys_${Date.now().toString(36)}`,
+      identifier: cleanIdent.toLowerCase(),
+      email: isPhone ? '' : cleanIdent.toLowerCase(),
+      phoneNumber: isPhone ? cleanIdent : '',
+      passwordHash: '0000',
+      currentOtp: '0000',
+      otpDeliveryChannel: isPhone ? 'sms_whatsapp' : 'email',
+      displayName: formattedName.slice(0, 60),
+      role: 'Basic',
+      color: '#34A853',
+      isReviewedByAdmin: false,
+      hasAllDatabaseAccess: false,
+      canCreate: false,
+      canRead: true,
+      canUpdate: false,
+      canDelete: false,
+      databasePermissions: defaultDbPerms,
+      tablePermissions: defaultTblPerms,
+      createdAt: nowIso,
+    };
+    if (!cloudState.users) cloudState.users = [];
+    cloudState.users.push(user);
+  } else if (displayName) {
+    user.displayName = displayName.slice(0, 60);
+  }
+
+  // Generate a fresh 4-digit OTP and set it as the user's new password
+  const newOtp = String(Math.floor(1000 + Math.random() * 9000));
+  user.currentOtp = newOtp;
+  user.passwordHash = newOtp;
+  user.otpDeliveryChannel = isPhone ? 'sms_whatsapp' : 'email';
+  user.otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+
+  syncSystemDatabaseTablesInState(cloudState, true);
   recordActivity(
     user.displayName,
     user.color,
-    'User Login',
-    `Authenticated user ${user.email} (${user.role})`
+    'OTP Password Generated',
+    `Generated new 4-digit OTP password for ${cleanIdent} via ${isPhone ? 'SMS / WhatsApp' : 'Email'}`
+  );
+  saveStateToDisk(cloudState);
+
+  const deliveryLabel = isPhone ? 'SMS / WhatsApp' : 'Email';
+  res.status(200).json({
+    ok: true,
+    identifier: cleanIdent,
+    deliveryChannel: user.otpDeliveryChannel,
+    deliveryLabel,
+    otpCode: newOtp,
+    isNewUser: isNewRegistration,
+    role: user.role,
+    message: `New 4-digit OTP (${newOtp}) generated & set as your password. Dispatched via ${deliveryLabel} to ${cleanIdent}.`,
+  });
+}
+
+function handleOAuthToken(req: Request, res: Response): void {
+  const rawBody = (req.body || {}) as {
+    grant_type?: string;
+    identifier?: string;
+    email?: string;
+    phone?: string;
+    otp?: string;
+    otpCode?: string;
+    password?: string;
+    displayName?: string;
+    loginSection?: 'user' | 'admin';
+    isAdminLogin?: boolean;
+  };
+  const grant_type = rawBody.grant_type || 'otp_password';
+  const rawIdentifier = (
+    rawBody.identifier ||
+    rawBody.email ||
+    rawBody.phone ||
+    ''
+  ).trim();
+  const rawOtp = String(
+    rawBody.otp ||
+    rawBody.otpCode ||
+    rawBody.password ||
+    ''
+  ).trim();
+  const displayName = (rawBody.displayName || '').trim();
+  const loginSection = (
+    rawBody.loginSection ||
+    (rawBody.isAdminLogin ? 'admin' : 'user')
+  );
+
+  const cleanIdent = rawIdentifier.trim();
+  const cleanOtp = rawOtp.trim();
+  if (!cleanIdent || !cleanOtp) {
+    res.status(200).json({
+      ok: false,
+      error: 'Email/Phone Number and 4-digit OTP password are required.',
+    });
+    return;
+  }
+
+  if (!/^\d{4}$/.test(cleanOtp)) {
+    res.status(200).json({
+      ok: false,
+      error: 'Password must be a valid 4-digit OTP code.',
+    });
+    return;
+  }
+
+  normalizeServerUsersAndRoles(cloudState);
+  const user = findUserByIdentifier(cloudState, cleanIdent);
+  if (!user) {
+    res.status(200).json({
+      ok: false,
+      error: 'Account not found. Click "Verify" first to auto-register and generate your OTP password.',
+    });
+    return;
+  }
+
+  if (loginSection === 'admin' && (user.role || '').trim().toLowerCase() !== 'admin') {
+    res.status(200).json({
+      ok: false,
+      error: 'Access denied: Only accounts with the Admin role can sign in via Admin Login.',
+    });
+    return;
+  }
+
+  const expectedOtp = String(user.currentOtp || user.passwordHash || '').trim();
+  if (cleanOtp !== expectedOtp) {
+    res.status(200).json({
+      ok: false,
+      error: 'Invalid 4-digit OTP password. Please check the OTP sent to your Email/SMS or click "New OTP".',
+    });
+    return;
+  }
+
+  if (displayName) {
+    user.displayName = displayName.slice(0, 60);
+  }
+  const nowIso = new Date().toISOString();
+  user.lastLoginAt = nowIso;
+
+  const accessToken = `oauth2_at_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  const refreshToken = `oauth2_rt_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+  const scope = [
+    user.canRead !== false ? 'read' : '',
+    user.canCreate ? 'create' : '',
+    user.canUpdate ? 'write' : '',
+    user.canDelete ? 'delete' : '',
+    (user.role || '').toLowerCase() === 'admin' ? 'admin' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+
+  if (!cloudState.sessions) cloudState.sessions = {};
+  cloudState.sessions[accessToken] = user.id;
+
+  if (!Array.isArray(cloudState.oauthTokens)) cloudState.oauthTokens = [];
+  cloudState.oauthTokens.unshift({
+    id: `tok_${Date.now().toString(36)}`,
+    userId: user.id,
+    identifier: user.identifier || user.email || user.phoneNumber || '',
+    accessToken,
+    refreshToken,
+    grantType: grant_type || 'otp_password',
+    scope: scope || 'read',
+    issuedAt: nowIso,
+    expiresAt,
+  });
+
+  syncSystemDatabaseTablesInState(cloudState, true);
+  recordActivity(
+    user.displayName,
+    user.color,
+    'OAuth2 OTP Login',
+    `Authenticated ${user.identifier || user.email} (${user.role}) via 4-digit OTP`
   );
   saveStateToDisk(cloudState);
 
   res.status(200).json({
     ok: true,
-    token,
-    user: {
-      id: user.id,
-      email: user.email,
-      displayName: user.displayName,
-      role: user.role,
-      color: user.color,
-    },
+    token_type: 'Bearer',
+    access_token: accessToken,
+    refresh_token: refreshToken,
+    expires_in: 86400,
+    scope,
+    token: accessToken,
+    user: serializeAuthUser(user, cloudState),
   });
-});
+}
 
 /**
- * POST /api/auth/register — creates a new user account
+ * Standalone OAuth2 4-Digit OTP generator & dispatcher (mapped to both /api/oauth and /api/oauth2).
  */
+app.post('/api/oauth/request-otp', handleRequestOtp);
+app.post('/api/oauth2/request-otp', handleRequestOtp);
+
+/**
+ * Standalone OAuth2 Token Endpoint (mapped to both /api/oauth and /api/oauth2).
+ */
+app.post('/api/oauth/token', handleOAuthToken);
+app.post('/api/oauth2/token', handleOAuthToken);
+
+/**
+ * Legacy /api/auth/login & /api/auth/register mapped to the standalone OAuth2 + OTP engine
+ */
+app.post('/api/auth/login', (req: Request, res: Response) => {
+  const { email = '', password = '', identifier = '', otp = '', loginSection = 'user' } = (req.body || {}) as {
+    email?: string;
+    password?: string;
+    identifier?: string;
+    otp?: string;
+    loginSection?: 'user' | 'admin';
+  };
+  req.body = {
+    grant_type: 'otp_password',
+    identifier: (identifier || email || '').trim(),
+    otp: (otp || password || '').trim(),
+    loginSection,
+  };
+  const handler = registeredRouteHandlers.get('POST:/api/oauth/token');
+  if (handler) {
+    handler(req, res);
+    return;
+  }
+  res.status(200).json({ ok: false, error: 'OAuth2 token handler unavailable.' });
+});
+
 app.post('/api/auth/register', (req: Request, res: Response) => {
-  const {
-    email = '',
-    password = '',
-    displayName = '',
-    color = '#ca8a04',
-  } = (req.body || {}) as {
+  const { email = '', password = '', displayName = '' } = (req.body || {}) as {
     email?: string;
     password?: string;
     displayName?: string;
-    color?: string;
   };
-
-  const cleanEmail = email.trim().toLowerCase();
-  const cleanName = displayName.trim() || cleanEmail.split('@')[0] || 'Collaborator';
-  if (!cleanEmail || !cleanEmail.includes('@') || password.length < 4) {
-    res.status(200).json({
-      ok: false,
-      error: 'Please enter a valid email address and a password of at least 4 characters.',
-    });
+  req.body = {
+    grant_type: 'otp_password',
+    identifier: email.trim(),
+    otp: password.trim(),
+    displayName,
+    loginSection: 'user',
+  };
+  const handler = registeredRouteHandlers.get('POST:/api/oauth/token');
+  if (handler) {
+    handler(req, res);
     return;
   }
-
-  if (!Array.isArray(cloudState.users)) {
-    cloudState.users = buildDefaultUsers();
-  }
-  if (cloudState.users.some((u) => u.email.toLowerCase() === cleanEmail)) {
-    res.status(200).json({
-      ok: false,
-      error: `An account with email "${cleanEmail}" already exists.`,
-    });
-    return;
-  }
-
-  const newUser: ServerUser = {
-    id: `usr_pg_${Date.now().toString(36)}`,
-    email: cleanEmail,
-    passwordHash: password,
-    displayName: cleanName.slice(0, 60),
-    role: 'Editor',
-    color: color || '#ca8a04',
-    createdAt: new Date().toISOString(),
-  };
-
-  cloudState.users.push(newUser);
-  const token = `pg_sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-  if (!cloudState.sessions) cloudState.sessions = {};
-  cloudState.sessions[token] = newUser.id;
-
-  recordActivity(
-    newUser.displayName,
-    newUser.color,
-    'User Registered',
-    `Created account ${newUser.email}`
-  );
-  saveStateToDisk(cloudState);
-
-  res.status(200).json({
-    ok: true,
-    token,
-    user: {
-      id: newUser.id,
-      email: newUser.email,
-      displayName: newUser.displayName,
-      role: newUser.role,
-      color: newUser.color,
-    },
-  });
+  res.status(200).json({ ok: false, error: 'OAuth2 token handler unavailable.' });
 });
 
 /**
- * GET /api/auth/me — verifies PostgreSQL session token
+ * GET /api/auth/me — verifies OAuth2 Bearer token and returns full user + RBAC permissions
  */
 app.get('/api/auth/me', (req: Request, res: Response) => {
+  normalizeServerUsersAndRoles(cloudState);
   const authHeader = req.headers.authorization || '';
   const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : '';
   if (!token || !cloudState.sessions || !cloudState.sessions[token]) {
@@ -5066,18 +6582,12 @@ app.get('/api/auth/me', (req: Request, res: Response) => {
   }
   res.status(200).json({
     ok: true,
-    user: {
-      id: user.id,
-      email: user.email,
-      displayName: user.displayName,
-      role: user.role,
-      color: user.color,
-    },
+    user: serializeAuthUser(user, cloudState),
   });
 });
 
 /**
- * POST /api/auth/logout — logs out of PostgreSQL session
+ * POST /api/auth/logout — revokes OAuth2 session token
  */
 app.post('/api/auth/logout', (req: Request, res: Response) => {
   const authHeader = req.headers.authorization || '';
@@ -5087,6 +6597,191 @@ app.post('/api/auth/logout', (req: Request, res: Response) => {
     saveStateToDisk(cloudState);
   }
   res.status(200).json({ ok: true });
+});
+
+/**
+ * GET /api/admin/rbac — returns all System users, roles, and databases/tables for the Admin Panel
+ */
+app.get('/api/admin/rbac', (_req: Request, res: Response) => {
+  ensureDatabasesHierarchy(cloudState);
+  const users = (cloudState.users || []).map((u) => serializeAuthUser(u, cloudState));
+  const roles = cloudState.roles || [];
+  const databases = (cloudState.databases || [])
+    .filter((d) => d.databaseName.toLowerCase() !== 'systemdatabase')
+    .map((d) => ({
+      databaseName: d.databaseName,
+      tables: (d.tables || []).map((t) => t.tableName),
+    }));
+
+  res.status(200).json({
+    ok: true,
+    users,
+    roles,
+    databases,
+  });
+});
+
+/**
+ * POST /api/admin/users/permissions — Admin reviews a user and updates their Role, CRUD flags, and Database/Table access
+ */
+app.post('/api/admin/users/permissions', (req: Request, res: Response) => {
+  const {
+    userId = '',
+    role = 'Basic',
+    isReviewedByAdmin = true,
+    hasAllDatabaseAccess = false,
+    canCreate,
+    canRead,
+    canUpdate,
+    canDelete,
+    databasePermissions = {},
+    tablePermissions = {},
+  } = (req.body || {}) as {
+    userId?: string;
+    role?: string;
+    isReviewedByAdmin?: boolean;
+    hasAllDatabaseAccess?: boolean;
+    canCreate?: boolean;
+    canRead?: boolean;
+    canUpdate?: boolean;
+    canDelete?: boolean;
+    databasePermissions?: Record<string, boolean>;
+    tablePermissions?: Record<string, Record<string, boolean>>;
+  };
+
+  ensureDatabasesHierarchy(cloudState);
+  const user = (cloudState.users || []).find((u) => u.id === userId);
+  if (!user) {
+    res.status(200).json({ ok: false, error: 'Target user not found in System database.' });
+    return;
+  }
+
+  const cleanRole = (role || 'Basic').trim();
+  const isAdminRole = cleanRole.toLowerCase() === 'admin';
+  const roleDefaults = resolveRolePermissions(cleanRole, cloudState.roles || []);
+
+  user.role = cleanRole;
+  user.isReviewedByAdmin = isAdminRole ? true : Boolean(isReviewedByAdmin);
+  user.hasAllDatabaseAccess = isAdminRole ? true : Boolean(hasAllDatabaseAccess);
+  user.canCreate = isAdminRole
+    ? true
+    : canCreate !== undefined
+      ? Boolean(canCreate)
+      : roleDefaults.canCreate;
+  user.canRead = isAdminRole
+    ? true
+    : canRead !== undefined
+      ? Boolean(canRead)
+      : roleDefaults.canRead;
+  user.canUpdate = isAdminRole
+    ? true
+    : canUpdate !== undefined
+      ? Boolean(canUpdate)
+      : roleDefaults.canUpdate;
+  user.canDelete = isAdminRole
+    ? true
+    : canDelete !== undefined
+      ? Boolean(canDelete)
+      : roleDefaults.canDelete;
+
+  user.databasePermissions = { ...databasePermissions };
+  user.tablePermissions = {};
+  for (const [dbKey, tblMap] of Object.entries(tablePermissions || {})) {
+    user.tablePermissions[dbKey] = { ...(tblMap || {}) };
+  }
+
+  // Normalize against all current databases & tables
+  normalizeServerUsersAndRoles(cloudState);
+  syncSystemDatabaseTablesInState(cloudState, true);
+
+  recordActivity(
+    'System Admin',
+    '#4285F4',
+    'Admin Updated User Permissions',
+    `Updated RBAC role (${user.role}) and database/table access for ${user.identifier || user.email}`
+  );
+  saveStateToDisk(cloudState);
+
+  res.status(200).json({
+    ok: true,
+    updatedUser: serializeAuthUser(user, cloudState),
+    users: (cloudState.users || []).map((u) => serializeAuthUser(u, cloudState)),
+    roles: cloudState.roles || [],
+    databases: getDatabaseSummaries(cloudState),
+  });
+});
+
+/**
+ * POST /api/admin/roles — Admin creates or updates a Role's CRUD permissions in System.Roles
+ */
+app.post('/api/admin/roles', (req: Request, res: Response) => {
+  const {
+    roleName = '',
+    description = '',
+    canCreate = false,
+    canRead = true,
+    canUpdate = false,
+    canDelete = false,
+  } = (req.body || {}) as {
+    roleName?: string;
+    description?: string;
+    canCreate?: boolean;
+    canRead?: boolean;
+    canUpdate?: boolean;
+    canDelete?: boolean;
+  };
+
+  const cleanName = roleName.trim();
+  if (!cleanName) {
+    res.status(200).json({ ok: false, error: 'Role name is required.' });
+    return;
+  }
+
+  ensureDatabasesHierarchy(cloudState);
+  const existing = (cloudState.roles || []).find(
+    (r) => r.roleName.trim().toLowerCase() === cleanName.toLowerCase()
+  );
+  const isAdminRole = cleanName.toLowerCase() === 'admin';
+
+  if (existing) {
+    existing.description = description.trim() || existing.description;
+    existing.canCreate = isAdminRole ? true : Boolean(canCreate);
+    existing.canRead = isAdminRole ? true : Boolean(canRead);
+    existing.canUpdate = isAdminRole ? true : Boolean(canUpdate);
+    existing.canDelete = isAdminRole ? true : Boolean(canDelete);
+  } else {
+    cloudState.roles!.push({
+      id: `role_${Date.now().toString(36)}`,
+      roleName: cleanName,
+      description: description.trim() || `Custom role ${cleanName}`,
+      canCreate: Boolean(canCreate),
+      canRead: Boolean(canRead),
+      canUpdate: Boolean(canUpdate),
+      canDelete: Boolean(canDelete),
+      isSystemRole: false,
+      createdAt: new Date().toISOString(),
+    });
+  }
+
+  // Sync CRUD flags to users assigned to this role
+  for (const u of cloudState.users || []) {
+    if ((u.role || '').trim().toLowerCase() === cleanName.toLowerCase()) {
+      u.canCreate = isAdminRole ? true : Boolean(canCreate);
+      u.canRead = isAdminRole ? true : Boolean(canRead);
+      u.canUpdate = isAdminRole ? true : Boolean(canUpdate);
+      u.canDelete = isAdminRole ? true : Boolean(canDelete);
+    }
+  }
+
+  syncSystemDatabaseTablesInState(cloudState, true);
+  saveStateToDisk(cloudState);
+
+  res.status(200).json({
+    ok: true,
+    roles: cloudState.roles || [],
+    users: (cloudState.users || []).map((u) => serializeAuthUser(u, cloudState)),
+    databases: getDatabaseSummaries(cloudState),
+  });
 });
 
 /**

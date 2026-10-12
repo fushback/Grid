@@ -187,6 +187,74 @@
             </div>
           </div>
 
+          <div class="mb-2 p-2 rounded-lg bg-slate-50 border border-slate-200 text-xs">
+            <div class="d-flex align-items-center justify-content-between gap-1 mb-1">
+              <span class="font-bold text-slate-700">Role &amp; Access Level</span>
+              <span
+                class="px-1.5 py-0.5 rounded font-mono-tabular font-bold"
+                style="font-size: 10px"
+                [class.bg-emerald-100]="isCurrentUserAdmin()"
+                [class.text-emerald-800]="isCurrentUserAdmin()"
+                [class.bg-amber-100]="!isCurrentUserAdmin() && isUnreviewedFirstTimeUser()"
+                [class.text-amber-800]="!isCurrentUserAdmin() && isUnreviewedFirstTimeUser()"
+                [class.bg-blue-100]="!isCurrentUserAdmin() && !isUnreviewedFirstTimeUser()"
+                [class.text-blue-800]="!isCurrentUserAdmin() && !isUnreviewedFirstTimeUser()"
+              >
+                {{ firebaseUser() ? (isUnreviewedFirstTimeUser() ? firebaseUser()!.role + ' (Pending Review)' : firebaseUser()!.role) : 'Not Logged In' }}
+              </span>
+            </div>
+            <div class="d-flex flex-wrap gap-1 mt-1" style="font-size: 10px">
+              <span class="px-1.5 py-0.5 rounded border" [class.bg-emerald-50]="canReadPermission()" [class.text-emerald-800]="canReadPermission()" [class.border-emerald-200]="canReadPermission()" [class.bg-slate-100]="!canReadPermission()" [class.text-slate-400]="!canReadPermission()">
+                Read: {{ canReadPermission() ? 'Yes' : 'No' }}
+              </span>
+              <span class="px-1.5 py-0.5 rounded border" [class.bg-emerald-50]="canCreatePermission()" [class.text-emerald-800]="canCreatePermission()" [class.border-emerald-200]="canCreatePermission()" [class.bg-slate-100]="!canCreatePermission()" [class.text-slate-400]="!canCreatePermission()">
+                Create: {{ canCreatePermission() ? 'Yes' : 'No' }}
+              </span>
+              <span class="px-1.5 py-0.5 rounded border" [class.bg-emerald-50]="canUpdatePermission()" [class.text-emerald-800]="canUpdatePermission()" [class.border-emerald-200]="canUpdatePermission()" [class.bg-slate-100]="!canUpdatePermission()" [class.text-slate-400]="!canUpdatePermission()">
+                Write: {{ canUpdatePermission() ? 'Yes' : 'No' }}
+              </span>
+              <span class="px-1.5 py-0.5 rounded border" [class.bg-emerald-50]="canDeletePermission()" [class.text-emerald-800]="canDeletePermission()" [class.border-emerald-200]="canDeletePermission()" [class.bg-slate-100]="!canDeletePermission()" [class.text-slate-400]="!canDeletePermission()">
+                Delete: {{ canDeletePermission() ? 'Yes' : 'No' }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Separated Admin Login & Admin Panel Section inside Profile Header -->
+          <div class="mb-2 p-2 rounded-lg bg-emerald-50/70 border border-emerald-200">
+            <div class="d-flex align-items-center justify-content-between mb-1">
+              <span class="font-bold text-emerald-950" style="font-size: 10.5px">
+                Admin Panel &amp; Separated Admin Login
+              </span>
+              <span class="px-1.5 py-0 rounded bg-emerald-100 text-emerald-800 font-mono-tabular font-semibold" style="font-size: 9.5px">
+                System DB
+              </span>
+            </div>
+            <div class="d-flex flex-column gap-1.5">
+              @if (isCurrentUserAdmin()) {
+                <button
+                  type="button"
+                  (click)="isSettingsDropdownOpen.set(false); openAdminPanelModal($event)"
+                  class="w-100 btn btn-sm btn-success d-flex align-items-center justify-content-center gap-1.5 text-xs font-semibold"
+                >
+                  <mat-icon>admin_panel_settings</mat-icon>
+                  <span>Open Admin Panel (Users, Roles &amp; Access)</span>
+                </button>
+              } @else {
+                <button
+                  type="button"
+                  (click)="isSettingsDropdownOpen.set(false); openAdminLoginModal($event)"
+                  class="w-100 btn btn-sm btn-dark d-flex align-items-center justify-content-center gap-1.5 text-xs font-semibold"
+                >
+                  <mat-icon>shield_person</mat-icon>
+                  <span>Admin Login (4-Digit OTP)</span>
+                </button>
+              }
+              <div class="text-slate-600 font-mono-tabular" style="font-size: 9.5px; line-height: 1.3">
+                Default Admin: <strong>admin&#64;gridario.com</strong> · Phone: <strong>+15550109999</strong>
+              </div>
+            </div>
+          </div>
+
           <button
             type="button"
             (click)="isSettingsDropdownOpen.set(false); activeModal.set('collaborator_profile')"
@@ -244,14 +312,16 @@
               Collaboration &amp; Export
             </div>
 
-            <button
-              type="button"
-              (click)="openExcelPasteModal('overlay', $event)"
-              class="w-100 text-start px-2 py-1.5 rounded bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-xs text-slate-700"
-            >
-              <mat-icon class="text-blue-600">content_paste_go</mat-icon>
-              <span>Paste Data from Excel / CSV...</span>
-            </button>
+            @if (canCreatePermission() || canUpdatePermission()) {
+              <button
+                type="button"
+                (click)="openExcelPasteModal('overlay', $event)"
+                class="w-100 text-start px-2 py-1.5 rounded bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-xs text-slate-700"
+              >
+                <mat-icon class="text-blue-600">content_paste_go</mat-icon>
+                <span>Paste Data from Excel / CSV...</span>
+              </button>
+            }
 
             <button
               type="button"
@@ -272,24 +342,34 @@
             </button>
           </div>
 
-          <div class="pt-2 border-t border-slate-200">
+          <div class="pt-2 border-t border-slate-200 d-flex flex-column gap-1.5">
             @if (firebaseUser()) {
-              <button
-                type="button"
-                (click)="isSettingsDropdownOpen.set(false); handleSignOut()"
-                class="w-100 btn btn-sm btn-outline-danger d-flex align-items-center justify-content-center gap-1.5 text-xs"
-              >
-                <mat-icon>logout</mat-icon>
-                <span>Log Out</span>
-              </button>
+              <div class="d-flex gap-1.5">
+                <button
+                  type="button"
+                  (click)="isSettingsDropdownOpen.set(false); handleGoogleSignIn($event, 'user')"
+                  class="flex-grow-1 btn btn-sm btn-outline-primary d-flex align-items-center justify-content-center gap-1 text-xs"
+                >
+                  <mat-icon>swap_horiz</mat-icon>
+                  <span>Switch User (OTP)</span>
+                </button>
+                <button
+                  type="button"
+                  (click)="isSettingsDropdownOpen.set(false); handleSignOut()"
+                  class="btn btn-sm btn-outline-danger d-flex align-items-center justify-content-center gap-1 text-xs"
+                >
+                  <mat-icon>logout</mat-icon>
+                  <span>Log Out</span>
+                </button>
+              </div>
             } @else {
               <button
                 type="button"
-                (click)="isSettingsDropdownOpen.set(false); handleGoogleSignIn($event)"
+                (click)="isSettingsDropdownOpen.set(false); handleGoogleSignIn($event, 'user')"
                 class="w-100 btn btn-sm btn-primary d-flex align-items-center justify-content-center gap-1.5 text-xs"
               >
                 <mat-icon>login</mat-icon>
-                <span>User Login</span>
+                <span>User Login (4-Digit OTP)</span>
               </button>
             }
           </div>
@@ -439,12 +519,25 @@
                 <span>Redo</span>
               </button>
 
+              <button
+                type="button"
+                [disabled]="!hasUncommittedChangesToRedis()"
+                (click)="clearActionTooltip(); commitAllUncommittedChangesToRedis($event)"
+                class="gridario-ribbon-tall-btn"
+                [class.is-highlighted]="hasUncommittedChangesToRedis()"
+                data-office-tip="Commit all uncommitted cell edits to Redis immediately (Ctrl+S)"
+              >
+                <mat-icon [style.color]="hasUncommittedChangesToRedis() ? '#FBBC05' : '#94A3B8'">save</mat-icon>
+                <span>Commit</span>
+              </button>
+
               <div class="gridario-ribbon-stack">
                 <button
                   type="button"
+                  [disabled]="!hasActiveConnection() || !activeTableName()"
                   (click)="clearActionTooltip(); refreshTableData($event)"
                   class="gridario-ribbon-sm-btn is-success"
-                  data-office-tip="Refresh Table Data from Database"
+                  data-office-tip="Refresh Currently Visible Table in Grid from Database"
                 >
                   <mat-icon style="color: #34A853">refresh</mat-icon>
                   <span>Refresh</span>
@@ -1130,34 +1223,38 @@
           class="ssms-toolbar d-flex flex-column gap-1.5"
           [class.d-none]="activeSidebarTab() !== 'object_explorer'"
         >
-          <!-- Row 1: Icon Strip (Refresh | Expand All | Collapse All | New DB) + Filter Search -->
+          <!-- Row 1: Icon Strip (Contract Node | Expand Node | Refresh | New DB) + Filter Search -->
           <div class="d-flex align-items-center justify-content-between gap-1">
             <div class="d-flex align-items-center gap-0.5 shrink-0">
               <button
                 type="button"
-                (click)="refreshServerAndRetrieveObjects($event)"
+                (click)="collapseAllManageTree($event)"
                 class="ssms-toolbar-btn"
-                aria-label="Retrieve All Databases, Tables and Fields from Server"
+                title="Contract nodes to Databases list (keeps Server, Databases folder, and database list open)"
+                aria-label="Contract Nodes to Databases List"
               >
-                <mat-icon style="color: #4285F4">sync</mat-icon>
+                <mat-icon style="color: #4285F4">unfold_less</mat-icon>
               </button>
 
               <button
                 type="button"
+                [disabled]="!canExpandSelectedDatabaseInTree()"
                 (click)="expandAllManageTree($event)"
                 class="ssms-toolbar-btn"
-                aria-label="Expand All Nodes"
+                [title]="canExpandSelectedDatabaseInTree() ? 'Expand Tables and Fields for selected database (' + getTargetSelectedExplorerDatabase() + ')' : 'Select a database in Object Explorer to expand its Tables and Fields'"
+                aria-label="Expand Selected Database Tables and Fields"
               >
                 <mat-icon style="color: #4285F4">unfold_more</mat-icon>
               </button>
 
               <button
                 type="button"
-                (click)="collapseAllManageTree($event)"
+                (click)="refreshServerAndRetrieveObjects($event)"
                 class="ssms-toolbar-btn"
-                aria-label="Collapse All Nodes"
+                title="Refresh all nodes and expand till Databases list"
+                aria-label="Refresh All Nodes and Expand Till Database List"
               >
-                <mat-icon style="color: #4285F4">unfold_less</mat-icon>
+                <mat-icon style="color: #4285F4">sync</mat-icon>
               </button>
 
               <span class="text-slate-300 mx-0.5" style="font-size: 11px">|</span>
@@ -1166,6 +1263,7 @@
                 type="button"
                 (click)="openCreateDatabaseModal($event)"
                 class="ssms-toolbar-btn"
+                title="New Database"
                 aria-label="New Database"
               >
                 <mat-icon style="color: #FBBC05">create_new_folder</mat-icon>
@@ -1208,7 +1306,7 @@
             <div
               class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 text-slate-900 font-semibold cursor-pointer"
               style="font-size: 12.5px"
-              (click)="toggleServerNode($event)"
+              (dblclick)="toggleServerNode($event)"
               (keydown.enter)="toggleServerNode($event)"
               (contextmenu)="onSidebarContextMenu($event, 'server')"
               (touchstart)="onSidebarTouchStart($event, 'server')"
@@ -1220,9 +1318,23 @@
                 <button
                   type="button"
                   (click)="toggleServerNode($event)"
+                  (dblclick)="$event.stopPropagation()"
                   class="ssms-expander"
+                  [class.ssms-expander-loading]="isServerNodeExpanding()"
                 >
-                  {{ isServerNodeExpanded() ? '−' : '+' }}
+                  @if (isServerNodeExpanding()) {
+                    <svg class="ssms-expander-loader" viewBox="0 0 24 24" aria-label="Loading">
+                      <path
+                        d="M 3 12 A 9 9 0 0 1 21 12"
+                        fill="none"
+                        stroke="#4285F4"
+                        stroke-width="3"
+                        stroke-linecap="round"
+                      />
+                    </svg>
+                  } @else {
+                    {{ isServerNodeExpanded() ? '−' : '+' }}
+                  }
                 </button>
                 <div class="position-relative d-inline-flex align-items-center justify-content-center shrink-0">
                   <mat-icon style="color: #4285F4">dns</mat-icon>
@@ -1238,16 +1350,6 @@
                   {{ serverHost() }}/{{ serverName() }} - ({{ serverClusterName() }})/{{ serverLoginUser() }}
                 </span>
               </div>
-              <div class="manage-node-actions d-flex align-items-center gap-1 shrink-0">
-                <button
-                  type="button"
-                  (click)="refreshServerAndRetrieveObjects($event)"
-                  class="ssms-action-icon-btn ssms-action-edit"
-                  aria-label="Retrieve all databases, tables, and fields from server"
-                >
-                  <mat-icon>sync</mat-icon>
-                </button>
-              </div>
             </div>
 
             <!-- Level 1 Branch under Server Instance: Databases Folder -->
@@ -1259,7 +1361,7 @@
                 >
                   <div
                     class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
-                    (click)="toggleDatabasesFolderNode($event)"
+                    (dblclick)="toggleDatabasesFolderNode($event)"
                     (keydown.enter)="toggleDatabasesFolderNode($event)"
                     (contextmenu)="onSidebarContextMenu($event, 'databases_folder')"
                     (touchstart)="onSidebarTouchStart($event, 'databases_folder')"
@@ -1271,9 +1373,23 @@
                       <button
                         type="button"
                         (click)="toggleDatabasesFolderNode($event)"
+                        (dblclick)="$event.stopPropagation()"
                         class="ssms-expander"
+                        [class.ssms-expander-loading]="isDatabasesFolderExpanding()"
                       >
-                        {{ isDatabasesFolderExpanded() ? '−' : '+' }}
+                        @if (isDatabasesFolderExpanding()) {
+                          <svg class="ssms-expander-loader" viewBox="0 0 24 24" aria-label="Loading">
+                            <path
+                              d="M 3 12 A 9 9 0 0 1 21 12"
+                              fill="none"
+                              stroke="#4285F4"
+                              stroke-width="3"
+                              stroke-linecap="round"
+                            />
+                          </svg>
+                        } @else {
+                          {{ isDatabasesFolderExpanded() ? '−' : '+' }}
+                        }
                       </button>
                       <mat-icon
                         class="shrink-0"
@@ -1282,25 +1398,31 @@
                         folder
                       </mat-icon>
                       <span class="font-semibold text-slate-900 truncate" style="font-size: 12.5px">
-                        Databases <span class="font-normal">({{ filteredManageDatabases().length }})</span>
+                        Databases
                       </span>
                     </div>
-                    <button
-                      type="button"
-                      (click)="openCreateDatabaseModal($event)"
-                      class="ssms-action-icon-btn ssms-action-add shrink-0"
-                      aria-label="New Database"
-                    >
-                      <mat-icon>add</mat-icon>
-                    </button>
                   </div>
 
                   <!-- Level 2 Branch: Individual Database Nodes -->
                   @if (isDatabasesFolderExpanded()) {
+                    @if (isUnreviewedFirstTimeUser()) {
+                      <div class="p-2.5 my-1.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
+                        <div class="font-bold d-flex align-items-center gap-1.5 mb-1">
+                          <mat-icon style="font-size: 14px; width: 14px; height: 14px" class="text-amber-600">lock_clock</mat-icon>
+                          <span>Pending Admin Review</span>
+                        </div>
+                        <div style="font-size: 10.5px; line-height: 1.35">
+                          First-time user accounts see no databases until reviewed and granted access by an Administrator in the Admin Panel.
+                        </div>
+                      </div>
+                    }
                     <div class="manage-tree-branch mt-1 d-flex flex-column gap-1">
                       @for (db of filteredManageDatabases(); track db.databaseName) {
                         @let isDbActive = db.databaseName.toLowerCase() === activeDatabaseName().toLowerCase() && hasActiveConnection();
+                        @let isDbSelected = db.databaseName.toLowerCase() === getTargetSelectedExplorerDatabase().toLowerCase();
                         @let isDbExpanded = isDatabaseNodeExpanded(db.databaseName);
+                        @let isTablesFolderExpanded = isTablesFolderNodeExpanded(db.databaseName);
+                        @let dbTables = getTablesForManageDatabase(db);
                         <div
                           class="ssms-tree-node-wrapper"
                           (contextmenu)="onSidebarContextMenu($event, 'database', db.databaseName)"
@@ -1308,8 +1430,9 @@
                           <!-- Database Node Row -->
                           <div
                             class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
-                            [class.ssms-node-selected]="isDbActive"
-                            (click)="toggleDatabaseNode(db.databaseName, $event)"
+                            [class.ssms-node-selected]="isDbSelected || isDbActive"
+                            (click)="selectObjectExplorerDatabase(db.databaseName, $event)"
+                            (dblclick)="toggleDatabaseNode(db.databaseName, $event)"
                             (keydown.enter)="toggleDatabaseNode(db.databaseName, $event)"
                             (contextmenu)="onSidebarContextMenu($event, 'database', db.databaseName)"
                             (touchstart)="onSidebarTouchStart($event, 'database', db.databaseName)"
@@ -1321,9 +1444,23 @@
                               <button
                                 type="button"
                                 (click)="toggleDatabaseNode(db.databaseName, $event)"
+                                (dblclick)="$event.stopPropagation()"
                                 class="ssms-expander"
+                                [class.ssms-expander-loading]="isDatabaseNodeExpanding(db.databaseName)"
                               >
-                                {{ isDbExpanded ? '−' : '+' }}
+                                @if (isDatabaseNodeExpanding(db.databaseName)) {
+                                  <svg class="ssms-expander-loader" viewBox="0 0 24 24" aria-label="Loading">
+                                    <path
+                                      d="M 3 12 A 9 9 0 0 1 21 12"
+                                      fill="none"
+                                      stroke="#4285F4"
+                                      stroke-width="3"
+                                      stroke-linecap="round"
+                                    />
+                                  </svg>
+                                } @else {
+                                  {{ isDbExpanded ? '−' : '+' }}
+                                }
                               </button>
                               <mat-icon
                                 class="shrink-0"
@@ -1339,176 +1476,226 @@
                                 {{ db.databaseName }}
                               </span>
                             </div>
-
-                            <div class="manage-node-actions d-flex align-items-center gap-1 shrink-0">
-                              <button
-                                type="button"
-                                (click)="openCreateTableForDatabaseFromTree(db.databaseName, $event)"
-                                class="ssms-action-icon-btn ssms-action-add"
-                              >
-                                <mat-icon>add</mat-icon>
-                              </button>
-                              <button
-                                type="button"
-                                (click)="openRenameSidebarModal('database', db.databaseName, '', null, $event)"
-                                class="ssms-action-icon-btn ssms-action-edit"
-                              >
-                                <mat-icon>edit</mat-icon>
-                              </button>
-                              @if (databases().length > 1) {
-                                <button
-                                  type="button"
-                                  (click)="deleteDatabase(db.databaseName, $event)"
-                                  class="ssms-action-icon-btn ssms-action-danger"
-                                >
-                                  <mat-icon>delete_outline</mat-icon>
-                                </button>
-                              }
-                            </div>
                           </div>
 
-                          <!-- Level 3 Branch: Tables inside Database -->
+                          <!-- Level 3 Branch: Tables Folder Node inside Database -->
                           @if (isDbExpanded) {
                             <div class="manage-tree-branch mt-1 d-flex flex-column gap-1">
-                              @for (tbl of db.tables; track tbl.tableName) {
-                                @let isTblActive = isDbActive && tbl.tableName.toLowerCase() === activeTableName().toLowerCase();
-                                @let isTblExpanded = isTableNodeExpanded(db.databaseName, tbl.tableName);
-                                @let tblCols = getColumnsForManageTable(db.databaseName, tbl);
+                              <div
+                                class="ssms-tree-node-wrapper"
+                                (contextmenu)="onSidebarContextMenu($event, 'tables_folder', db.databaseName)"
+                              >
                                 <div
-                                  class="ssms-tree-node-wrapper"
-                                  (contextmenu)="onSidebarContextMenu($event, 'table', db.databaseName, tbl.tableName)"
+                                  class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
+                                  (click)="selectObjectExplorerDatabase(db.databaseName, $event)"
+                                  (dblclick)="toggleTablesFolderNode(db.databaseName, $event)"
+                                  (keydown.enter)="toggleTablesFolderNode(db.databaseName, $event)"
+                                  (contextmenu)="onSidebarContextMenu($event, 'tables_folder', db.databaseName)"
+                                  (touchstart)="onSidebarTouchStart($event, 'tables_folder', db.databaseName)"
+                                  (touchend)="onSidebarTouchEndOrMove()"
+                                  (touchmove)="onSidebarTouchEndOrMove()"
+                                  tabindex="0"
                                 >
-                                  <!-- Table Node Row -->
-                                  <div
-                                    class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
-                                    [class.ssms-table-selected]="isTblActive"
-                                    (click)="selectTableFromTree(db.databaseName, tbl.tableName, $event)"
-                                    (dblclick)="selectTableFromContextMenu(db.databaseName, tbl.tableName, $event)"
-                                    (keydown.enter)="selectTableFromTree(db.databaseName, tbl.tableName, $event)"
-                                    (contextmenu)="onSidebarContextMenu($event, 'table', db.databaseName, tbl.tableName)"
-                                    (touchstart)="onSidebarTouchStart($event, 'table', db.databaseName, tbl.tableName)"
-                                    (touchend)="onSidebarTouchEndOrMove()"
-                                    (touchmove)="onSidebarTouchEndOrMove()"
-                                    tabindex="0"
-                                  >
-                                    <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
-                                      <button
-                                        type="button"
-                                        (click)="toggleTableNode(db.databaseName, tbl.tableName, $event)"
-                                        class="ssms-expander"
-                                      >
-                                        {{ isTblExpanded ? '−' : '+' }}
-                                      </button>
-                                      <mat-icon
-                                        class="shrink-0"
-                                        [style.color]="isTblActive ? '#34A853' : '#4285F4'"
-                                      >
-                                        table_chart
-                                      </mat-icon>
-                                      <span
-                                        class="truncate"
-                                        style="font-size: 12.5px"
-                                      >
-                                        {{ tbl.tableName }}
-                                      </span>
-                                    </div>
-
-                                    <div class="manage-node-actions d-flex align-items-center gap-1 shrink-0">
-                                      <button
-                                        type="button"
-                                        (click)="openAddColumnForTableFromTree(db.databaseName, tbl.tableName, $event)"
-                                        class="ssms-action-icon-btn ssms-action-add"
-                                      >
-                                        <mat-icon>add</mat-icon>
-                                      </button>
-                                      <button
-                                        type="button"
-                                        (click)="openRenameSidebarModal('table', db.databaseName, tbl.tableName, null, $event)"
-                                        class="ssms-action-icon-btn ssms-action-edit"
-                                      >
-                                        <mat-icon>edit</mat-icon>
-                                      </button>
-                                      <button
-                                        type="button"
-                                        (click)="deleteTable(tbl.tableName, $event, db.databaseName)"
-                                        class="ssms-action-icon-btn ssms-action-danger"
-                                      >
-                                        <mat-icon>delete_outline</mat-icon>
-                                      </button>
-                                    </div>
+                                  <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
+                                    <button
+                                      type="button"
+                                      (click)="toggleTablesFolderNode(db.databaseName, $event)"
+                                      (dblclick)="$event.stopPropagation()"
+                                      class="ssms-expander"
+                                      [class.ssms-expander-loading]="isTablesFolderNodeExpanding(db.databaseName)"
+                                    >
+                                      @if (isTablesFolderNodeExpanding(db.databaseName)) {
+                                        <svg class="ssms-expander-loader" viewBox="0 0 24 24" aria-label="Loading">
+                                          <path
+                                            d="M 3 12 A 9 9 0 0 1 21 12"
+                                            fill="none"
+                                            stroke="#4285F4"
+                                            stroke-width="3"
+                                            stroke-linecap="round"
+                                          />
+                                        </svg>
+                                      } @else {
+                                        {{ isTablesFolderExpanded ? '−' : '+' }}
+                                      }
+                                    </button>
+                                    <mat-icon
+                                      class="shrink-0"
+                                      style="color: #FBBC05"
+                                    >
+                                      folder
+                                    </mat-icon>
+                                    <span class="font-semibold text-slate-900 truncate" style="font-size: 12.5px">
+                                      Tables
+                                    </span>
                                   </div>
+                                </div>
 
-                                  <!-- Level 4 Branch: Columns inside Table e.g. ID (PK, int, not null) -->
-                                  @if (isTblExpanded) {
-                                    <div class="manage-tree-branch mt-1 d-flex flex-column gap-1">
-                                      @for (col of tblCols; track col.id) {
-                                        @let isColSelected = isTblActive && selectedColumnId() === col.id;
-                                        @let isColIdLocked = isIdPrimaryKeyColumn(col);
+                                <!-- Level 4 Branch: Individual Tables inside Tables Folder -->
+                                @if (isTablesFolderExpanded) {
+                                  <div class="manage-tree-branch mt-1 d-flex flex-column gap-1">
+                                    @for (tbl of dbTables; track tbl.tableName) {
+                                      @let isTblActive = isDbActive && tbl.tableName.toLowerCase() === activeTableName().toLowerCase();
+                                      @let isTblExpanded = isTableNodeExpanded(db.databaseName, tbl.tableName);
+                                      @let isColumnsFolderExpanded = isColumnsFolderNodeExpanded(db.databaseName, tbl.tableName);
+                                      @let tblCols = getColumnsForManageTable(db.databaseName, tbl);
+                                      <div
+                                        class="ssms-tree-node-wrapper"
+                                        (contextmenu)="onSidebarContextMenu($event, 'table', db.databaseName, tbl.tableName)"
+                                      >
+                                        <!-- Table Node Row -->
                                         <div
-                                          class="ssms-tree-node-wrapper"
-                                          (contextmenu)="onSidebarContextMenu($event, 'field', db.databaseName, tbl.tableName, col)"
+                                          class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
+                                          [class.ssms-table-selected]="isTblActive"
+                                          (click)="selectObjectExplorerDatabase(db.databaseName, $event)"
+                                          (dblclick)="toggleTableNode(db.databaseName, tbl.tableName, $event)"
+                                          (keydown.enter)="toggleTableNode(db.databaseName, tbl.tableName, $event)"
+                                          (contextmenu)="onSidebarContextMenu($event, 'table', db.databaseName, tbl.tableName)"
+                                          (touchstart)="onSidebarTouchStart($event, 'table', db.databaseName, tbl.tableName)"
+                                          (touchend)="onSidebarTouchEndOrMove()"
+                                          (touchmove)="onSidebarTouchEndOrMove()"
+                                          tabindex="0"
                                         >
-                                          <div
-                                            class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
-                                            [class.ssms-node-selected]="isColSelected"
-                                            tabindex="0"
-                                            role="treeitem"
-                                            [attr.aria-selected]="isColSelected"
-                                            (click)="selectColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
-                                            (keydown.enter)="selectColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
-                                            (dblclick)="!isColIdLocked ? openEditColumnFromTree(db.databaseName, tbl.tableName, col, $event) : null"
-                                            (contextmenu)="onSidebarContextMenu($event, 'field', db.databaseName, tbl.tableName, col)"
-                                            (touchstart)="onSidebarTouchStart($event, 'field', db.databaseName, tbl.tableName, col)"
-                                            (touchend)="onSidebarTouchEndOrMove()"
-                                            (touchmove)="onSidebarTouchEndOrMove()"
-                                          >
-                                            <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
-                                              <mat-icon
-                                                class="shrink-0"
-                                                [style.color]="col.isPrimaryKey || col.isIdentity ? '#FBBC05' : col.colType === 'formula' ? '#34A853' : '#4285F4'"
-                                              >
-                                                {{ col.isPrimaryKey || col.isIdentity ? 'vpn_key' : col.colType === 'formula' ? 'functions' : 'view_column' }}
-                                              </mat-icon>
-                                              <span class="truncate font-mono-tabular" style="font-size: 12px">
-                                                <span class="text-slate-900 font-semibold">{{ col.name }}</span>
-                                                @if (isColumnNotNull(col)) {
-                                                  <span class="gridario-not-null-star">*</span>
-                                                }
-                                                <span class="ms-1" style="color: #000000">{{ formatColumnManageTreeMeta(col) }}</span>
-                                              </span>
-                                            </div>
-
-                                            <div class="manage-node-actions d-flex align-items-center gap-1 shrink-0">
-                                              @if (!isColIdLocked) {
-                                                <button
-                                                  type="button"
-                                                  (click)="openEditColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
-                                                  class="ssms-action-icon-btn ssms-action-edit"
-                                                >
-                                                  <mat-icon>edit</mat-icon>
-                                                </button>
-                                                <button
-                                                  type="button"
-                                                  (click)="deleteColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
-                                                  class="ssms-action-icon-btn ssms-action-danger"
-                                                >
-                                                  <mat-icon>close</mat-icon>
-                                                </button>
+                                          <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
+                                            <button
+                                              type="button"
+                                              (click)="toggleTableNode(db.databaseName, tbl.tableName, $event)"
+                                              (dblclick)="$event.stopPropagation()"
+                                              class="ssms-expander"
+                                              [class.ssms-expander-loading]="isTableNodeExpanding(db.databaseName, tbl.tableName)"
+                                            >
+                                              @if (isTableNodeExpanding(db.databaseName, tbl.tableName)) {
+                                                <svg class="ssms-expander-loader" viewBox="0 0 24 24" aria-label="Loading">
+                                                  <path
+                                                    d="M 3 12 A 9 9 0 0 1 21 12"
+                                                    fill="none"
+                                                    stroke="#4285F4"
+                                                    stroke-width="3"
+                                                    stroke-linecap="round"
+                                                  />
+                                                </svg>
                                               } @else {
-                                                <span
-                                                  class="d-inline-flex align-items-center px-1 text-slate-400"
-                                                >
-                                                  <mat-icon style="font-size: 13px; width: 13px; height: 13px">lock</mat-icon>
-                                                </span>
+                                                {{ isTblExpanded ? '−' : '+' }}
+                                              }
+                                            </button>
+                                            <mat-icon
+                                              class="shrink-0"
+                                              [style.color]="isTblActive ? '#34A853' : '#4285F4'"
+                                            >
+                                              table_chart
+                                            </mat-icon>
+                                            <span
+                                              class="truncate"
+                                              style="font-size: 12.5px"
+                                            >
+                                              {{ tbl.tableName }}
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        <!-- Level 5 Branch: Columns Folder Node inside Table -->
+                                        @if (isTblExpanded) {
+                                          <div class="manage-tree-branch mt-1 d-flex flex-column gap-1">
+                                            <div
+                                              class="ssms-tree-node-wrapper"
+                                              (contextmenu)="onSidebarContextMenu($event, 'columns_folder', db.databaseName, tbl.tableName)"
+                                            >
+                                              <div
+                                                class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
+                                                (click)="selectObjectExplorerDatabase(db.databaseName, $event)"
+                                                (dblclick)="toggleColumnsFolderNode(db.databaseName, tbl.tableName, $event)"
+                                                (keydown.enter)="toggleColumnsFolderNode(db.databaseName, tbl.tableName, $event)"
+                                                (contextmenu)="onSidebarContextMenu($event, 'columns_folder', db.databaseName, tbl.tableName)"
+                                                (touchstart)="onSidebarTouchStart($event, 'columns_folder', db.databaseName, tbl.tableName)"
+                                                (touchend)="onSidebarTouchEndOrMove()"
+                                                (touchmove)="onSidebarTouchEndOrMove()"
+                                                tabindex="0"
+                                              >
+                                                <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
+                                                  <button
+                                                    type="button"
+                                                    (click)="toggleColumnsFolderNode(db.databaseName, tbl.tableName, $event)"
+                                                    (dblclick)="$event.stopPropagation()"
+                                                    class="ssms-expander"
+                                                    [class.ssms-expander-loading]="isColumnsFolderNodeExpanding(db.databaseName, tbl.tableName)"
+                                                  >
+                                                    @if (isColumnsFolderNodeExpanding(db.databaseName, tbl.tableName)) {
+                                                      <svg class="ssms-expander-loader" viewBox="0 0 24 24" aria-label="Loading">
+                                                        <path
+                                                          d="M 3 12 A 9 9 0 0 1 21 12"
+                                                          fill="none"
+                                                          stroke="#4285F4"
+                                                          stroke-width="3"
+                                                          stroke-linecap="round"
+                                                        />
+                                                      </svg>
+                                                    } @else {
+                                                      {{ isColumnsFolderExpanded ? '−' : '+' }}
+                                                    }
+                                                  </button>
+                                                  <mat-icon
+                                                    class="shrink-0"
+                                                    style="color: #FBBC05"
+                                                  >
+                                                    folder
+                                                  </mat-icon>
+                                                  <span class="font-semibold text-slate-900 truncate" style="font-size: 12.5px">
+                                                    Columns
+                                                  </span>
+                                                </div>
+                                              </div>
+
+                                              <!-- Level 6 Branch: Individual Columns inside Columns Folder e.g. ID (PK, int, not null) -->
+                                              @if (isColumnsFolderExpanded) {
+                                                <div class="manage-tree-branch mt-1 d-flex flex-column gap-1">
+                                                  @for (col of tblCols; track col.id) {
+                                                    @let isColSelected = isTblActive && selectedColumnId() === col.id;
+                                                    @let isColIdLocked = isIdPrimaryKeyColumn(col);
+                                                    <div
+                                                      class="ssms-tree-node-wrapper"
+                                                      (contextmenu)="onSidebarContextMenu($event, 'field', db.databaseName, tbl.tableName, col)"
+                                                    >
+                                                      <div
+                                                        class="manage-tree-row d-flex align-items-center justify-content-between gap-1.5 cursor-pointer"
+                                                        [class.ssms-node-selected]="isColSelected"
+                                                        tabindex="0"
+                                                        role="treeitem"
+                                                        [attr.aria-selected]="isColSelected"
+                                                        (click)="selectColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
+                                                        (keydown.enter)="selectColumnFromTree(db.databaseName, tbl.tableName, col, $event)"
+                                                        (dblclick)="!isColIdLocked ? openEditColumnFromTree(db.databaseName, tbl.tableName, col, $event) : null"
+                                                        (contextmenu)="onSidebarContextMenu($event, 'field', db.databaseName, tbl.tableName, col)"
+                                                        (touchstart)="onSidebarTouchStart($event, 'field', db.databaseName, tbl.tableName, col)"
+                                                        (touchend)="onSidebarTouchEndOrMove()"
+                                                        (touchmove)="onSidebarTouchEndOrMove()"
+                                                      >
+                                                        <div class="d-flex align-items-center gap-2 min-w-0 flex-grow-1">
+                                                          <mat-icon
+                                                            class="shrink-0"
+                                                            [style.color]="col.isPrimaryKey || col.isIdentity ? '#FBBC05' : col.colType === 'formula' ? '#34A853' : '#4285F4'"
+                                                          >
+                                                            {{ col.isPrimaryKey || col.isIdentity ? 'vpn_key' : col.colType === 'formula' ? 'functions' : 'view_column' }}
+                                                          </mat-icon>
+                                                          <span class="truncate font-mono-tabular" style="font-size: 12px">
+                                                            <span class="text-slate-900 font-semibold">{{ col.name }}</span>
+                                                            @if (isColumnNotNull(col)) {
+                                                              <span class="gridario-not-null-star">*</span>
+                                                            }
+                                                            <span class="ms-1" style="color: #000000">{{ formatColumnManageTreeMeta(col) }}</span>
+                                                          </span>
+                                                        </div>
+                                                      </div>
+                                                    </div>
+                                                  }
+                                                </div>
                                               }
                                             </div>
                                           </div>
-                                        </div>
-                                      }
-                                    </div>
-                                  }
-                                </div>
-                              }
+                                        }
+                                      </div>
+                                    }
+                                  </div>
+                                }
+                              </div>
                             </div>
                           }
                         </div>
@@ -1880,10 +2067,10 @@
             class="manage-collapsed-tab manage-vertical-label cursor-pointer shrink-0"
             [class.manage-collapsed-tab-active]="activeSidebarTab() === 'object_explorer'"
             style="--tab-accent-color: #FBBC05"
-            title="Open Object Explorer ({{ databases().length }})"
+            title="Open Object Explorer"
           >
             <mat-icon class="manage-collapsed-tab-icon" style="color: #FBBC05">account_tree</mat-icon>
-            <span>Object Explorer ({{ databases().length }})</span>
+            <span>Object Explorer</span>
           </button>
 
           <button
@@ -1980,36 +2167,50 @@
       <!-- ACTIVE SQL SERVER DATABASE TAB BODY (Contains Table Grid + Excel Tabs)-->
       <!-- ===================================================================== -->
       <div class="flex-grow-1 d-flex flex-column overflow-hidden min-w-0 min-h-0 bg-white border-x border-b border-slate-300">
-      @if (!hasActiveConnection()) {
+      @if (isUnreviewedFirstTimeUser()) {
+        <div class="flex-grow-1 d-flex flex-column align-items-center justify-content-center p-4 text-center select-none bg-white h-100">
+          <div class="p-4 rounded-xl border border-amber-200 bg-amber-50/70" style="max-width: 480px">
+            <mat-icon class="text-amber-600 mb-2" style="font-size: 32px; width: 32px; height: 32px">verified_user</mat-icon>
+            <div class="text-base font-bold text-slate-900">
+              {{ firebaseUser() ? 'Account Awaiting Admin Review & Database Access' : 'Authentication Required' }}
+            </div>
+            <p class="text-xs text-slate-600 mt-1.5 mb-3">
+              {{ firebaseUser() ? 'You are logged in as ' + firebaseUser()!.displayName + ' (' + (firebaseUser()!.email || firebaseUser()!.phone) + ') with default Basic role and all database/table permissions set to false. Once the Administrator reviews your account and grants access from the Admin Panel, you will see all databases and be able to connect to your authorized databases and tables.' : 'Please log in using your Email or Phone 4-digit OTP, or use the separated Admin Login inside the header profile menu.' }}
+            </p>
+            <div class="d-flex align-items-center justify-content-center gap-2 flex-wrap">
+              <button
+                type="button"
+                (click)="handleGoogleSignIn($event, 'user')"
+                class="btn btn-sm btn-primary d-inline-flex align-items-center gap-1 text-xs font-semibold"
+              >
+                <mat-icon>password</mat-icon>
+                <span>User OTP Login</span>
+              </button>
+              <button
+                type="button"
+                (click)="openAdminLoginModal($event)"
+                class="btn btn-sm btn-dark d-inline-flex align-items-center gap-1 text-xs font-semibold"
+              >
+                <mat-icon>admin_panel_settings</mat-icon>
+                <span>Admin Login</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      } @else if (!hasActiveConnection()) {
         <div class="flex-grow-1 d-flex flex-column align-items-center justify-content-center p-4 text-center select-none bg-white h-100">
           <div class="text-base font-semibold text-slate-700">No Active Connection</div>
         </div>
       } @else {
       <main class="container-fluid px-2 md:px-3 py-2 flex-grow-1 d-flex flex-column overflow-hidden min-h-0">
-        @if (tables().length === 0) {
-          <div class="p-4 my-2 rounded-xl bg-white border border-slate-200 shadow-2xs d-flex flex-wrap align-items-center justify-content-between gap-3 shrink-0">
-            <div class="d-flex align-items-center gap-3">
-              <div class="p-2.5 rounded-lg bg-blue-50 text-blue-600 d-inline-flex align-items-center justify-content-center">
-                <mat-icon>storage</mat-icon>
-              </div>
-              <div>
-                <h3 class="text-sm font-bold text-slate-900 m-0">
-                  Database "{{ activeDatabaseName() }}" has no tables yet
-                </h3>
-                <p class="text-xs text-slate-500 m-0 mt-0.5">
-                  In Object Explorer on the left, right-click the "{{ activeDatabaseName() }}" database node and choose "New" to create a table.
-                </p>
-              </div>
-            </div>
-          </div>
-        } @else if (!activeTableName()) {
+        @if (!activeTableName()) {
           <div class="flex-grow-1 d-flex flex-column align-items-center justify-content-center p-4 text-center select-none bg-white h-100 border border-slate-200 rounded-xl">
             <mat-icon class="mb-2" style="font-size: 28px; width: 28px; height: 28px; color: #4285F4">table_chart</mat-icon>
             <div class="text-sm font-semibold text-slate-800">
               No Table Open in "{{ activeDatabaseName() }}"
             </div>
             <div class="text-xs text-slate-500 mt-1">
-              Open a table from Object Explorer on the left (right-click a table and choose "Select", or double-click it) to view its rows.
+              Open a table from Object Explorer on the left (right-click a table and choose "Select", or click its open icon) to view its rows.
             </div>
           </div>
         } @else if (sortedColumns().length === 0) {
@@ -2100,7 +2301,7 @@
                     (keydown.enter)="selectedColumnId.set(col.id)"
                     tabindex="0"
                   >
-                    <div class="d-flex align-items-center gap-1.5 overflow-hidden">
+                    <div class="d-flex align-items-center gap-1 overflow-hidden">
                       <span
                         class="px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-mono-tabular font-bold shrink-0"
                         style="font-size: 10px; line-height: 12px"
@@ -2221,7 +2422,7 @@
           (wheel)="onTableWheel($event)"
           (touchmove)="onTableTouchMove($event)"
         >
-          @if (activeTableName() && sortedColumns().length > 0) {
+          @if (activeTableName() && sortedColumns().length > 0 && canCreatePermission()) {
             <!-- ===================================================================== -->
             <!-- SQL SERVER ALWAYS-EMPTY FIRST ROW (ADD ROW FUNCTIONALITY - ROW 1)     -->
             <!-- Always present whether table has 0 rows or N rows; cannot be deleted. -->
@@ -2677,6 +2878,14 @@
                       (keydown)="onAlwaysEditableCellKeydown($event, row.id, col.id)"
                     ></div>
                   }
+                  <div
+                    class="gridario-cell-col-resizer"
+                    [class.col-resizing]="resizingColId() === col.id"
+                    (mousedown)="startColumnWidthResize(col, $event)"
+                    (touchstart)="startColumnWidthResize(col, $event)"
+                    (dblclick)="autoFitColumnWidth(col, $event)"
+                    (click)="$event.stopPropagation()"
+                  ></div>
                 </td>
               }
             </tr>
@@ -3290,42 +3499,44 @@
         </button>
       }
 
-      <button
-        type="button"
-        [disabled]="isAddOrPasteAboveDisabledForContextMenu()"
-        (click)="createBlankRow('above_active', contextMenu().rowId)"
-        class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2"
-        [class.opacity-50]="isAddOrPasteAboveDisabledForContextMenu()"
-        [class.cursor-not-allowed]="isAddOrPasteAboveDisabledForContextMenu()"
-        [title]="isAddOrPasteAboveDisabledForContextMenu() ? 'Add Row Above is disabled for the First Row (Add Row) and the first data row (Row 2)' : 'Insert a blank row above'"
-      >
-        <mat-icon class="text-slate-500">add</mat-icon>
-        <span>Insert New Row Above</span>
-      </button>
+      @if (canCreatePermission()) {
+        <button
+          type="button"
+          [disabled]="isAddOrPasteAboveDisabledForContextMenu()"
+          (click)="createBlankRow('above_active', contextMenu().rowId)"
+          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2"
+          [class.opacity-50]="isAddOrPasteAboveDisabledForContextMenu()"
+          [class.cursor-not-allowed]="isAddOrPasteAboveDisabledForContextMenu()"
+          [title]="isAddOrPasteAboveDisabledForContextMenu() ? 'Add Row Above is disabled for the First Row (Add Row) and the first data row (Row 2)' : 'Insert a blank row above'"
+        >
+          <mat-icon class="text-slate-500">add</mat-icon>
+          <span>Insert New Row Above</span>
+        </button>
 
-      <button
-        type="button"
-        (click)="createBlankRow('below_active', contextMenu().rowId)"
-        class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2"
-      >
-        <mat-icon class="text-slate-500">playlist_add</mat-icon>
-        <span>Insert New Row Below</span>
-      </button>
+        <button
+          type="button"
+          (click)="createBlankRow('below_active', contextMenu().rowId)"
+          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2"
+        >
+          <mat-icon class="text-slate-500">playlist_add</mat-icon>
+          <span>Insert New Row Below</span>
+        </button>
 
-      <button
-        type="button"
-        [disabled]="contextMenu().rowId === newRowSentinelId"
-        (click)="duplicateRows(contextMenu().rowId, $event)"
-        class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center justify-content-between"
-        [class.opacity-50]="contextMenu().rowId === newRowSentinelId"
-        [class.cursor-not-allowed]="contextMenu().rowId === newRowSentinelId"
-      >
-        <span class="d-inline-flex align-items-center gap-2">
-          <mat-icon class="text-blue-600">control_point_duplicate</mat-icon>
-          <span>Duplicate Row(s)</span>
-        </span>
-        <span class="text-slate-400 font-mono-tabular">Ctrl+D</span>
-      </button>
+        <button
+          type="button"
+          [disabled]="contextMenu().rowId === newRowSentinelId"
+          (click)="duplicateRows(contextMenu().rowId, $event)"
+          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center justify-content-between"
+          [class.opacity-50]="contextMenu().rowId === newRowSentinelId"
+          [class.cursor-not-allowed]="contextMenu().rowId === newRowSentinelId"
+        >
+          <span class="d-inline-flex align-items-center gap-2">
+            <mat-icon class="text-blue-600">control_point_duplicate</mat-icon>
+            <span>Duplicate Row(s)</span>
+          </span>
+          <span class="text-slate-400 font-mono-tabular">Ctrl+D</span>
+        </button>
+      }
 
       <button
         type="button"
@@ -3417,20 +3628,22 @@
         <span class="text-slate-400 font-mono-tabular">Ctrl+A</span>
       </button>
 
-      <button
-        type="button"
-        [disabled]="isDeleteRowDisabledForContextMenu()"
-        (click)="deleteSelectedOrSpecificRow(contextMenu().rowId, $event)"
-        class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-red-50 text-red-600 d-flex align-items-center gap-2 border-b border-slate-200"
-        [class.opacity-50]="isDeleteRowDisabledForContextMenu()"
-        [class.cursor-not-allowed]="isDeleteRowDisabledForContextMenu()"
-        [title]="isDeleteRowDisabledForContextMenu() ? 'First Row (Add Row) cannot be deleted' : 'Delete Row'"
-      >
-        <mat-icon>delete_outline</mat-icon>
-        <span>
-          {{ selectedRowIds().size > 0 ? 'Delete Selected Rows (' + selectedRowIds().size + ')' : 'Delete Row' }}
-        </span>
-      </button>
+      @if (canDeletePermission()) {
+        <button
+          type="button"
+          [disabled]="isDeleteRowDisabledForContextMenu()"
+          (click)="deleteSelectedOrSpecificRow(contextMenu().rowId, $event)"
+          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-red-50 text-red-600 d-flex align-items-center gap-2 border-b border-slate-200"
+          [class.opacity-50]="isDeleteRowDisabledForContextMenu()"
+          [class.cursor-not-allowed]="isDeleteRowDisabledForContextMenu()"
+          [title]="isDeleteRowDisabledForContextMenu() ? 'First Row (Add Row) cannot be deleted' : 'Delete Row'"
+        >
+          <mat-icon class="text-red-600" style="color: #EA4335">delete_outline</mat-icon>
+          <span>
+            {{ selectedRowIds().size > 0 ? 'Delete Selected Rows (' + selectedRowIds().size + ')' : 'Delete Row' }}
+          </span>
+        </button>
+      }
 
       <!-- SECTION 2: COLUMN CLIPBOARD, MOVE & DYNAMIC SCHEMA -->
       @if (contextMenu().colId; as targetColId) {
@@ -3510,23 +3723,27 @@
         </div>
 
         @if (!isColumnIdPrimaryKey(targetColId)) {
-          <button
-            type="button"
-            (click)="openEditColumnModalById(targetColId, $event)"
-            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2"
-          >
-            <mat-icon class="text-slate-500">tune</mat-icon>
-            <span>Edit Column Schema &amp; Type...</span>
-          </button>
+          @if (canUpdatePermission()) {
+            <button
+              type="button"
+              (click)="openEditColumnModalById(targetColId, $event)"
+              class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2"
+            >
+              <mat-icon class="text-slate-500">tune</mat-icon>
+              <span>Edit Column Schema &amp; Type...</span>
+            </button>
+          }
 
-          <button
-            type="button"
-            (click)="deleteColumn(targetColId, $event)"
-            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-red-50 text-red-600 d-flex align-items-center gap-2"
-          >
-            <mat-icon>delete_sweep</mat-icon>
-            <span>Delete Column "{{ contextMenu().colName }}"</span>
-          </button>
+          @if (canDeletePermission()) {
+            <button
+              type="button"
+              (click)="deleteColumn(targetColId, $event)"
+              class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-red-50 text-red-600 d-flex align-items-center gap-2"
+            >
+              <mat-icon class="text-red-600" style="color: #EA4335">delete_sweep</mat-icon>
+              <span>Delete Column "{{ contextMenu().colName }}"</span>
+            </button>
+          }
         } @else {
           <div class="px-3 py-1.5 text-slate-400 d-flex align-items-center gap-1.5" style="font-size: 11px">
             <mat-icon style="font-size: 14px; width: 14px; height: 14px">lock</mat-icon>
@@ -3561,8 +3778,12 @@
             Databases Folder
           } @else if (sidebarContextMenu().targetType === 'database') {
             Database: {{ sidebarContextMenu().databaseName }}
+          } @else if (sidebarContextMenu().targetType === 'tables_folder') {
+            Tables ({{ sidebarContextMenu().databaseName }})
           } @else if (sidebarContextMenu().targetType === 'table') {
             Table: {{ sidebarContextMenu().tableName }}
+          } @else if (sidebarContextMenu().targetType === 'columns_folder') {
+            Columns ({{ sidebarContextMenu().tableName }})
           } @else if (sidebarContextMenu().targetType === 'field') {
             Field: {{ sidebarContextMenu().column?.name }}
           }
@@ -3570,41 +3791,45 @@
       </div>
 
       @if (sidebarContextMenu().targetType === 'server') {
+        @if (canCreatePermission()) {
+          <button
+            type="button"
+            (click)="openCreateDatabaseModal($event); closeAllMenus()"
+            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 font-medium text-slate-800"
+          >
+            <mat-icon style="color: #FBBC05">create_new_folder</mat-icon>
+            <span>Add / New Database...</span>
+          </button>
+        }
+
         <button
           type="button"
           (click)="refreshServerAndRetrieveObjects($event); closeAllMenus()"
           class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 font-medium text-slate-800"
         >
           <mat-icon style="color: #34A853">sync</mat-icon>
-          <span>Retrieve Databases, Tables &amp; Fields</span>
-        </button>
-
-        <button
-          type="button"
-          (click)="openCreateDatabaseModal($event); closeAllMenus()"
-          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 font-medium text-slate-800"
-        >
-          <mat-icon style="color: #FBBC05">create_new_folder</mat-icon>
-          <span>New Database...</span>
+          <span>Refresh Server</span>
         </button>
       }
 
       @if (sidebarContextMenu().targetType === 'databases_folder') {
+        @if (canCreatePermission()) {
+          <button
+            type="button"
+            (click)="openCreateDatabaseModal($event); closeAllMenus()"
+            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 font-medium text-slate-800"
+          >
+            <mat-icon style="color: #34A853">add</mat-icon>
+            <span>Add / Create New Database...</span>
+          </button>
+        }
         <button
           type="button"
           (click)="refreshServerAndRetrieveObjects($event); closeAllMenus()"
           class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 font-medium text-slate-800"
         >
           <mat-icon style="color: #34A853">sync</mat-icon>
-          <span>Retrieve All Databases, Tables &amp; Fields</span>
-        </button>
-        <button
-          type="button"
-          (click)="openCreateDatabaseModal($event); closeAllMenus()"
-          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 font-medium text-slate-800"
-        >
-          <mat-icon style="color: #34A853">add</mat-icon>
-          <span>Create New Database...</span>
+          <span>Refresh Databases</span>
         </button>
       }
 
@@ -3619,7 +3844,7 @@
           <span class="d-inline-flex align-items-center gap-2">
             <mat-icon style="color: #4285F4">power</mat-icon>
             <span>
-              {{ sidebarContextMenu().databaseName.toLowerCase() === activeDatabaseName().toLowerCase() ? 'Active Database (Connected)' : 'Connect / Set Active Database' }}
+              {{ sidebarContextMenu().databaseName.toLowerCase() === activeDatabaseName().toLowerCase() && hasActiveConnection() ? 'Active Database (Connected)' : 'Connect / Set Active Database' }}
             </span>
           </span>
           <span class="px-1.5 py-0 rounded bg-blue-100 text-blue-800 font-mono-tabular" style="font-size: 10px">Tab</span>
@@ -3636,7 +3861,7 @@
           <span>Open "{{ sidebarContextMenu().databaseName }}" in New Tab</span>
         </button>
 
-        @if (isDatabaseConnectedInAnyTab(sidebarContextMenu().databaseName) || sidebarContextMenu().databaseName.toLowerCase() === activeDatabaseName().toLowerCase()) {
+        @if (isDatabaseConnectedInAnyTab(sidebarContextMenu().databaseName) || (sidebarContextMenu().databaseName.toLowerCase() === activeDatabaseName().toLowerCase() && hasActiveConnection())) {
           <button
             type="button"
             (click)="disconnectDatabaseFromSidebar(sidebarContextMenu().databaseName, $event)"
@@ -3648,150 +3873,202 @@
           </button>
         }
 
-        <div class="border-t border-slate-100 my-1"></div>
+        @if (canCreatePermission() || canUpdatePermission() || canDeletePermission()) {
+          <div class="border-t border-slate-100 my-1"></div>
+        }
 
-        <button
-          type="button"
-          (click)="openCreateTableForDatabaseFromTree(sidebarContextMenu().databaseName, $event); closeAllMenus()"
-          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center justify-content-between gap-2 font-semibold text-emerald-800"
-          data-gridario-tip="Create a new table inside this database."
-        >
-          <span class="d-inline-flex align-items-center gap-2">
-            <mat-icon style="color: #34A853">add</mat-icon>
-            <span>New (Create Table)...</span>
-          </span>
-          <span class="px-1.5 py-0 rounded bg-emerald-100 text-emerald-800 font-mono-tabular" style="font-size: 10px">Table</span>
-        </button>
+        @if (canCreatePermission()) {
+          <button
+            type="button"
+            (click)="openCreateTableForDatabaseFromTree(sidebarContextMenu().databaseName, $event); closeAllMenus()"
+            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center justify-content-between gap-2 font-semibold text-emerald-800"
+            data-gridario-tip="Create a new table inside this database."
+          >
+            <span class="d-inline-flex align-items-center gap-2">
+              <mat-icon style="color: #34A853">add</mat-icon>
+              <span>Add New Table...</span>
+            </span>
+            <span class="px-1.5 py-0 rounded bg-emerald-100 text-emerald-800 font-mono-tabular" style="font-size: 10px">Table</span>
+          </button>
 
-        <button
-          type="button"
-          (click)="openCreateDatabaseModal($event); closeAllMenus()"
-          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-slate-700"
-        >
-          <mat-icon style="color: #4285F4">create_new_folder</mat-icon>
-          <span>Create New Database...</span>
-        </button>
+          <button
+            type="button"
+            (click)="openCreateDatabaseModal($event); closeAllMenus()"
+            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-slate-700"
+          >
+            <mat-icon style="color: #4285F4">create_new_folder</mat-icon>
+            <span>Add New Database...</span>
+          </button>
+        }
 
-        <button
-          type="button"
-          (click)="openRenameSidebarModal('database', sidebarContextMenu().databaseName, '', null, $event)"
-          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-slate-700"
-        >
-          <mat-icon style="color: #FBBC05">drive_file_rename_outline</mat-icon>
-          <span>Rename / Edit Database...</span>
-        </button>
+        @if (canUpdatePermission()) {
+          <button
+            type="button"
+            (click)="openRenameSidebarModal('database', sidebarContextMenu().databaseName, '', null, $event)"
+            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-slate-700"
+          >
+            <mat-icon style="color: #FBBC05">edit</mat-icon>
+            <span>Edit / Rename Database...</span>
+          </button>
+        }
 
-        @if (databases().length > 1) {
+        @if (canDeletePermission() && (objectExplorerDatabases().length > 1 || databases().length > 1)) {
           <div class="border-t border-slate-100 my-1"></div>
           <button
             type="button"
             (click)="deleteDatabase(sidebarContextMenu().databaseName, $event); closeAllMenus()"
             class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-red-50 text-red-600 d-flex align-items-center gap-2"
           >
-            <mat-icon>delete_outline</mat-icon>
+            <mat-icon class="text-red-600" style="color: #EA4335">delete_outline</mat-icon>
             <span>Delete Database "{{ sidebarContextMenu().databaseName }}"</span>
           </button>
         }
       }
 
-      @if (sidebarContextMenu().targetType === 'table') {
-        <!-- Select: Open and display this table on the screen -->
-        <button
-          type="button"
-          (click)="selectTableFromContextMenu(sidebarContextMenu().databaseName, sidebarContextMenu().tableName, $event)"
-          class="w-100 text-start px-3 py-1.5 bg-blue-50/70 border-0 hover:bg-blue-100 d-flex align-items-center justify-content-between gap-2 font-semibold text-blue-800"
-          data-gridario-tip="Select and open this table on the main spreadsheet screen."
-        >
-          <span class="d-inline-flex align-items-center gap-2">
-            <mat-icon style="color: #4285F4">table_view</mat-icon>
-            <span>Select</span>
-          </span>
-          <span class="px-1.5 py-0 rounded bg-blue-100 text-blue-800 font-mono-tabular" style="font-size: 10px">Open</span>
-        </button>
-
-        <!-- New: Create a new table in this database -->
-        <button
-          type="button"
-          (click)="openCreateTableForDatabaseFromTree(sidebarContextMenu().databaseName, $event); closeAllMenus()"
-          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center justify-content-between gap-2 font-semibold text-emerald-800"
-          data-gridario-tip="Create a new table inside this database."
-        >
-          <span class="d-inline-flex align-items-center gap-2">
-            <mat-icon style="color: #34A853">add_box</mat-icon>
-            <span>New</span>
-          </span>
-          <span class="px-1.5 py-0 rounded bg-emerald-100 text-emerald-800 font-mono-tabular" style="font-size: 10px">Create Table</span>
-        </button>
-
-        <div class="border-t border-slate-100 my-1"></div>
-
-        <button
-          type="button"
-          (click)="openAddColumnForTableFromTree(sidebarContextMenu().databaseName, sidebarContextMenu().tableName, $event); closeAllMenus()"
-          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 font-medium text-slate-800"
-        >
-          <mat-icon style="color: #34A853">add</mat-icon>
-          <span>Create Field in "{{ sidebarContextMenu().tableName }}"...</span>
-        </button>
-
-        <button
-          type="button"
-          (click)="openRenameSidebarModal('table', sidebarContextMenu().databaseName, sidebarContextMenu().tableName, null, $event)"
-          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-slate-700"
-        >
-          <mat-icon style="color: #FBBC05">drive_file_rename_outline</mat-icon>
-          <span>Rename / Edit Table...</span>
-        </button>
-
-        <div class="border-t border-slate-100 my-1"></div>
-        <button
-          type="button"
-          (click)="deleteTable(sidebarContextMenu().tableName, $event, sidebarContextMenu().databaseName); closeAllMenus()"
-          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-red-50 text-red-600 d-flex align-items-center gap-2"
-        >
-          <mat-icon>delete_outline</mat-icon>
-          <span>Delete Table "{{ sidebarContextMenu().tableName }}"</span>
-        </button>
+      @if (sidebarContextMenu().targetType === 'tables_folder') {
+        @if (canCreatePermission()) {
+          <button
+            type="button"
+            (click)="openCreateTableForDatabaseFromTree(sidebarContextMenu().databaseName, $event); closeAllMenus()"
+            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center justify-content-between gap-2 font-semibold text-emerald-800"
+          >
+            <span class="d-inline-flex align-items-center gap-2">
+              <mat-icon style="color: #34A853">add</mat-icon>
+              <span>Add New Table...</span>
+            </span>
+            <span class="px-1.5 py-0 rounded bg-emerald-100 text-emerald-800 font-mono-tabular" style="font-size: 10px">Table</span>
+          </button>
+        }
       }
 
-      @if (sidebarContextMenu().targetType === 'field' && sidebarContextMenu().column; as fieldCol) {
-        <button
-          type="button"
-          (click)="openAddColumnForTableFromTree(sidebarContextMenu().databaseName, sidebarContextMenu().tableName, $event); closeAllMenus()"
-          class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 font-medium text-slate-800"
-        >
-          <mat-icon style="color: #34A853">add</mat-icon>
-          <span>Create New Field...</span>
-        </button>
-
-        @if (!isIdPrimaryKeyColumn(fieldCol)) {
+      @if (sidebarContextMenu().targetType === 'table') {
+        @if (canReadPermission()) {
+          <!-- Select: Open and display this table on the screen -->
           <button
             type="button"
-            (click)="openEditColumnFromTree(sidebarContextMenu().databaseName, sidebarContextMenu().tableName, fieldCol, $event); closeAllMenus()"
-            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-slate-700"
+            (click)="selectTableFromContextMenu(sidebarContextMenu().databaseName, sidebarContextMenu().tableName, $event)"
+            class="w-100 text-start px-3 py-1.5 bg-blue-50/70 border-0 hover:bg-blue-100 d-flex align-items-center justify-content-between gap-2 font-semibold text-blue-800"
+            data-gridario-tip="Select and open this table on the main spreadsheet screen."
           >
-            <mat-icon style="color: #4285F4">edit</mat-icon>
-            <span>Edit Field Schema &amp; Type...</span>
+            <span class="d-inline-flex align-items-center gap-2">
+              <mat-icon style="color: #4285F4">table_view</mat-icon>
+              <span>Select (Open Table)</span>
+            </span>
+            <span class="px-1.5 py-0 rounded bg-blue-100 text-blue-800 font-mono-tabular" style="font-size: 10px">Open</span>
           </button>
+        }
 
+        @if (canCreatePermission()) {
+          <!-- New: Create a new table in this database -->
           <button
             type="button"
-            (click)="openRenameSidebarModal('field', sidebarContextMenu().databaseName, sidebarContextMenu().tableName, fieldCol, $event)"
-            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-slate-700"
+            (click)="openCreateTableForDatabaseFromTree(sidebarContextMenu().databaseName, $event); closeAllMenus()"
+            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center justify-content-between gap-2 font-semibold text-emerald-800"
+            data-gridario-tip="Create a new table inside this database."
           >
-            <mat-icon style="color: #FBBC05">drive_file_rename_outline</mat-icon>
-            <span>Rename Field "{{ fieldCol.name }}"...</span>
+            <span class="d-inline-flex align-items-center gap-2">
+              <mat-icon style="color: #34A853">add_box</mat-icon>
+              <span>Add New Table...</span>
+            </span>
+            <span class="px-1.5 py-0 rounded bg-emerald-100 text-emerald-800 font-mono-tabular" style="font-size: 10px">Create Table</span>
           </button>
 
           <div class="border-t border-slate-100 my-1"></div>
+
           <button
             type="button"
-            (click)="deleteColumnFromTree(sidebarContextMenu().databaseName, sidebarContextMenu().tableName, fieldCol, $event); closeAllMenus()"
+            (click)="openAddColumnForTableFromTree(sidebarContextMenu().databaseName, sidebarContextMenu().tableName, $event); closeAllMenus()"
+            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 font-medium text-slate-800"
+          >
+            <mat-icon style="color: #34A853">add</mat-icon>
+            <span>Add Field in "{{ sidebarContextMenu().tableName }}"...</span>
+          </button>
+        }
+
+        @if (canUpdatePermission()) {
+          <button
+            type="button"
+            (click)="openRenameSidebarModal('table', sidebarContextMenu().databaseName, sidebarContextMenu().tableName, null, $event)"
+            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-slate-700"
+          >
+            <mat-icon style="color: #FBBC05">edit</mat-icon>
+            <span>Edit / Rename Table...</span>
+          </button>
+        }
+
+        @if (canDeletePermission()) {
+          <div class="border-t border-slate-100 my-1"></div>
+          <button
+            type="button"
+            (click)="deleteTable(sidebarContextMenu().tableName, $event, sidebarContextMenu().databaseName); closeAllMenus()"
             class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-red-50 text-red-600 d-flex align-items-center gap-2"
           >
-            <mat-icon>delete_outline</mat-icon>
-            <span>Delete Field "{{ fieldCol.name }}"</span>
+            <mat-icon class="text-red-600" style="color: #EA4335">delete_outline</mat-icon>
+            <span>Delete Table "{{ sidebarContextMenu().tableName }}"</span>
           </button>
+        }
+      }
+
+      @if (sidebarContextMenu().targetType === 'columns_folder') {
+        @if (canCreatePermission()) {
+          <button
+            type="button"
+            (click)="openAddColumnForTableFromTree(sidebarContextMenu().databaseName, sidebarContextMenu().tableName, $event); closeAllMenus()"
+            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center justify-content-between gap-2 font-semibold text-emerald-800"
+          >
+            <span class="d-inline-flex align-items-center gap-2">
+              <mat-icon style="color: #34A853">add</mat-icon>
+              <span>Add Field in "{{ sidebarContextMenu().tableName }}"...</span>
+            </span>
+            <span class="px-1.5 py-0 rounded bg-emerald-100 text-emerald-800 font-mono-tabular" style="font-size: 10px">Field</span>
+          </button>
+        }
+      }
+
+      @if (sidebarContextMenu().targetType === 'field' && sidebarContextMenu().column; as fieldCol) {
+        @if (canCreatePermission()) {
+          <button
+            type="button"
+            (click)="openAddColumnForTableFromTree(sidebarContextMenu().databaseName, sidebarContextMenu().tableName, $event); closeAllMenus()"
+            class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 font-medium text-slate-800"
+          >
+            <mat-icon style="color: #34A853">add</mat-icon>
+            <span>Add New Field...</span>
+          </button>
+        }
+
+        @if (!isIdPrimaryKeyColumn(fieldCol)) {
+          @if (canUpdatePermission()) {
+            <button
+              type="button"
+              (click)="openEditColumnFromTree(sidebarContextMenu().databaseName, sidebarContextMenu().tableName, fieldCol, $event); closeAllMenus()"
+              class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-slate-700"
+            >
+              <mat-icon style="color: #4285F4">edit</mat-icon>
+              <span>Edit Field Schema &amp; Type...</span>
+            </button>
+
+            <button
+              type="button"
+              (click)="openRenameSidebarModal('field', sidebarContextMenu().databaseName, sidebarContextMenu().tableName, fieldCol, $event)"
+              class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-slate-100 d-flex align-items-center gap-2 text-slate-700"
+            >
+              <mat-icon style="color: #FBBC05">drive_file_rename_outline</mat-icon>
+              <span>Rename Field "{{ fieldCol.name }}"...</span>
+            </button>
+          }
+
+          @if (canDeletePermission()) {
+            <div class="border-t border-slate-100 my-1"></div>
+            <button
+              type="button"
+              (click)="deleteColumnFromTree(sidebarContextMenu().databaseName, sidebarContextMenu().tableName, fieldCol, $event); closeAllMenus()"
+              class="w-100 text-start px-3 py-1.5 bg-transparent border-0 hover:bg-red-50 text-red-600 d-flex align-items-center gap-2"
+            >
+              <mat-icon class="text-red-600" style="color: #EA4335">delete_outline</mat-icon>
+              <span>Delete Field "{{ fieldCol.name }}"</span>
+            </button>
+          }
         } @else {
           <div class="px-3 py-2 text-slate-500 bg-slate-50 border-t border-slate-100 mt-1 d-flex align-items-center gap-1.5" style="font-size: 11px">
             <mat-icon class="text-amber-600 shrink-0" style="font-size: 14px; width: 14px; height: 14px">lock</mat-icon>
@@ -3913,7 +4190,7 @@
                   class="btn btn-sm btn-outline-danger d-inline-flex align-items-center p-1"
                   title="Remove sort level"
                 >
-                  <mat-icon>delete_outline</mat-icon>
+                  <mat-icon class="text-red-600" style="color: #EA4335">delete_outline</mat-icon>
                 </button>
               </div>
             }
@@ -5408,10 +5685,10 @@
                           type="button"
                           tabindex="-1"
                           (click)="removeNewTableColumnDraft(idx)"
-                          class="btn btn-sm p-1 border-0 bg-transparent text-slate-400 hover:text-red-600 d-inline-flex align-items-center"
+                          class="btn btn-sm p-1 border-0 bg-transparent text-red-600 hover:text-red-700 d-inline-flex align-items-center"
                           title="Remove field row"
                         >
-                          <mat-icon style="font-size: 16px; width: 16px; height: 16px">delete_outline</mat-icon>
+                          <mat-icon class="text-red-600" style="color: #EA4335; font-size: 16px; width: 16px; height: 16px">delete_outline</mat-icon>
                         </button>
                       </td>
                     </tr>
@@ -5787,7 +6064,10 @@
             [class.btn-danger]="confirmDialog().variant === 'danger'"
             [class.btn-primary]="confirmDialog().variant === 'primary'"
           >
-            <mat-icon>{{ confirmDialog().variant === 'danger' ? 'delete_outline' : 'check' }}</mat-icon>
+            <mat-icon
+              [class.text-red-600]="confirmDialog().variant === 'danger'"
+              [style.color]="confirmDialog().variant === 'danger' ? '#EA4335' : null"
+            >{{ confirmDialog().variant === 'danger' ? 'delete_outline' : 'check' }}</mat-icon>
             <span>{{ confirmDialog().confirmLabel }}</span>
           </button>
         </div>
@@ -6219,7 +6499,7 @@
   }
 
   <!-- ===================================================================== -->
-  <!-- MODAL 9: USER LOGIN & REGISTRATION                                    -->
+  <!-- MODAL 9: STANDALONE OAUTH2 4-DIGIT OTP LOGIN (USER & ADMIN LOGIN)     -->
   <!-- ===================================================================== -->
   @if (activeModal() === 'postgres_auth') {
     <div
@@ -6230,19 +6510,30 @@
     >
       <div
         class="bg-white rounded-xl border border-slate-200 shadow-md w-100 p-4 gridpulse-popup-card"
-        style="max-width: 460px"
+        style="max-width: 500px"
         (click)="$event.stopPropagation()"
         (keydown.escape)="activeModal.set('none')"
         tabindex="0"
       >
         <div class="d-flex align-items-center justify-content-between pb-3 border-b border-slate-200">
-          <div>
-            <h2 class="text-base font-bold text-slate-900 m-0">
-              {{ authMode() === 'login' ? 'User Login' : 'Create User Account' }}
-            </h2>
-            <p class="text-xs text-slate-500 m-0 mt-0.5">
-              Sign in or create an account in Gridario.
-            </p>
+          <div class="d-flex align-items-center gap-2">
+            <div
+              class="p-1.5 rounded-lg d-inline-flex align-items-center justify-content-center"
+              [class.bg-emerald-100]="oauthLoginTarget() === 'admin'"
+              [class.text-emerald-800]="oauthLoginTarget() === 'admin'"
+              [class.bg-blue-100]="oauthLoginTarget() !== 'admin'"
+              [class.text-blue-800]="oauthLoginTarget() !== 'admin'"
+            >
+              <mat-icon>{{ oauthLoginTarget() === 'admin' ? 'admin_panel_settings' : 'lock_person' }}</mat-icon>
+            </div>
+            <div>
+              <h2 class="text-base font-bold text-slate-900 m-0">
+                {{ oauthLoginTarget() === 'admin' ? 'Admin OAuth2 4-Digit OTP Login' : 'Standalone OAuth2 4-Digit OTP Login' }}
+              </h2>
+              <p class="text-xs text-slate-500 m-0 mt-0.5">
+                No registration needed — every login generates a new 4-digit OTP password stored in the "System" database.
+              </p>
+            </div>
           </div>
           <button
             type="button"
@@ -6254,111 +6545,169 @@
         </div>
 
         <form [formGroup]="authForm" (ngSubmit)="submitPostgresAuth()" class="py-3 d-flex flex-column gap-3">
+          <!-- Login Target Switcher: Standard User Login vs Separated Admin Login -->
           <div class="d-flex gap-1.5">
             <button
               type="button"
-              (click)="authMode.set('login'); authErrorMessage.set('')"
+              (click)="oauthLoginTarget.set('user'); oauthOtpStep.set('request'); authErrorMessage.set('')"
               class="btn btn-sm flex-grow-1 text-xs d-inline-flex align-items-center justify-content-center gap-1"
-              [class.btn-primary]="authMode() === 'login'"
-              [class.btn-outline-secondary]="authMode() !== 'login'"
+              [class.btn-primary]="oauthLoginTarget() === 'user'"
+              [class.btn-outline-secondary]="oauthLoginTarget() !== 'user'"
             >
-              <mat-icon>login</mat-icon>
-              <span>Sign In</span>
+              <mat-icon>person</mat-icon>
+              <span>User OAuth2 Login</span>
             </button>
             <button
               type="button"
-              (click)="authMode.set('register'); authErrorMessage.set('')"
+              (click)="oauthLoginTarget.set('admin'); oauthOtpStep.set('request'); fillDemoPostgresUser('admin@gridario.com', 'System Administrator', '+15550109999', 'admin')"
               class="btn btn-sm flex-grow-1 text-xs d-inline-flex align-items-center justify-content-center gap-1"
-              [class.btn-primary]="authMode() === 'register'"
-              [class.btn-outline-secondary]="authMode() !== 'register'"
+              [class.btn-dark]="oauthLoginTarget() === 'admin'"
+              [class.btn-outline-secondary]="oauthLoginTarget() !== 'admin'"
             >
-              <mat-icon>person_add</mat-icon>
-              <span>Register</span>
+              <mat-icon>admin_panel_settings</mat-icon>
+              <span>Separated Admin Login</span>
             </button>
           </div>
 
-          @if (authMode() === 'login') {
-            <div class="p-2.5 rounded-lg bg-blue-50 border border-blue-200 text-xs">
-              <div class="font-semibold mb-1">Demo Accounts (1-Click Fill):</div>
-              <div class="d-flex flex-wrap gap-1.5">
+          <!-- Default Admin & Quick Demo Accounts Box -->
+          <div class="p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-xs">
+            <div class="d-flex align-items-center justify-content-between mb-1">
+              <span class="font-bold text-slate-800">Default Admin &amp; Quick Test Accounts (1-Click Fill):</span>
+              <span class="px-1.5 py-0 rounded bg-emerald-100 text-emerald-800 font-mono-tabular font-semibold" style="font-size: 9.5px">
+                System.Users
+              </span>
+            </div>
+            <div class="text-slate-600 mb-2" style="font-size: 11px">
+              Default Admin Email: <strong class="font-mono-tabular">admin&#64;gridario.com</strong> · Phone: <strong class="font-mono-tabular">+15550109999</strong> (Role: <strong>Admin</strong>, All Permissions &amp; All Databases)
+            </div>
+            <div class="d-flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                (click)="fillDemoPostgresUser('admin@gridario.com', 'System Administrator', '+15550109999', 'admin')"
+                class="btn btn-sm btn-outline-success py-0.5 px-2 text-xs font-semibold"
+              >
+                Default Admin (admin&#64;gridario.com)
+              </button>
+              <button
+                type="button"
+                (click)="fillDemoPostgresUser('new.user@gridario.com', 'New First-Time User', '+15550192837', 'user')"
+                class="btn btn-sm btn-outline-primary py-0.5 px-2 text-xs"
+              >
+                New Unreviewed User (Sees Nothing Until Approved)
+              </button>
+            </div>
+          </div>
+
+          <!-- Delivery Channel Selector: Email vs Phone (SMS / WhatsApp) -->
+          <div>
+            <span class="form-label text-xs font-semibold text-slate-700 mb-1 d-block">
+              OTP Delivery Channel *
+            </span>
+            <div class="d-flex gap-1.5">
+              <button
+                type="button"
+                (click)="oauthContactChannel.set('email'); oauthOtpStep.set('request'); authErrorMessage.set('')"
+                class="btn btn-sm flex-grow-1 text-xs d-inline-flex align-items-center justify-content-center gap-1"
+                [class.btn-outline-primary]="oauthContactChannel() === 'email'"
+                [class.bg-blue-50]="oauthContactChannel() === 'email'"
+                [class.btn-outline-secondary]="oauthContactChannel() !== 'email'"
+              >
+                <mat-icon>mail</mat-icon>
+                <span>Send 4-Digit OTP to Email</span>
+              </button>
+              <button
+                type="button"
+                (click)="oauthContactChannel.set('phone'); oauthOtpStep.set('request'); authErrorMessage.set('')"
+                class="btn btn-sm flex-grow-1 text-xs d-inline-flex align-items-center justify-content-center gap-1"
+                [class.btn-outline-primary]="oauthContactChannel() === 'phone'"
+                [class.bg-blue-50]="oauthContactChannel() === 'phone'"
+                [class.btn-outline-secondary]="oauthContactChannel() !== 'phone'"
+              >
+                <mat-icon>sms</mat-icon>
+                <span>Send 4-Digit OTP via SMS / WhatsApp</span>
+              </button>
+            </div>
+          </div>
+
+          @if (oauthContactChannel() === 'email') {
+            <div>
+              <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="pg-email">
+                Email ID *
+              </label>
+              <input
+                id="pg-email"
+                type="email"
+                formControlName="email"
+                class="form-control form-control-sm font-mono-tabular text-xs"
+                placeholder="user@company.com or admin@gridario.com"
+              />
+            </div>
+          } @else {
+            <div>
+              <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="pg-phone">
+                Phone Number (SMS / WhatsApp) *
+              </label>
+              <input
+                id="pg-phone"
+                type="tel"
+                formControlName="phone"
+                class="form-control form-control-sm font-mono-tabular text-xs"
+                placeholder="+15550109999"
+              />
+            </div>
+          }
+
+          <div>
+            <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="pg-display-name">
+              Display Name (Optional — auto-set on first login)
+            </label>
+            <input
+              id="pg-display-name"
+              type="text"
+              formControlName="displayName"
+              class="form-control form-control-sm text-xs"
+              placeholder="Your Name"
+            />
+          </div>
+
+          @if (oauthOtpStep() === 'verify') {
+            <div class="p-3 rounded-lg bg-emerald-50 border border-emerald-200">
+              <div class="d-flex align-items-center justify-content-between mb-1">
+                <span class="text-xs font-bold text-emerald-950">
+                  4-Digit OTP Generated &amp; Set as Reset Password
+                </span>
+                <span class="px-2 py-0.5 rounded bg-emerald-600 text-white font-mono-tabular font-bold text-xs">
+                  OTP: {{ oauthGeneratedOtpPreview() }}
+                </span>
+              </div>
+              <p class="text-xs text-emerald-800 m-0 mb-2" style="font-size: 11px">
+                {{ oauthDeliveryNotice() }}
+              </p>
+              <label class="form-label text-xs font-semibold text-slate-800 mb-1" for="pg-otp-code">
+                Enter 4-Digit OTP Password *
+              </label>
+              <div class="d-flex gap-2">
+                <input
+                  id="pg-otp-code"
+                  type="text"
+                  maxlength="4"
+                  formControlName="otpCode"
+                  class="form-control form-control-sm font-mono-tabular font-bold text-center text-sm"
+                  style="letter-spacing: 6px"
+                  placeholder="0000"
+                />
                 <button
                   type="button"
-                  (click)="fillDemoPostgresUser('alex.rivera@gridpulse.io', 'Alex Rivera')"
-                  class="btn btn-sm btn-outline-dark py-0.5 px-2 text-xs"
+                  (click)="requestOAuthOtp()"
+                  [disabled]="isRequestingOtp()"
+                  class="btn btn-sm btn-outline-secondary text-xs whitespace-nowrap"
                 >
-                  Alex Rivera (Admin)
-                </button>
-                <button
-                  type="button"
-                  (click)="fillDemoPostgresUser('elena.rostova@gridpulse.io', 'Elena Rostova')"
-                  class="btn btn-sm btn-outline-dark py-0.5 px-2 text-xs"
-                >
-                  Elena Rostova (Lead)
-                </button>
-                <button
-                  type="button"
-                  (click)="fillDemoPostgresUser('priya.nair@gridpulse.io', 'Priya Nair')"
-                  class="btn btn-sm btn-outline-dark py-0.5 px-2 text-xs"
-                >
-                  Priya Nair (Finance)
+                  <mat-icon>refresh</mat-icon>
+                  <span>New OTP</span>
                 </button>
               </div>
             </div>
           }
-
-          @if (authMode() === 'register') {
-            <div>
-              <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="pg-display-name">
-                Full Display Name *
-              </label>
-              <input
-                id="pg-display-name"
-                type="text"
-                formControlName="displayName"
-                class="form-control form-control-sm text-xs"
-                placeholder="Alex Rivera"
-              />
-            </div>
-          }
-
-          <div>
-            <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="pg-email">
-              User Email *
-            </label>
-            <input
-              id="pg-email"
-              type="email"
-              formControlName="email"
-              class="form-control form-control-sm font-mono-tabular text-xs"
-              placeholder="alex.rivera@gridpulse.io"
-            />
-          </div>
-
-          <div>
-            <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="pg-password">
-              Password *
-            </label>
-            <div class="position-relative d-flex align-items-center">
-              <input
-                id="pg-password"
-                [type]="showAuthPassword() ? 'text' : 'password'"
-                formControlName="password"
-                class="form-control form-control-sm font-mono-tabular text-xs pe-4"
-                placeholder="••••••••"
-              />
-              <button
-                type="button"
-                (click)="showAuthPassword.set(!showAuthPassword())"
-                class="btn btn-sm p-0 border-0 bg-transparent position-absolute end-0 me-2 d-inline-flex align-items-center justify-content-center text-slate-500 hover:text-slate-800"
-                [attr.aria-label]="showAuthPassword() ? 'Hide password' : 'Show password'"
-                [title]="showAuthPassword() ? 'Hide password' : 'Show password'"
-              >
-                <mat-icon style="font-size: 16px; width: 16px; height: 16px">
-                  {{ showAuthPassword() ? 'visibility_off' : 'visibility' }}
-                </mat-icon>
-              </button>
-            </div>
-          </div>
 
           @if (authErrorMessage()) {
             <div class="p-2 rounded bg-red-50 border border-red-200 text-xs text-red-700 font-medium">
@@ -6366,7 +6715,7 @@
             </div>
           }
 
-          <div class="d-flex align-items-center justify-content-end gap-2 pt-2 border-t border-slate-200">
+          <div class="d-flex align-items-center justify-content-between gap-2 pt-2 border-t border-slate-200">
             <button
               type="button"
               (click)="activeModal.set('none')"
@@ -6374,15 +6723,415 @@
             >
               Cancel
             </button>
-            <button
-              type="submit"
-              class="btn btn-sm btn-primary d-inline-flex align-items-center gap-1 text-xs font-semibold px-3"
-            >
-              <mat-icon>verified_user</mat-icon>
-              <span>{{ authMode() === 'login' ? 'Login' : 'Create Account' }}</span>
-            </button>
+            <div class="d-flex align-items-center gap-2">
+              @if (oauthOtpStep() === 'request') {
+                <button
+                  type="button"
+                  (click)="requestOAuthOtp()"
+                  [disabled]="isRequestingOtp()"
+                  class="btn btn-sm btn-primary d-inline-flex align-items-center gap-1 text-xs font-semibold px-3"
+                >
+                  <mat-icon>send</mat-icon>
+                  <span>{{ isRequestingOtp() ? 'Generating 4-Digit OTP...' : 'Generate & Send 4-Digit OTP' }}</span>
+                </button>
+              } @else {
+                <button
+                  type="submit"
+                  [disabled]="isVerifyingOtp()"
+                  class="btn btn-sm btn-success d-inline-flex align-items-center gap-1 text-xs font-semibold px-3"
+                >
+                  <mat-icon>verified_user</mat-icon>
+                  <span>{{ isVerifyingOtp() ? 'Verifying OTP...' : 'Verify 4-Digit OTP & Login' }}</span>
+                </button>
+              }
+            </div>
           </div>
         </form>
+      </div>
+    </div>
+  }
+
+  <!-- ===================================================================== -->
+  <!-- MODAL 9B: ADMIN PANEL ("SYSTEM" DB USERS, ROLES, DB & TABLE ACCESS)   -->
+  <!-- ===================================================================== -->
+  @if (activeModal() === 'admin_panel') {
+    <div
+      class="fixed inset-0 bg-slate-900/40 z-50 d-flex align-items-center justify-content-center p-2 sm:p-3 gridpulse-modal-backdrop"
+      (click)="activeModal.set('none')"
+      (keydown.escape)="activeModal.set('none')"
+      tabindex="0"
+    >
+      <div
+        class="bg-white rounded-xl border border-slate-200 shadow-md w-100 p-4 gridpulse-popup-card d-flex flex-column"
+        style="max-width: 960px; max-height: 90vh"
+        (click)="$event.stopPropagation()"
+        (keydown.escape)="activeModal.set('none')"
+        tabindex="0"
+      >
+        <div class="d-flex align-items-center justify-content-between pb-3 border-b border-slate-200 shrink-0">
+          <div class="d-flex align-items-center gap-2.5">
+            <div class="p-2 rounded-lg bg-emerald-100 text-emerald-800 d-inline-flex align-items-center justify-content-center">
+              <mat-icon>admin_panel_settings</mat-icon>
+            </div>
+            <div>
+              <h2 class="text-base font-bold text-slate-900 m-0">
+                System Database — OAuth2 &amp; RBAC Administration Panel
+              </h2>
+              <p class="text-xs text-slate-500 m-0 mt-0.5">
+                Review users, assign CRUD roles (Create, Read, Write, Delete), and grant access to all databases, one database, or specific tables.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            (click)="activeModal.set('none')"
+            class="btn btn-sm border-0 bg-transparent text-slate-400 hover:text-slate-700"
+          >
+            <mat-icon>close</mat-icon>
+          </button>
+        </div>
+
+        <!-- Admin Navigation Tabs -->
+        <div class="d-flex align-items-center justify-content-between gap-2 py-2.5 border-b border-slate-200 shrink-0 flex-wrap">
+          <div class="d-flex gap-1.5">
+            <button
+              type="button"
+              (click)="adminPanelTab.set('users')"
+              class="btn btn-sm text-xs d-inline-flex align-items-center gap-1 font-semibold"
+              [class.btn-primary]="adminPanelTab() === 'users'"
+              [class.btn-outline-secondary]="adminPanelTab() !== 'users'"
+            >
+              <mat-icon>group</mat-icon>
+              <span>Users &amp; Database/Table Permissions ({{ adminUsersList().length }})</span>
+            </button>
+            <button
+              type="button"
+              (click)="adminPanelTab.set('roles')"
+              class="btn btn-sm text-xs d-inline-flex align-items-center gap-1 font-semibold"
+              [class.btn-primary]="adminPanelTab() === 'roles'"
+              [class.btn-outline-secondary]="adminPanelTab() !== 'roles'"
+            >
+              <mat-icon>badge</mat-icon>
+              <span>Roles &amp; UI CRUD Permissions ({{ adminRolesList().length }})</span>
+            </button>
+            <button
+              type="button"
+              (click)="adminPanelTab.set('system_db')"
+              class="btn btn-sm text-xs d-inline-flex align-items-center gap-1 font-semibold"
+              [class.btn-primary]="adminPanelTab() === 'system_db'"
+              [class.btn-outline-secondary]="adminPanelTab() !== 'system_db'"
+            >
+              <mat-icon>storage</mat-icon>
+              <span>"System" Database Tables &amp; Admin Info</span>
+            </button>
+          </div>
+          <button
+            type="button"
+            (click)="loadAdminOverview()"
+            class="btn btn-sm btn-outline-secondary text-xs d-inline-flex align-items-center gap-1"
+          >
+            <mat-icon>refresh</mat-icon>
+            <span>Refresh System DB</span>
+          </button>
+        </div>
+
+        <!-- TAB 1: USERS & GRANULAR DATABASE / TABLE PERMISSIONS -->
+        @if (adminPanelTab() === 'users') {
+          <div class="py-3 row g-3 overflow-y-auto flex-grow-1" style="min-height: 380px">
+            <!-- Left Column: Users List -->
+            <div class="col-12 col-md-4 border-e border-slate-200 pe-md-3 d-flex flex-column gap-2">
+              <div class="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Registered Users (System.Users)
+              </div>
+              @for (u of adminUsersList(); track u.id) {
+                <div
+                  (click)="selectUserInAdminPanel(u)"
+                  (keydown.enter)="selectUserInAdminPanel(u)"
+                  tabindex="0"
+                  class="p-2.5 rounded-lg border cursor-pointer transition-all"
+                  [class.border-blue-500]="selectedAdminUserId() === u.id"
+                  [class.bg-blue-50]="selectedAdminUserId() === u.id"
+                  [class.border-slate-200]="selectedAdminUserId() !== u.id"
+                  [class.bg-white]="selectedAdminUserId() !== u.id"
+                >
+                  <div class="d-flex align-items-center justify-content-between gap-1">
+                    <span class="text-xs font-bold text-slate-900 truncate">{{ u.displayName }}</span>
+                    <span
+                      class="px-1.5 py-0.5 rounded font-mono-tabular font-bold"
+                      style="font-size: 9.5px"
+                      [class.bg-emerald-100]="u.isAdmin"
+                      [class.text-emerald-800]="u.isAdmin"
+                      [class.bg-amber-100]="!u.isAdmin && !u.isReviewedByAdmin"
+                      [class.text-amber-800]="!u.isAdmin && !u.isReviewedByAdmin"
+                      [class.bg-blue-100]="!u.isAdmin && u.isReviewedByAdmin"
+                      [class.text-blue-800]="!u.isAdmin && u.isReviewedByAdmin"
+                    >
+                      {{ u.isAdmin ? 'Admin' : (!u.isReviewedByAdmin ? 'Pending Review' : u.role) }}
+                    </span>
+                  </div>
+                  <div class="text-slate-500 font-mono-tabular truncate mt-0.5" style="font-size: 10.5px">
+                    {{ u.email || u.phone }}
+                  </div>
+                </div>
+              }
+            </div>
+
+            <!-- Right Column: Selected User Role & Database/Table Access Editor -->
+            <div class="col-12 col-md-8 ps-md-3 d-flex flex-column gap-3">
+              @if (selectedAdminUser(); as selUser) {
+                <div class="p-3 rounded-lg bg-slate-50 border border-slate-200 d-flex align-items-center justify-content-between flex-wrap gap-2">
+                  <div>
+                    <div class="text-sm font-bold text-slate-900">
+                      {{ selUser.displayName }}
+                      <span class="text-xs font-normal text-slate-500 font-mono-tabular ms-1">
+                        ({{ selUser.email || selUser.phone }})
+                      </span>
+                    </div>
+                    <div class="text-xs text-slate-500 mt-0.5">
+                      Status:
+                      @if (adminEditIsReviewed() || selUser.isAdmin) {
+                        <strong class="text-emerald-700">Reviewed &amp; Approved by Admin</strong>
+                      } @else {
+                        <strong class="text-amber-700">First-Time Login — Pending Admin Review (Currently Sees Nothing)</strong>
+                      }
+                    </div>
+                  </div>
+                  <div class="d-flex align-items-center gap-2">
+                    <label class="d-inline-flex align-items-center gap-1.5 text-xs font-semibold text-slate-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        class="form-check-input m-0"
+                        [checked]="adminEditIsReviewed()"
+                        (change)="adminEditIsReviewed.set($any($event.target).checked)"
+                      />
+                      <span>Reviewed / Allow Application Access</span>
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Role Assignment & All-Databases Toggle -->
+                <div class="row g-2.5 align-items-end">
+                  <div class="col-12 col-sm-6">
+                    <label class="form-label text-xs font-bold text-slate-700 mb-1" for="admin-user-role-select">
+                      Assigned Role (Controls UI CRUD Actions)
+                    </label>
+                    <select
+                      id="admin-user-role-select"
+                      class="form-select form-select-sm text-xs font-semibold"
+                      [value]="adminEditRole()"
+                      (change)="adminEditRole.set($any($event.target).value)"
+                    >
+                      @for (r of adminRolesList(); track r.id) {
+                        <option [value]="r.roleName" [selected]="r.roleName === adminEditRole()">
+                          {{ r.roleName }} — (Read:{{ r.canRead ? 'Y' : 'N' }}, Create:{{ r.canCreate ? 'Y' : 'N' }}, Write:{{ r.canUpdate ? 'Y' : 'N' }}, Delete:{{ r.canDelete ? 'Y' : 'N' }})
+                        </option>
+                      }
+                    </select>
+                  </div>
+                  <div class="col-12 col-sm-6">
+                    <div class="p-2 rounded border border-emerald-200 bg-emerald-50/60">
+                      <label class="d-inline-flex align-items-center gap-2 text-xs font-bold text-emerald-950 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          class="form-check-input m-0"
+                          [checked]="adminEditAccessAllDbs()"
+                          (change)="toggleAdminEditAccessAllDatabases($any($event.target).checked)"
+                        />
+                        <span>Grant Access to ALL Databases &amp; Tables</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Database & Table Permission Matrix -->
+                <div>
+                  <div class="d-flex align-items-center justify-content-between mb-1.5">
+                    <span class="text-xs font-bold text-slate-800">
+                      Database &amp; Table Permissions (System.DatabasePermissions &amp; System.TablePermissions)
+                    </span>
+                    <span class="text-slate-500" style="font-size: 10.5px">
+                      Checking a database checks all its tables; uncheck specific tables to restrict them.
+                    </span>
+                  </div>
+                  <div class="d-flex flex-column gap-2" style="max-height: 250px; overflow-y: auto">
+                    @for (dbItem of adminDatabasesSchema(); track dbItem.databaseName) {
+                      @let isDbChecked = !!(adminEditDbPermissions()[dbItem.databaseName]);
+                      <div class="p-2.5 rounded-lg border border-slate-200 bg-white">
+                        <div class="d-flex align-items-center justify-content-between pb-1.5 border-b border-slate-100">
+                          <label class="d-inline-flex align-items-center gap-2 text-xs font-bold text-slate-900 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              class="form-check-input m-0"
+                              [checked]="isDbChecked"
+                              (change)="toggleAdminEditDatabasePermission(dbItem.databaseName, $any($event.target).checked)"
+                            />
+                            <mat-icon style="font-size: 15px; width: 15px; height: 15px" class="text-blue-600">database</mat-icon>
+                            <span>{{ dbItem.databaseName }} (Database)</span>
+                          </label>
+                          <span class="text-slate-400 font-mono-tabular" style="font-size: 10px">
+                            {{ dbItem.tables.length }} tables
+                          </span>
+                        </div>
+                        <div class="pt-2 d-flex flex-wrap gap-2">
+                          @for (tblName of dbItem.tables; track tblName) {
+                            @let isTblChecked = !!(adminEditTablePermissions()[dbItem.databaseName]?.[tblName]);
+                            <label
+                              class="px-2 py-1 rounded border d-inline-flex align-items-center gap-1.5 text-xs cursor-pointer"
+                              [class.bg-emerald-50]="isTblChecked"
+                              [class.border-emerald-300]="isTblChecked"
+                              [class.text-emerald-900]="isTblChecked"
+                              [class.bg-slate-50]="!isTblChecked"
+                              [class.border-slate-200]="!isTblChecked"
+                              [class.text-slate-500]="!isTblChecked"
+                            >
+                              <input
+                                type="checkbox"
+                                class="form-check-input m-0"
+                                [checked]="isTblChecked"
+                                (change)="toggleAdminEditTablePermission(dbItem.databaseName, tblName, $any($event.target).checked)"
+                              />
+                              <span class="font-mono-tabular" style="font-size: 11px">{{ tblName }}</span>
+                            </label>
+                          }
+                        </div>
+                      </div>
+                    }
+                  </div>
+                </div>
+
+                <div class="d-flex align-items-center justify-content-end gap-2 pt-2 border-t border-slate-200">
+                  <button
+                    type="button"
+                    (click)="saveAdminUserPermissions(true)"
+                    [disabled]="isSavingAdminUser()"
+                    class="btn btn-sm btn-success d-inline-flex align-items-center gap-1.5 text-xs font-semibold px-3"
+                  >
+                    <mat-icon>verified</mat-icon>
+                    <span>{{ isSavingAdminUser() ? 'Saving to System DB...' : 'Approve User & Save Role / Database Permissions' }}</span>
+                  </button>
+                </div>
+              }
+            </div>
+          </div>
+        }
+
+        <!-- TAB 2: ROLES & UI CRUD PERMISSIONS -->
+        @if (adminPanelTab() === 'roles') {
+          <div class="py-3 row g-3 overflow-y-auto flex-grow-1">
+            <div class="col-12 col-md-7 d-flex flex-column gap-2">
+              <div class="text-xs font-bold text-slate-700 uppercase tracking-wider">
+                Existing Roles in System.Roles
+              </div>
+              @for (role of adminRolesList(); track role.id) {
+                <div class="p-3 rounded-lg border border-slate-200 bg-slate-50 d-flex align-items-center justify-content-between gap-2">
+                  <div>
+                    <div class="d-flex align-items-center gap-2">
+                      <span class="text-xs font-bold text-slate-900">{{ role.roleName }}</span>
+                      @if (role.isSystemDefault) {
+                        <span class="px-1.5 py-0 rounded bg-blue-100 text-blue-800 font-mono-tabular" style="font-size: 9.5px">Default</span>
+                      }
+                    </div>
+                    <div class="text-xs text-slate-500 mt-0.5">{{ role.description }}</div>
+                    <div class="d-flex flex-wrap gap-1.5 mt-1.5" style="font-size: 10px">
+                      <span class="px-1.5 py-0.5 rounded border" [class.bg-emerald-100]="role.canRead" [class.text-emerald-800]="role.canRead">Read: {{ role.canRead ? 'Yes' : 'No' }}</span>
+                      <span class="px-1.5 py-0.5 rounded border" [class.bg-emerald-100]="role.canCreate" [class.text-emerald-800]="role.canCreate">Create: {{ role.canCreate ? 'Yes' : 'No' }}</span>
+                      <span class="px-1.5 py-0.5 rounded border" [class.bg-emerald-100]="role.canUpdate" [class.text-emerald-800]="role.canUpdate">Write/Update: {{ role.canUpdate ? 'Yes' : 'No' }}</span>
+                      <span class="px-1.5 py-0.5 rounded border" [class.bg-emerald-100]="role.canDelete" [class.text-emerald-800]="role.canDelete">Delete: {{ role.canDelete ? 'Yes' : 'No' }}</span>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    (click)="populateRoleFormForEdit(role)"
+                    class="btn btn-sm btn-outline-primary text-xs shrink-0"
+                  >
+                    <mat-icon>edit</mat-icon>
+                    <span>Edit Role</span>
+                  </button>
+                </div>
+              }
+            </div>
+            <div class="col-12 col-md-5">
+              <form [formGroup]="adminRoleForm" (ngSubmit)="saveAdminRoleConfig()" class="p-3 rounded-lg border border-slate-200 bg-white d-flex flex-column gap-2.5">
+                <div class="text-xs font-bold text-slate-800">Create or Update Role</div>
+                <div>
+                  <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="role-name-input">Role Name *</label>
+                  <input id="role-name-input" type="text" formControlName="roleName" class="form-control form-control-sm text-xs" placeholder="e.g. Basic, Editor, Auditor" />
+                </div>
+                <div>
+                  <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="role-desc-input">Description</label>
+                  <input id="role-desc-input" type="text" formControlName="description" class="form-control form-control-sm text-xs" />
+                </div>
+                <div class="d-flex flex-column gap-1.5 pt-1">
+                  <label class="d-inline-flex align-items-center gap-2 text-xs cursor-pointer">
+                    <input type="checkbox" formControlName="canRead" class="form-check-input m-0" />
+                    <span><strong>Read Permission</strong> (View tables, columns &amp; grid rows)</span>
+                  </label>
+                  <label class="d-inline-flex align-items-center gap-2 text-xs cursor-pointer">
+                    <input type="checkbox" formControlName="canCreate" class="form-check-input m-0" />
+                    <span><strong>Create Permission</strong> (Create DBs, tables, columns &amp; rows)</span>
+                  </label>
+                  <label class="d-inline-flex align-items-center gap-2 text-xs cursor-pointer">
+                    <input type="checkbox" formControlName="canUpdate" class="form-check-input m-0" />
+                    <span><strong>Write / Update Permission</strong> (Edit cells, rename &amp; schema)</span>
+                  </label>
+                  <label class="d-inline-flex align-items-center gap-2 text-xs cursor-pointer">
+                    <input type="checkbox" formControlName="canDelete" class="form-check-input m-0" />
+                    <span><strong>Delete Permission</strong> (Delete rows, columns, tables &amp; DBs)</span>
+                  </label>
+                </div>
+                <button type="submit" [disabled]="isSavingAdminRole()" class="btn btn-sm btn-primary text-xs font-semibold mt-2">
+                  <mat-icon>save</mat-icon>
+                  <span>{{ isSavingAdminRole() ? 'Saving...' : 'Save Role to System.Roles' }}</span>
+                </button>
+              </form>
+            </div>
+          </div>
+        }
+
+        <!-- TAB 3: "SYSTEM" DATABASE TABLES & DEFAULT ADMIN CREDENTIALS -->
+        @if (adminPanelTab() === 'system_db') {
+          <div class="py-3 d-flex flex-column gap-3 overflow-y-auto flex-grow-1">
+            <div class="p-3 rounded-lg bg-emerald-50 border border-emerald-200 text-xs">
+              <div class="font-bold text-emerald-950 mb-1">Default Admin Account Credentials (Pre-seeded in System.Users)</div>
+              <div class="font-mono-tabular text-emerald-900">
+                Email: <strong>{{ defaultAdminLoginInfo().email }}</strong> | Phone: <strong>{{ defaultAdminLoginInfo().phone }}</strong> | Role: <strong>{{ defaultAdminLoginInfo().role }}</strong> | Auth: <strong>{{ defaultAdminLoginInfo().authMethod }}</strong>
+              </div>
+            </div>
+            <div class="text-xs font-bold text-slate-800">
+              Open "System" Database Authorization &amp; Permission Tables in Main Grid:
+            </div>
+            <div class="row g-2.5">
+              @for (sysTbl of ['Users', 'Roles', 'UserClaims', 'DatabasePermissions', 'TablePermissions', 'OtpSessions']; track sysTbl) {
+                <div class="col-12 col-sm-6 col-md-4">
+                  <div class="p-3 rounded-lg border border-slate-200 bg-slate-50 d-flex align-items-center justify-content-between">
+                    <div>
+                      <div class="text-xs font-bold text-slate-900 font-mono-tabular">System.{{ sysTbl }}</div>
+                      <div class="text-slate-500" style="font-size: 10.5px">PostgreSQL Auth Table</div>
+                    </div>
+                    <button
+                      type="button"
+                      (click)="openSystemDatabaseTableFromAdmin(sysTbl)"
+                      class="btn btn-sm btn-outline-primary text-xs d-inline-flex align-items-center gap-1"
+                    >
+                      <mat-icon>table_view</mat-icon>
+                      <span>Open</span>
+                    </button>
+                  </div>
+                </div>
+              }
+            </div>
+          </div>
+        }
+
+        <div class="d-flex justify-content-end pt-2 border-t border-slate-200 shrink-0">
+          <button
+            type="button"
+            (click)="activeModal.set('none')"
+            class="btn btn-sm btn-outline-secondary text-xs"
+          >
+            Close Admin Panel
+          </button>
+        </div>
       </div>
     </div>
   }
