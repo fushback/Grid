@@ -44,13 +44,38 @@ import {
 } from './grid-realtime-sync';
 import { CellHighlightState } from './cell-highlight-state';
 
+export interface SystemRoleConfig {
+  id: string;
+  roleName: string;
+  description: string;
+  canCreate: boolean;
+  canRead: boolean;
+  canUpdate: boolean;
+  canDelete: boolean;
+  isSystemDefault?: boolean;
+}
+
 export interface PostgresAuthUser {
   id: string;
   email: string;
+  phone?: string;
   displayName: string;
   role: string;
   color: string;
   avatarUrl?: string;
+  isAdmin?: boolean;
+  isReviewedByAdmin?: boolean;
+  accessAllDatabases?: boolean;
+  permissions?: {
+    canCreate: boolean;
+    canRead: boolean;
+    canUpdate: boolean;
+    canDelete: boolean;
+  };
+  databasePermissions?: Record<string, boolean>;
+  tablePermissions?: Record<string, Record<string, boolean>>;
+  createdAt?: string;
+  lastLoginAt?: string;
 }
 
 export interface VersionCommitItem {
@@ -80,6 +105,7 @@ type ActiveModalType =
   | 'excel_paste'
   | 'github_push'
   | 'postgres_auth'
+  | 'admin_panel'
   | 'version_control';
 
 export interface NewRowValidationIssue {
@@ -114,7 +140,14 @@ export interface SidebarContextMenuState {
   visible: boolean;
   x: number;
   y: number;
-  targetType: 'server' | 'databases_folder' | 'database' | 'table' | 'field';
+  targetType:
+    | 'server'
+    | 'databases_folder'
+    | 'database'
+    | 'tables_folder'
+    | 'table'
+    | 'columns_folder'
+    | 'field';
   databaseName: string;
   tableName: string;
   column: GridColumn | null;
@@ -258,24 +291,72 @@ export class App implements OnInit, OnDestroy {
   readonly openTablesForActiveDatabase = computed<DbTableSummary[]>(() => {
     const rawTables = this.tables();
     const activeDb = (this.activeDatabaseName() || '').trim();
-    if (!activeDb || rawTables.length === 0) return [];
+    if (!activeDb) return [];
     const openNames = this.getOpenTableNamesForDb(activeDb);
     if (openNames.length === 0) return [];
 
+    const cacheMap = this.loadedGridTableCacheByKey();
     const tableByLower = new Map<string, DbTableSummary>();
     for (const t of rawTables) {
       tableByLower.set(t.tableName.trim().toLowerCase(), t);
     }
 
+    const activeTblLower = (this.activeTableName() || '').trim().toLowerCase();
+    const currentRowCount = this.dbTotalRows();
+    const currentColCount = this.columns().length;
+
     const result: DbTableSummary[] = [];
     const seen = new Set<string>();
     for (const openName of openNames) {
-      const lower = (openName || '').trim().toLowerCase();
+      const cleanName = (openName || '').trim();
+      const lower = cleanName.toLowerCase();
       if (!lower || seen.has(lower)) continue;
+      if (!this.hasTableAccess(activeDb, cleanName)) continue;
+      seen.add(lower);
+      const cacheKey = `${activeDb.toLowerCase()}::${lower}`;
+      const cachedTbl = cacheMap[cacheKey];
       const match = tableByLower.get(lower);
-      if (match) {
-        seen.add(lower);
+      if (lower === activeTblLower) {
+        result.push({
+          ...(match || {
+            tableName: cleanName,
+            identitySeed: 1,
+            identityIncrement: 1,
+            nextIdentityValue: 1,
+            createdAt: '',
+            updatedAt: '',
+          }),
+          tableName: match?.tableName || cleanName,
+          rowCount: currentRowCount,
+          columnCount: currentColCount,
+        });
+      } else if (cachedTbl) {
+        result.push({
+          ...(match || {
+            tableName: cachedTbl.tableName || cleanName,
+            identitySeed: 1,
+            identityIncrement: 1,
+            nextIdentityValue: 1,
+            createdAt: '',
+            updatedAt: '',
+          }),
+          tableName: cachedTbl.tableName || match?.tableName || cleanName,
+          rowCount: cachedTbl.totalRows,
+          columnCount: cachedTbl.columns.length,
+        });
+      } else if (match) {
         result.push(match);
+      } else {
+        result.push({
+          tableName: cleanName,
+          rowCount: 0,
+          columnCount: 0,
+          identitySeed: 1,
+          identityIncrement: 1,
+          nextIdentityValue: 1,
+          createdAt: '',
+          updatedAt: '',
+        });
       }
     }
     return result;
@@ -394,11 +475,42 @@ export class App implements OnInit, OnDestroy {
 
   readonly manageTreeSearchQuery = signal<string>('');
   readonly manageTreeSearchControl = this.fb.nonNullable.control('');
-  readonly isServerNodeExpanded = signal<boolean>(true);
-  readonly isDatabasesFolderExpanded = signal<boolean>(true);
+  readonly isServerNodeExpanded = signal<boolean>(false);
+  readonly isDatabasesFolderExpanded = signal<boolean>(false);
   readonly expandedDatabaseNodes = signal<Set<string>>(new Set<string>());
+  readonly expandedTablesFolderNodes = signal<Set<string>>(new Set<string>());
   readonly expandedTableNodes = signal<Set<string>>(new Set<string>());
+  readonly expandedColumnsFolderNodes = signal<Set<string>>(new Set<string>());
+  readonly isServerNodeExpanding = signal<boolean>(false);
+  readonly isDatabasesFolderExpanding = signal<boolean>(false);
+  readonly expandingDatabaseNodes = signal<Set<string>>(new Set<string>());
+  readonly expandingTablesFolderNodes = signal<Set<string>>(new Set<string>());
+  readonly expandingTableNodes = signal<Set<string>>(new Set<string>());
+  readonly expandingColumnsFolderNodes = signal<Set<string>>(new Set<string>());
+  readonly selectedObjectExplorerDatabase = signal<string>('');
+  readonly objectExplorerDatabases = signal<DbDatabaseSummary[]>([]);
+  readonly treeLoadedTablesByDb = signal<Record<string, DbTableSummary[]>>({});
+  readonly treeLoadedColumnsByTable = signal<Record<string, GridColumn[]>>({});
+  readonly loadedGridTableCacheByKey = signal<
+    Record<
+      string,
+      {
+        databaseName: string;
+        tableName: string;
+        columns: GridColumn[];
+        rows: GridRow[];
+        totalRows: number;
+        filteredTotalRows: number;
+        hasMore: boolean;
+        uniqueValuesByColumn: Record<string, { label: string; count: number }[]>;
+        visibleRowLimit: number;
+      }
+    >
+  >({});
   private readonly sidebarTreeStorageKey = 'gridario_sidebar_tree_state';
+  private readonly workspaceTabsStorageKey = 'gridario_open_workspace_tabs_state_v1';
+  private hasRestoredWorkspaceTabsState = false;
+  private restoredDisconnectedState = false;
 
   // Create New Database Modal State
   readonly isCreatingDatabase = signal<boolean>(false);
@@ -441,32 +553,151 @@ export class App implements OnInit, OnDestroy {
   readonly lastSyncedTime = signal<string>('Just now');
   readonly firestoreDocCount = signal<number>(0);
 
-  // Auth (PostgreSQL Users Table) & Collaborator Presence
+  // Auth (Standalone OAuth2 4-Digit OTP + "System" Database RBAC) & Collaborator Presence
   readonly firebaseUser = signal<PostgresAuthUser | null>({
-    id: 'usr_pg_alex',
-    email: 'alex.rivera@gridpulse.io',
-    displayName: 'Alex Rivera',
+    id: 'usr_sys_default_admin',
+    email: 'admin@gridario.com',
+    phone: '+15550109999',
+    displayName: 'System Administrator',
     role: 'Admin',
-    color: '#4285F4',
+    color: '#10b981',
+    isAdmin: true,
+    isReviewedByAdmin: true,
+    accessAllDatabases: true,
+    permissions: {
+      canCreate: true,
+      canRead: true,
+      canUpdate: true,
+      canDelete: true,
+    },
+    databasePermissions: {},
+    tablePermissions: {},
   });
   readonly authMode = signal<'login' | 'register'>('login');
+  readonly oauthLoginTarget = signal<'user' | 'admin'>('user');
+  readonly oauthContactChannel = signal<'email' | 'phone'>('email');
+  readonly oauthOtpStep = signal<'request' | 'verify'>('request');
+  readonly oauthGeneratedOtpPreview = signal<string>('');
+  readonly oauthDeliveryNotice = signal<string>('');
+  readonly isRequestingOtp = signal<boolean>(false);
+  readonly isVerifyingOtp = signal<boolean>(false);
   readonly authErrorMessage = signal<string>('');
   readonly authForm = this.fb.nonNullable.group({
-    email: ['alex.rivera@gridpulse.io', [Validators.required]],
-    password: ['GridPulse@2026', [Validators.required]],
-    displayName: ['Alex Rivera'],
-    color: ['#4285F4'],
+    email: ['admin@gridario.com', [Validators.required]],
+    phone: ['+15550109999'],
+    otpCode: ['', [Validators.required, Validators.minLength(4), Validators.maxLength(4)]],
+    password: [''],
+    displayName: ['System Administrator'],
+    color: ['#10b981'],
   });
+
+  // Admin Panel State ("System" Database Users, Roles, Claims, Database & Table Permissions)
+  readonly adminPanelTab = signal<'users' | 'roles' | 'system_db'>('users');
+  readonly adminUsersList = signal<PostgresAuthUser[]>([]);
+  readonly adminRolesList = signal<SystemRoleConfig[]>([]);
+  readonly adminDatabasesSchema = signal<{ databaseName: string; tables: string[] }[]>([]);
+  readonly selectedAdminUserId = signal<string>('usr_sys_default_admin');
+  readonly isLoadingAdminOverview = signal<boolean>(false);
+  readonly isSavingAdminUser = signal<boolean>(false);
+  readonly isSavingAdminRole = signal<boolean>(false);
+  readonly defaultAdminLoginInfo = signal<{
+    email: string;
+    phone: string;
+    role: string;
+    authMethod: string;
+    systemDatabaseName: string;
+  }>({
+    email: 'admin@gridario.com',
+    phone: '+15550109999',
+    role: 'Admin',
+    authMethod: 'OAuth2 4-Digit Dynamic OTP (Sent via Email or SMS/WhatsApp)',
+    systemDatabaseName: 'System',
+  });
+
+  // Admin Panel Draft Editor for Selected User
+  readonly adminEditRole = signal<string>('Basic');
+  readonly adminEditIsReviewed = signal<boolean>(false);
+  readonly adminEditAccessAllDbs = signal<boolean>(false);
+  readonly adminEditDbPermissions = signal<Record<string, boolean>>({});
+  readonly adminEditTablePermissions = signal<Record<string, Record<string, boolean>>>({});
+
+  // Admin Panel Create/Update Role Form
+  readonly adminRoleForm = this.fb.nonNullable.group({
+    roleName: ['', [Validators.required, Validators.maxLength(40)]],
+    description: ['Custom role with granular CRUD permissions'],
+    canCreate: [false],
+    canRead: [true],
+    canUpdate: [false],
+    canDelete: [false],
+  });
+
+  readonly selectedAdminUser = computed<PostgresAuthUser | null>(() => {
+    const id = this.selectedAdminUserId();
+    return this.adminUsersList().find((u) => u.id === id) || this.adminUsersList()[0] || null;
+  });
+
+  // Computed RBAC Permission Signals for UI & Action Guards
+  readonly isCurrentUserAdmin = computed<boolean>(() => {
+    const u = this.firebaseUser();
+    if (!u) return false;
+    return Boolean(u.isAdmin || (u.role || '').toLowerCase() === 'admin');
+  });
+
+  readonly isUnreviewedFirstTimeUser = computed<boolean>(() => {
+    const u = this.firebaseUser();
+    if (!u) return true;
+    if (u.isAdmin || (u.role || '').toLowerCase() === 'admin') return false;
+    if (u.isReviewedByAdmin) return false;
+    if (u.accessAllDatabases) return false;
+    const hasAnyDb = Object.values(u.databasePermissions || {}).some(Boolean);
+    const hasAnyTbl = Object.values(u.tablePermissions || {}).some((tMap) =>
+      Object.values(tMap || {}).some(Boolean)
+    );
+    return !hasAnyDb && !hasAnyTbl;
+  });
+
+  readonly canReadPermission = computed<boolean>(() => {
+    const u = this.firebaseUser();
+    if (!u) return false;
+    if (u.isAdmin || (u.role || '').toLowerCase() === 'admin') return true;
+    if (this.isUnreviewedFirstTimeUser()) return false;
+    return u.permissions ? Boolean(u.permissions.canRead) : true;
+  });
+
+  readonly canCreatePermission = computed<boolean>(() => {
+    const u = this.firebaseUser();
+    if (!u) return false;
+    if (u.isAdmin || (u.role || '').toLowerCase() === 'admin') return true;
+    if (this.isUnreviewedFirstTimeUser()) return false;
+    return Boolean(u.permissions?.canCreate);
+  });
+
+  readonly canUpdatePermission = computed<boolean>(() => {
+    const u = this.firebaseUser();
+    if (!u) return false;
+    if (u.isAdmin || (u.role || '').toLowerCase() === 'admin') return true;
+    if (this.isUnreviewedFirstTimeUser()) return false;
+    return Boolean(u.permissions?.canUpdate);
+  });
+
+  readonly canDeletePermission = computed<boolean>(() => {
+    const u = this.firebaseUser();
+    if (!u) return false;
+    if (u.isAdmin || (u.role || '').toLowerCase() === 'admin') return true;
+    if (this.isUnreviewedFirstTimeUser()) return false;
+    return Boolean(u.permissions?.canDelete);
+  });
+
   readonly currentClientId = signal<string>('client_init');
-  readonly currentUserName = signal<string>('Alex Rivera');
-  readonly currentUserColor = signal<string>('#4285F4');
+  readonly currentUserName = signal<string>('System Administrator');
+  readonly currentUserColor = signal<string>('#10b981');
   readonly currentUserAvatarUrl = computed<string>(() => {
     const user = this.firebaseUser();
     if (user?.avatarUrl) {
       return user.avatarUrl;
     }
     const name = (user?.displayName || this.currentUserName() || 'User').trim();
-    const color = (user?.color || this.currentUserColor() || '#4285F4').trim();
+    const color = (user?.color || this.currentUserColor() || '#10b981').trim();
     return this.buildUserAvatarDataUri(name, color);
   });
   readonly collaborators = signal<CollaboratorPresence[]>([]);
@@ -630,9 +861,15 @@ export class App implements OnInit, OnDestroy {
     const tblName = (this.targetColumnSchemaTableName() || this.activeTableName()).trim();
     if (
       dbName.toLowerCase() === this.activeDatabaseName().toLowerCase() &&
-      tblName.toLowerCase() === this.activeTableName().toLowerCase()
+      tblName.toLowerCase() === this.activeTableName().toLowerCase() &&
+      this.sortedColumns().length > 0
     ) {
       return this.sortedColumns();
+    }
+    const keyLower = `${dbName.toLowerCase()}::${tblName.toLowerCase()}`;
+    const treeCols = this.treeLoadedColumnsByTable()[keyLower];
+    if (Array.isArray(treeCols) && treeCols.length > 0) {
+      return [...treeCols].sort((a, b) => a.orderIndex - b.orderIndex);
     }
     const dbObj = this.databases().find(
       (d) => d.databaseName.toLowerCase() === dbName.toLowerCase()
@@ -703,6 +940,18 @@ export class App implements OnInit, OnDestroy {
   private bannerTimeout: ReturnType<typeof setTimeout> | null = null;
   private longPressTimer: ReturnType<typeof setTimeout> | null = null;
   private githubPollTimer: ReturnType<typeof setInterval> | null = null;
+  private cellAutoCommitTimerMap = new Map<string, ReturnType<typeof setTimeout>>();
+  readonly hasStagedCellChanges = signal<boolean>(false);
+
+  readonly hasUncommittedChangesToRedis = computed<boolean>(() => {
+    if (this.hasStagedCellChanges()) return true;
+    if (this.dirtyRowIds.size > 0) return true;
+    if (this.liveCellDraftMap.size > 0) return true;
+    if (this.newRowLiveDraftMap.size > 0) return true;
+    if (this.editingCell() !== null) return true;
+    if (this.hasNewRowDraftValues()) return true;
+    return false;
+  });
 
   // =========================================================================
   // COMPUTED SIGNALS: FILTERING, MULTI-COLUMN SORTING & LAZY LOADING
@@ -1109,8 +1358,11 @@ export class App implements OnInit, OnDestroy {
         this.applyTheme('classic-light');
       }
 
-      this.restoreSidebarTreeStateFromStorage();
+      // On start/restart/reload/refresh: Object Explorer starts with ONLY the server node
+      // loaded from the actual PostgreSQL database and all child nodes (databases, tables, fields) closed & unloaded.
+      this.resetObjectExplorerToServerOnlyState();
       this.restoreTableLastUsedOrderFromStorage();
+      this.restoreWorkspaceTabsStateFromStorage();
 
       const storedId = sessionStorage.getItem('gridpulse_client_id');
       const clientId =
@@ -1141,11 +1393,12 @@ export class App implements OnInit, OnDestroy {
               if (res?.ok && res.user) {
                 this.firebaseUser.set(res.user);
                 this.currentUserName.set(res.user.displayName);
-                this.currentUserColor.set(res.user.color || '#f59e0b');
+                this.currentUserColor.set(res.user.color || '#10b981');
                 this.profileForm.patchValue({
                   displayName: res.user.displayName,
-                  color: res.user.color || '#f59e0b',
+                  color: res.user.color || '#10b981',
                 });
+                this.enforceActiveWorkspaceAccessForCurrentUser();
                 this.broadcastPresence();
               } else {
                 localStorage.removeItem('gridpulse_pg_token');
@@ -1183,8 +1436,26 @@ export class App implements OnInit, OnDestroy {
           });
       }
 
-      this.fetchWorkspaceFromServer();
-      this.refreshObjectExplorerTreeFromDb(false);
+      // Load ONLY the Server Name node from the actual PostgreSQL database for Object Explorer
+      this.loadServerNodeOnlyFromDb();
+
+      // Preserve the current open database and open table in the main grid & its tabs above/below until disconnected
+      if (!this.restoredDisconnectedState) {
+        if (this.hasRestoredWorkspaceTabsState) {
+          const restoredDb = this.activeDatabaseName();
+          const restoredTbl = this.activeTableName();
+          if (restoredDb && restoredTbl) {
+            const cached = this.getLoadedGridTableFromMemoryCache(restoredDb, restoredTbl);
+            if (cached) {
+              this.applyCachedGridTableToActiveGrid(cached);
+            } else {
+              this.fetchWorkspaceFromServer(false, restoredTbl, restoredDb);
+            }
+          }
+        } else {
+          this.fetchWorkspaceFromServer();
+        }
+      }
       this.connectRealTimeStream();
       this.realtimeSync.initializeConnection(
         this.activeDatabaseName(),
@@ -1637,8 +1908,8 @@ export class App implements OnInit, OnDestroy {
     event?.stopPropagation();
     const nextOpen = !this.isManageSidebarOpen();
     this.isManageSidebarOpen.set(nextOpen);
-    if (nextOpen) {
-      this.refreshObjectExplorerTreeFromDb();
+    if (nextOpen && !this.serverName()) {
+      this.loadServerNodeOnlyFromDb();
     }
   }
 
@@ -1652,13 +1923,18 @@ export class App implements OnInit, OnDestroy {
   }
 
   public readonly filteredManageDatabases = computed<DbDatabaseSummary[]>(() => {
+    // First-time unreviewed user sees nothing until Admin approves their access
+    if (this.isUnreviewedFirstTimeUser()) {
+      return [];
+    }
     const q = this.manageTreeSearchQuery().trim().toLowerCase();
-    const allDbs = this.databases();
+    const allDbs = this.objectExplorerDatabases();
     if (!q) return allDbs;
 
     return allDbs.filter((db) => {
       if (db.databaseName.toLowerCase().includes(q)) return true;
-      return (db.tables || []).some((tbl) => {
+      const tbls = this.getTablesForManageDatabase(db);
+      return tbls.some((tbl) => {
         if (tbl.tableName.toLowerCase().includes(q)) return true;
         const cols = this.getColumnsForManageTable(db.databaseName, tbl);
         return cols.some((c) => c.name.toLowerCase().includes(q));
@@ -1786,9 +2062,50 @@ export class App implements OnInit, OnDestroy {
     }
   }
 
-  public refreshObjectExplorerTreeFromDb(forceRefresh = true): void {
+  public resetObjectExplorerToServerOnlyState(): void {
+    this.isServerNodeExpanded.set(false);
+    this.isDatabasesFolderExpanded.set(false);
+    this.expandedDatabaseNodes.set(new Set());
+    this.expandedTablesFolderNodes.set(new Set());
+    this.expandedTableNodes.set(new Set());
+    this.expandedColumnsFolderNodes.set(new Set());
+    this.isServerNodeExpanding.set(false);
+    this.isDatabasesFolderExpanding.set(false);
+    this.expandingDatabaseNodes.set(new Set());
+    this.expandingTablesFolderNodes.set(new Set());
+    this.expandingTableNodes.set(new Set());
+    this.expandingColumnsFolderNodes.set(new Set());
+    this.selectedObjectExplorerDatabase.set('');
+    this.objectExplorerDatabases.set([]);
+    this.treeLoadedTablesByDb.set({});
+    this.treeLoadedColumnsByTable.set({});
+    if (this.isBrowser) {
+      try {
+        localStorage.removeItem(this.sidebarTreeStorageKey);
+      } catch {
+        // Ignore
+      }
+    }
+  }
+
+  private applyServerInfoFromResponse(res: {
+    serverName?: string;
+    serverHost?: string;
+    serverClusterName?: string;
+    serverVersion?: string;
+    serverEngine?: string;
+    serverLoginUser?: string;
+  }): void {
+    if (res.serverName) this.serverName.set(res.serverName);
+    if (res.serverHost) this.serverHost.set(res.serverHost);
+    if (res.serverClusterName) this.serverClusterName.set(res.serverClusterName);
+    if (res.serverVersion) this.serverVersion.set(res.serverVersion);
+    if (res.serverEngine) this.serverEngine.set(res.serverEngine);
+    if (res.serverLoginUser) this.serverLoginUser.set(res.serverLoginUser);
+  }
+
+  public loadServerNodeOnlyFromDb(): void {
     if (!this.isBrowser) return;
-    const url = forceRefresh ? '/api/workspace/tree?refresh=1' : '/api/workspace/tree';
     this.http
       .get<{
         ok: boolean;
@@ -1798,31 +2115,318 @@ export class App implements OnInit, OnDestroy {
         serverVersion?: string;
         serverEngine?: string;
         serverLoginUser?: string;
-        activeDatabaseName?: string;
-        activeTableName?: string;
-        databases?: DbDatabaseSummary[];
-        tables?: DbTableSummary[];
-      }>(url)
+      }>('/api/workspace/tree?scope=server&refresh=1')
       .subscribe({
         next: (res) => {
           if (res?.ok) {
-            if (res.serverName) this.serverName.set(res.serverName);
-            if (res.serverHost) this.serverHost.set(res.serverHost);
-            if (res.serverClusterName) this.serverClusterName.set(res.serverClusterName);
-            if (res.serverVersion) this.serverVersion.set(res.serverVersion);
-            if (res.serverEngine) this.serverEngine.set(res.serverEngine);
-            if (res.serverLoginUser) this.serverLoginUser.set(res.serverLoginUser);
-            if (Array.isArray(res.databases)) {
-              this.databases.set(res.databases);
-              this.syncTablesSignalForActiveDatabase(res.databases);
-              this.checkAndRestoreClientBackupIfNeeded(res.databases);
-            }
+            this.applyServerInfoFromResponse(res);
           }
         },
         error: () => {
-          // Ignore background tree refresh errors
+          // Ignore background server info errors
         },
       });
+  }
+
+  public loadDatabaseListOnlyFromDb(onComplete?: () => void): void {
+    if (!this.isBrowser) {
+      onComplete?.();
+      return;
+    }
+    this.http
+      .get<{
+        ok: boolean;
+        serverName?: string;
+        serverHost?: string;
+        serverClusterName?: string;
+        serverVersion?: string;
+        serverEngine?: string;
+        serverLoginUser?: string;
+        databases?: DbDatabaseSummary[];
+      }>('/api/workspace/tree?scope=databases&refresh=1')
+      .subscribe({
+        next: (res) => {
+          if (res?.ok) {
+            this.applyServerInfoFromResponse(res);
+            if (Array.isArray(res.databases)) {
+              const closedDbs = res.databases.map((d) => ({
+                ...d,
+                tables: [],
+              }));
+              this.objectExplorerDatabases.set(closedDbs);
+              // Keep databases() list aware of database names for modals without overwriting active tables
+              this.databases.update((prev) => {
+                const byLower = new Map(prev.map((p) => [p.databaseName.toLowerCase(), p]));
+                return closedDbs.map((d) => {
+                  const existing = byLower.get(d.databaseName.toLowerCase());
+                  return existing ? { ...existing, databaseName: d.databaseName } : d;
+                });
+              });
+            }
+          }
+          onComplete?.();
+        },
+        error: () => {
+          onComplete?.();
+        },
+      });
+  }
+
+  public loadTablesForDatabaseFromDb(dbName: string, onComplete?: () => void): void {
+    if (!this.isBrowser) {
+      onComplete?.();
+      return;
+    }
+    const cleanDb = (dbName || '').trim();
+    if (!cleanDb) {
+      onComplete?.();
+      return;
+    }
+    this.http
+      .get<{
+        ok: boolean;
+        databaseName?: string;
+        serverName?: string;
+        serverHost?: string;
+        serverClusterName?: string;
+        serverVersion?: string;
+        serverEngine?: string;
+        serverLoginUser?: string;
+        tables?: DbTableSummary[];
+      }>(`/api/workspace/tree?scope=tables&databaseName=${encodeURIComponent(cleanDb)}&refresh=1`)
+      .subscribe({
+        next: (res) => {
+          if (res?.ok) {
+            this.applyServerInfoFromResponse(res);
+            const closedTables = (res.tables || []).map((t) => ({
+              ...t,
+              columns: [],
+              rows: [],
+            }));
+            this.treeLoadedTablesByDb.update((prev) => ({
+              ...prev,
+              [cleanDb.toLowerCase()]: closedTables,
+            }));
+            this.objectExplorerDatabases.update((dbs) =>
+              dbs.map((d) =>
+                d.databaseName.toLowerCase() === cleanDb.toLowerCase()
+                  ? { ...d, tables: closedTables }
+                  : d
+              )
+            );
+          }
+          onComplete?.();
+        },
+        error: () => {
+          onComplete?.();
+        },
+      });
+  }
+
+  public loadFieldsForTableFromDb(
+    dbName: string,
+    tableName: string,
+    onComplete?: () => void
+  ): void {
+    if (!this.isBrowser) {
+      onComplete?.();
+      return;
+    }
+    const cleanDb = (dbName || '').trim();
+    const cleanTbl = (tableName || '').trim();
+    if (!cleanDb || !cleanTbl) {
+      onComplete?.();
+      return;
+    }
+    const keyLower = `${cleanDb.toLowerCase()}::${cleanTbl.toLowerCase()}`;
+    this.http
+      .get<{
+        ok: boolean;
+        databaseName?: string;
+        tableName?: string;
+        serverName?: string;
+        serverHost?: string;
+        serverClusterName?: string;
+        serverVersion?: string;
+        serverEngine?: string;
+        serverLoginUser?: string;
+        columns?: GridColumn[];
+      }>(
+        `/api/workspace/tree?scope=fields&databaseName=${encodeURIComponent(cleanDb)}&tableName=${encodeURIComponent(cleanTbl)}&refresh=1`
+      )
+      .subscribe({
+        next: (res) => {
+          if (res?.ok) {
+            this.applyServerInfoFromResponse(res);
+            const cols = Array.isArray(res.columns) ? res.columns : [];
+            this.treeLoadedColumnsByTable.update((prev) => ({
+              ...prev,
+              [keyLower]: cols,
+            }));
+            this.treeLoadedTablesByDb.update((prev) => {
+              const dbKey = cleanDb.toLowerCase();
+              const existingTbls = prev[dbKey] || [];
+              return {
+                ...prev,
+                [dbKey]: existingTbls.map((t) =>
+                  t.tableName.toLowerCase() === cleanTbl.toLowerCase()
+                    ? { ...t, columns: cols, columnCount: cols.length }
+                    : t
+                ),
+              };
+            });
+            this.objectExplorerDatabases.update((dbs) =>
+              dbs.map((d) =>
+                d.databaseName.toLowerCase() === cleanDb.toLowerCase()
+                  ? {
+                      ...d,
+                      tables: (d.tables || []).map((t) =>
+                        t.tableName.toLowerCase() === cleanTbl.toLowerCase()
+                          ? { ...t, columns: cols, columnCount: cols.length }
+                          : t
+                      ),
+                    }
+                  : d
+              )
+            );
+          }
+          onComplete?.();
+        },
+        error: () => {
+          onComplete?.();
+        },
+      });
+  }
+
+  public clearDatabaseTreeData(dbName: string): void {
+    const cleanDb = (dbName || '').trim();
+    if (!cleanDb) return;
+    const lowerDb = cleanDb.toLowerCase();
+
+    this.expandingDatabaseNodes.update((prev) => {
+      const next = new Set<string>();
+      for (const item of prev) {
+        if (item.toLowerCase() !== lowerDb) {
+          next.add(item);
+        }
+      }
+      return next;
+    });
+
+    this.expandedDatabaseNodes.update((prev) => {
+      const next = new Set<string>();
+      for (const item of prev) {
+        if (item.toLowerCase() !== lowerDb) {
+          next.add(item);
+        }
+      }
+      return next;
+    });
+
+    this.expandingTablesFolderNodes.update((prev) => {
+      const next = new Set<string>();
+      for (const item of prev) {
+        if (item.toLowerCase() !== lowerDb) {
+          next.add(item);
+        }
+      }
+      return next;
+    });
+
+    this.expandedTablesFolderNodes.update((prev) => {
+      const next = new Set<string>();
+      for (const item of prev) {
+        if (item.toLowerCase() !== lowerDb) {
+          next.add(item);
+        }
+      }
+      return next;
+    });
+
+    this.expandingTableNodes.update((prev) => {
+      const next = new Set<string>();
+      const prefix = `${lowerDb}::`;
+      for (const item of prev) {
+        if (!item.toLowerCase().startsWith(prefix)) {
+          next.add(item);
+        }
+      }
+      return next;
+    });
+
+    this.expandedTableNodes.update((prev) => {
+      const next = new Set<string>();
+      const prefix = `${lowerDb}::`;
+      for (const item of prev) {
+        if (!item.toLowerCase().startsWith(prefix)) {
+          next.add(item);
+        }
+      }
+      return next;
+    });
+
+    this.expandingColumnsFolderNodes.update((prev) => {
+      const next = new Set<string>();
+      const prefix = `${lowerDb}::`;
+      for (const item of prev) {
+        if (!item.toLowerCase().startsWith(prefix)) {
+          next.add(item);
+        }
+      }
+      return next;
+    });
+
+    this.expandedColumnsFolderNodes.update((prev) => {
+      const next = new Set<string>();
+      const prefix = `${lowerDb}::`;
+      for (const item of prev) {
+        if (!item.toLowerCase().startsWith(prefix)) {
+          next.add(item);
+        }
+      }
+      return next;
+    });
+
+    this.treeLoadedTablesByDb.update((prev) => {
+      const next = { ...prev };
+      delete next[lowerDb];
+      return next;
+    });
+
+    this.treeLoadedColumnsByTable.update((prev) => {
+      const next: Record<string, GridColumn[]> = {};
+      const prefix = `${lowerDb}::`;
+      for (const [k, v] of Object.entries(prev)) {
+        if (!k.toLowerCase().startsWith(prefix)) {
+          next[k] = v;
+        }
+      }
+      return next;
+    });
+
+    this.objectExplorerDatabases.update((dbs) =>
+      dbs.map((d) =>
+        d.databaseName.toLowerCase() === lowerDb ? { ...d, tables: [] } : d
+      )
+    );
+  }
+
+  public refreshObjectExplorerTreeFromDb(forceRefresh = true): void {
+    if (!this.isBrowser) return;
+    if (!this.isServerNodeExpanded()) {
+      this.loadServerNodeOnlyFromDb();
+      return;
+    }
+    this.loadDatabaseListOnlyFromDb();
+    for (const dbName of this.expandedDatabaseNodes()) {
+      this.loadTablesForDatabaseFromDb(dbName);
+    }
+    for (const tblKey of this.expandedTableNodes()) {
+      const [dbName, tblName] = tblKey.split('::');
+      if (dbName && tblName) {
+        this.loadFieldsForTableFromDb(dbName, tblName);
+      }
+    }
   }
 
   public syncTablesSignalForActiveDatabase(
@@ -1844,45 +2448,217 @@ export class App implements OnInit, OnDestroy {
   }
 
   private restoreSidebarTreeStateFromStorage(): void {
-    if (!this.isBrowser) return;
-    try {
-      const raw = localStorage.getItem(this.sidebarTreeStorageKey);
-      if (!raw) return;
-      const parsed = JSON.parse(raw) as {
-        serverExpanded?: boolean;
-        databasesFolderExpanded?: boolean;
-        expandedDatabases?: string[];
-        expandedTables?: string[];
-      };
-      if (typeof parsed.serverExpanded === 'boolean') {
-        this.isServerNodeExpanded.set(parsed.serverExpanded);
-      }
-      if (typeof parsed.databasesFolderExpanded === 'boolean') {
-        this.isDatabasesFolderExpanded.set(parsed.databasesFolderExpanded);
-      }
-      if (Array.isArray(parsed.expandedDatabases)) {
-        this.expandedDatabaseNodes.set(new Set(parsed.expandedDatabases));
-      }
-      if (Array.isArray(parsed.expandedTables)) {
-        this.expandedTableNodes.set(new Set(parsed.expandedTables));
-      }
-    } catch {
-      // Ignore malformed storage
-    }
+    this.resetObjectExplorerToServerOnlyState();
   }
 
   private saveSidebarTreeStateToStorage(): void {
+    // Object Explorer nodes always start closed on reload/refresh per user requirement
+  }
+
+  private getGridTableCacheKey(databaseName: string, tableName: string): string {
+    return `${(databaseName || '').trim().toLowerCase()}::${(tableName || '').trim().toLowerCase()}`;
+  }
+
+  public isTableOpenInDb(databaseName: string, tableName: string): boolean {
+    const cleanTbl = (tableName || '').trim().toLowerCase();
+    if (!cleanTbl) return false;
+    return this.getOpenTableNamesForDb(databaseName).some(
+      (t) => (t || '').trim().toLowerCase() === cleanTbl
+    );
+  }
+
+  public getLoadedGridTableFromMemoryCache(databaseName: string, tableName: string) {
+    const key = this.getGridTableCacheKey(databaseName, tableName);
+    if (!key || key === '::') return null;
+    return this.loadedGridTableCacheByKey()[key] || null;
+  }
+
+  private setLoadedGridTableInMemoryCache(entry: {
+    databaseName: string;
+    tableName: string;
+    columns: GridColumn[];
+    rows: GridRow[];
+    totalRows: number;
+    filteredTotalRows: number;
+    hasMore: boolean;
+    uniqueValuesByColumn: Record<string, { label: string; count: number }[]>;
+    visibleRowLimit: number;
+  }): void {
+    const cleanDb = (entry.databaseName || '').trim();
+    const cleanTbl = (entry.tableName || '').trim();
+    if (!cleanDb || !cleanTbl) return;
+    const key = this.getGridTableCacheKey(cleanDb, cleanTbl);
+    this.loadedGridTableCacheByKey.update((prev) => ({
+      ...prev,
+      [key]: {
+        databaseName: cleanDb,
+        tableName: cleanTbl,
+        columns: entry.columns.map((c) => ({ ...c })),
+        rows: entry.rows.map((r) => ({ ...r, cells: { ...r.cells } })),
+        totalRows: entry.totalRows,
+        filteredTotalRows: entry.filteredTotalRows,
+        hasMore: entry.hasMore,
+        uniqueValuesByColumn: { ...(entry.uniqueValuesByColumn || {}) },
+        visibleRowLimit: entry.visibleRowLimit,
+      },
+    }));
+    this.saveWorkspaceTabsStateToStorage();
+  }
+
+  private removeLoadedGridTableFromMemoryCache(databaseName: string, tableName: string): void {
+    const key = this.getGridTableCacheKey(databaseName, tableName);
+    this.loadedGridTableCacheByKey.update((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+  }
+
+  private saveCurrentActiveGridTableToMemoryCache(): void {
+    if (!this.hasActiveConnection()) return;
+    const currentDb = (this.activeDatabaseName() || '').trim();
+    const currentTbl = (this.activeTableName() || '').trim();
+    if (!currentDb || !currentTbl) return;
+    if (!this.isTableOpenInDb(currentDb, currentTbl)) return;
+    const cols = this.columns();
+    const existing = this.getLoadedGridTableFromMemoryCache(currentDb, currentTbl);
+    if (cols.length === 0 && !existing) return;
+
+    this.setLoadedGridTableInMemoryCache({
+      databaseName: currentDb,
+      tableName: currentTbl,
+      columns: cols,
+      rows: this.rows(),
+      totalRows: this.dbTotalRows(),
+      filteredTotalRows: this.dbFilteredTotalRows(),
+      hasMore: this.dbHasMoreRows(),
+      uniqueValuesByColumn: this.dbUniqueValuesByColumn(),
+      visibleRowLimit: this.visibleRowLimit(),
+    });
+  }
+
+  private applyCachedGridTableToActiveGrid(cached: {
+    databaseName: string;
+    tableName: string;
+    columns: GridColumn[];
+    rows: GridRow[];
+    totalRows: number;
+    filteredTotalRows: number;
+    hasMore: boolean;
+    uniqueValuesByColumn: Record<string, { label: string; count: number }[]>;
+    visibleRowLimit: number;
+  }): void {
+    const effectiveCols = Array.isArray(cached.columns) ? cached.columns : [];
+    const sanitizedRows = this.sanitizeClientRowsAgainstColumns(
+      effectiveCols,
+      Array.isArray(cached.rows) ? cached.rows : []
+    );
+    this.columns.set(effectiveCols);
+    this.rows.set(sanitizedRows);
+    this.visibleRowLimit.set(
+      Math.max(this.lazyBatchSize, cached.visibleRowLimit || sanitizedRows.length)
+    );
+    this.dbTotalRows.set(cached.totalRows ?? sanitizedRows.length);
+    this.dbFilteredTotalRows.set(
+      cached.filteredTotalRows ?? cached.totalRows ?? sanitizedRows.length
+    );
+    this.dbHasMoreRows.set(Boolean(cached.hasMore));
+    this.dbUniqueValuesByColumn.set(cached.uniqueValuesByColumn || {});
+    this.snapshotValidRows(sanitizedRows);
+    this.cloudSyncStatus.set('synced');
+
+    const firstRow = sanitizedRows[0];
+    if (firstRow && !this.activeCell()) {
+      const defaultCol = effectiveCols[1] || effectiveCols[0];
+      if (defaultCol) {
+        this.selectCell(firstRow.id, defaultCol.id);
+      }
+    }
+    this.broadcastPresence();
+    this.realtimeSync.switchTableGroup(cached.databaseName, cached.tableName);
+  }
+
+  private saveWorkspaceTabsStateToStorage(): void {
     if (!this.isBrowser) return;
     try {
       const payload = {
-        serverExpanded: this.isServerNodeExpanded(),
-        databasesFolderExpanded: this.isDatabasesFolderExpanded(),
-        expandedDatabases: Array.from(this.expandedDatabaseNodes()),
-        expandedTables: Array.from(this.expandedTableNodes()),
+        isDisconnected: !this.hasActiveConnection(),
+        databaseTabs: this.databaseTabs(),
+        activeDatabaseTabId: this.activeDatabaseTabId(),
+        activeDatabaseName: this.activeDatabaseName(),
+        activeTableName: this.activeTableName(),
+        openTableTabsByDb: this.openTableTabsByDb(),
+        loadedGridTableCacheByKey: this.loadedGridTableCacheByKey(),
       };
-      localStorage.setItem(this.sidebarTreeStorageKey, JSON.stringify(payload));
+      localStorage.setItem(this.workspaceTabsStorageKey, JSON.stringify(payload));
     } catch {
-      // Ignore storage quota errors
+      // Ignore storage errors
+    }
+  }
+
+  private restoreWorkspaceTabsStateFromStorage(): void {
+    if (!this.isBrowser) return;
+    try {
+      const raw = localStorage.getItem(this.workspaceTabsStorageKey);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as {
+        isDisconnected?: boolean;
+        databaseTabs?: DatabaseWorkspaceTab[];
+        activeDatabaseTabId?: string;
+        activeDatabaseName?: string;
+        activeTableName?: string;
+        openTableTabsByDb?: Record<string, string[]>;
+        loadedGridTableCacheByKey?: Record<
+          string,
+          {
+            databaseName: string;
+            tableName: string;
+            columns: GridColumn[];
+            rows: GridRow[];
+            totalRows: number;
+            filteredTotalRows: number;
+            hasMore: boolean;
+            uniqueValuesByColumn: Record<string, { label: string; count: number }[]>;
+            visibleRowLimit: number;
+          }
+        >;
+      };
+      if (!parsed || typeof parsed !== 'object') return;
+      this.hasRestoredWorkspaceTabsState = true;
+      this.hasInitializedWorkspace = true;
+
+      if (parsed.openTableTabsByDb && typeof parsed.openTableTabsByDb === 'object') {
+        this.openTableTabsByDb.set(parsed.openTableTabsByDb);
+      }
+      if (
+        parsed.loadedGridTableCacheByKey &&
+        typeof parsed.loadedGridTableCacheByKey === 'object'
+      ) {
+        this.loadedGridTableCacheByKey.set(parsed.loadedGridTableCacheByKey);
+      }
+
+      if (parsed.isDisconnected || (Array.isArray(parsed.databaseTabs) && parsed.databaseTabs.length === 0)) {
+        this.restoredDisconnectedState = true;
+        this.setNoActiveConnectionState(false);
+        return;
+      }
+
+      if (Array.isArray(parsed.databaseTabs) && parsed.databaseTabs.length > 0) {
+        this.databaseTabs.set(parsed.databaseTabs);
+        const tabId = parsed.activeDatabaseTabId || parsed.databaseTabs[0].tabId;
+        this.activeDatabaseTabId.set(tabId);
+        const activeTab =
+          parsed.databaseTabs.find((t) => t.tabId === tabId) || parsed.databaseTabs[0];
+        const dbName = (parsed.activeDatabaseName ?? activeTab?.databaseName ?? '').trim();
+        const tblName = (parsed.activeTableName ?? activeTab?.activeTableName ?? '').trim();
+        this.activeDatabaseName.set(dbName);
+        this.activeTableName.set(tblName);
+        this.workspaceName.set(tblName || dbName);
+        this.workspaceNameControl.setValue(tblName || dbName);
+      }
+    } catch {
+      // Ignore malformed storage
     }
   }
 
@@ -1969,6 +2745,7 @@ export class App implements OnInit, OnDestroy {
       next[matchedKey] = existing;
       return next;
     });
+    this.saveWorkspaceTabsStateToStorage();
   }
 
   public closeTableTab(tableName: string, event?: Event): void {
@@ -1994,17 +2771,19 @@ export class App implements OnInit, OnDestroy {
       }
       return next;
     });
+    this.removeLoadedGridTableFromMemoryCache(currentDb, cleanTbl);
 
     const isClosingActive =
       this.activeTableName().trim().toLowerCase() === cleanTbl.toLowerCase();
     if (!isClosingActive) {
+      this.saveWorkspaceTabsStateToStorage();
       return;
     }
 
     const remainingOpen = this.openTablesForActiveDatabase();
     if (remainingOpen.length > 0) {
       const nextTbl = remainingOpen[remainingOpen.length - 1].tableName;
-      this.switchTable(nextTbl);
+      this.switchTable(nextTbl, undefined, false);
     } else {
       this.activeTableName.set('');
       this.workspaceName.set(currentDb);
@@ -2029,6 +2808,7 @@ export class App implements OnInit, OnDestroy {
       this.cellValidationErrors.set({});
       this.pendingUnsavedRowIds.set(new Set());
       this.pendingUnsavedColIds.set(new Set());
+      this.saveWorkspaceTabsStateToStorage();
     }
   }
 
@@ -2070,7 +2850,18 @@ export class App implements OnInit, OnDestroy {
       }
       return next;
     });
+    const oldCacheKey = this.getGridTableCacheKey(cleanDb, cleanOld);
+    const newCacheKey = this.getGridTableCacheKey(cleanDb, cleanNew);
+    this.loadedGridTableCacheByKey.update((prev) => {
+      if (!(oldCacheKey in prev)) return prev;
+      const next = { ...prev };
+      const entry = next[oldCacheKey];
+      delete next[oldCacheKey];
+      next[newCacheKey] = { ...entry, tableName: cleanNew };
+      return next;
+    });
     this.saveTableLastUsedOrderToStorage();
+    this.saveWorkspaceTabsStateToStorage();
   }
 
   public removeTableFromLastUsedOrder(databaseName: string, tableName: string): void {
@@ -2100,7 +2891,9 @@ export class App implements OnInit, OnDestroy {
       }
       return next;
     });
+    this.removeLoadedGridTableFromMemoryCache(cleanDb, cleanTbl);
     this.saveTableLastUsedOrderToStorage();
+    this.saveWorkspaceTabsStateToStorage();
   }
 
   public getLastUsedTableForDatabase(databaseName: string): string {
@@ -2123,7 +2916,7 @@ export class App implements OnInit, OnDestroy {
           const matched = availableTables.find(
             (t) => t.tableName.toLowerCase() === candLower
           );
-          if (matched) return matched.tableName;
+          return matched ? matched.tableName : candidate.trim();
         }
       }
     }
@@ -2146,6 +2939,34 @@ export class App implements OnInit, OnDestroy {
     return dbName || 'No Active Connection';
   }
 
+  public selectObjectExplorerDatabase(dbName: string, event?: Event): void {
+    event?.stopPropagation();
+    const cleanDb = (dbName || '').trim();
+    if (!cleanDb) return;
+    this.selectedObjectExplorerDatabase.set(cleanDb);
+  }
+
+  public getTargetSelectedExplorerDatabase(): string {
+    const explicit = (this.selectedObjectExplorerDatabase() || '').trim();
+    const dbs = this.objectExplorerDatabases();
+    if (explicit) {
+      if (dbs.length === 0) return explicit;
+      const matched = dbs.find((d) => d.databaseName.toLowerCase() === explicit.toLowerCase());
+      if (matched) return matched.databaseName;
+    }
+    if (this.hasActiveConnection() && this.activeDatabaseName()) {
+      const activeDb = this.activeDatabaseName().trim();
+      if (dbs.length === 0) return activeDb;
+      const matchedActive = dbs.find((d) => d.databaseName.toLowerCase() === activeDb.toLowerCase());
+      if (matchedActive) return matchedActive.databaseName;
+    }
+    return '';
+  }
+
+  public canExpandSelectedDatabaseInTree(): boolean {
+    return Boolean(this.getTargetSelectedExplorerDatabase());
+  }
+
   public isServerRootNodeExpanded(): boolean {
     if (this.manageTreeSearchQuery().trim().length > 0) return true;
     return this.isServerNodeExpanded();
@@ -2153,11 +2974,43 @@ export class App implements OnInit, OnDestroy {
 
   public toggleServerNode(event?: Event): void {
     event?.stopPropagation();
-    const nextVal = !this.isServerNodeExpanded();
-    this.isServerNodeExpanded.set(nextVal);
-    this.saveSidebarTreeStateToStorage();
-    if (nextVal) {
-      this.refreshObjectExplorerTreeFromDb();
+    if (this.isServerNodeExpanding()) return;
+    const isCurrentlyExpanded = this.isServerNodeExpanded();
+    if (!isCurrentlyExpanded) {
+      // Replace + icon with loader icon until database list is loaded
+      this.isServerNodeExpanding.set(true);
+      this.expandedDatabaseNodes.set(new Set());
+      this.expandedTablesFolderNodes.set(new Set());
+      this.expandedTableNodes.set(new Set());
+      this.expandedColumnsFolderNodes.set(new Set());
+      this.expandingDatabaseNodes.set(new Set());
+      this.expandingTablesFolderNodes.set(new Set());
+      this.expandingTableNodes.set(new Set());
+      this.expandingColumnsFolderNodes.set(new Set());
+      this.treeLoadedTablesByDb.set({});
+      this.treeLoadedColumnsByTable.set({});
+      this.loadDatabaseListOnlyFromDb(() => {
+        this.isServerNodeExpanding.set(false);
+        this.isServerNodeExpanded.set(true);
+        this.isDatabasesFolderExpanded.set(true);
+      });
+    } else {
+      this.isServerNodeExpanding.set(false);
+      this.isDatabasesFolderExpanding.set(false);
+      this.isServerNodeExpanded.set(false);
+      this.isDatabasesFolderExpanded.set(false);
+      this.expandedDatabaseNodes.set(new Set());
+      this.expandedTablesFolderNodes.set(new Set());
+      this.expandedTableNodes.set(new Set());
+      this.expandedColumnsFolderNodes.set(new Set());
+      this.expandingDatabaseNodes.set(new Set());
+      this.expandingTablesFolderNodes.set(new Set());
+      this.expandingTableNodes.set(new Set());
+      this.expandingColumnsFolderNodes.set(new Set());
+      this.selectedObjectExplorerDatabase.set('');
+      this.objectExplorerDatabases.set([]);
+      this.treeLoadedTablesByDb.set({});
+      this.treeLoadedColumnsByTable.set({});
     }
   }
 
@@ -2168,96 +3021,595 @@ export class App implements OnInit, OnDestroy {
 
   public toggleDatabasesFolderNode(event?: Event): void {
     event?.stopPropagation();
-    const nextVal = !this.isDatabasesFolderExpanded();
-    this.isDatabasesFolderExpanded.set(nextVal);
-    this.saveSidebarTreeStateToStorage();
-    if (nextVal) {
-      this.refreshObjectExplorerTreeFromDb();
+    if (this.isDatabasesFolderExpanding()) return;
+    const isCurrentlyExpanded = this.isDatabasesFolderExpanded();
+    if (!isCurrentlyExpanded) {
+      this.isDatabasesFolderExpanding.set(true);
+      this.expandedDatabaseNodes.set(new Set());
+      this.expandedTablesFolderNodes.set(new Set());
+      this.expandedTableNodes.set(new Set());
+      this.expandedColumnsFolderNodes.set(new Set());
+      this.expandingDatabaseNodes.set(new Set());
+      this.expandingTablesFolderNodes.set(new Set());
+      this.expandingTableNodes.set(new Set());
+      this.expandingColumnsFolderNodes.set(new Set());
+      this.treeLoadedTablesByDb.set({});
+      this.treeLoadedColumnsByTable.set({});
+      this.loadDatabaseListOnlyFromDb(() => {
+        this.isDatabasesFolderExpanding.set(false);
+        this.isDatabasesFolderExpanded.set(true);
+      });
+    } else {
+      this.isDatabasesFolderExpanding.set(false);
+      this.isDatabasesFolderExpanded.set(false);
+      this.expandedDatabaseNodes.set(new Set());
+      this.expandedTablesFolderNodes.set(new Set());
+      this.expandedTableNodes.set(new Set());
+      this.expandedColumnsFolderNodes.set(new Set());
+      this.expandingDatabaseNodes.set(new Set());
+      this.expandingTablesFolderNodes.set(new Set());
+      this.expandingTableNodes.set(new Set());
+      this.expandingColumnsFolderNodes.set(new Set());
+      this.selectedObjectExplorerDatabase.set('');
+      this.objectExplorerDatabases.set([]);
+      this.treeLoadedTablesByDb.set({});
+      this.treeLoadedColumnsByTable.set({});
     }
+  }
+
+  public isDatabaseNodeExpanding(dbName: string): boolean {
+    const lower = (dbName || '').trim().toLowerCase();
+    for (const item of this.expandingDatabaseNodes()) {
+      if (item.toLowerCase() === lower) return true;
+    }
+    return false;
   }
 
   public isDatabaseNodeExpanded(dbName: string): boolean {
     if (this.manageTreeSearchQuery().trim().length > 0) return true;
-    return this.expandedDatabaseNodes().has(dbName);
+    const lower = (dbName || '').trim().toLowerCase();
+    for (const item of this.expandedDatabaseNodes()) {
+      if (item.toLowerCase() === lower) return true;
+    }
+    return false;
   }
 
   public toggleDatabaseNode(dbName: string, event?: Event): void {
     event?.stopPropagation();
-    let willExpand = false;
-    this.expandedDatabaseNodes.update((prev) => {
-      const next = new Set(prev);
-      if (next.has(dbName)) {
-        next.delete(dbName);
-      } else {
-        next.add(dbName);
-        willExpand = true;
-      }
-      return next;
-    });
-    this.saveSidebarTreeStateToStorage();
-    if (willExpand) {
-      this.refreshObjectExplorerTreeFromDb();
+    const cleanDb = (dbName || '').trim();
+    if (!cleanDb) return;
+    this.selectedObjectExplorerDatabase.set(cleanDb);
+    if (this.isDatabaseNodeExpanding(cleanDb)) return;
+    const isCurrentlyExpanded = this.isDatabaseNodeExpanded(cleanDb);
+
+    if (!isCurrentlyExpanded) {
+      const lowerDb = cleanDb.toLowerCase();
+      this.expandingDatabaseNodes.update((prev) => {
+        const next = new Set(prev);
+        next.add(lowerDb);
+        return next;
+      });
+      // Ensure all child table/field nodes for this database remain closed and unloaded
+      const lowerPrefix = `${lowerDb}::`;
+      this.expandedTableNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const k of prev) {
+          if (!k.toLowerCase().startsWith(lowerPrefix)) next.add(k);
+        }
+        return next;
+      });
+      this.expandedColumnsFolderNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const k of prev) {
+          if (!k.toLowerCase().startsWith(lowerPrefix)) next.add(k);
+        }
+        return next;
+      });
+      this.expandingTableNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const k of prev) {
+          if (!k.toLowerCase().startsWith(lowerPrefix)) next.add(k);
+        }
+        return next;
+      });
+      this.expandingColumnsFolderNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const k of prev) {
+          if (!k.toLowerCase().startsWith(lowerPrefix)) next.add(k);
+        }
+        return next;
+      });
+      this.treeLoadedColumnsByTable.update((prev) => {
+        const next: Record<string, GridColumn[]> = {};
+        for (const [k, v] of Object.entries(prev)) {
+          if (!k.toLowerCase().startsWith(lowerPrefix)) next[k] = v;
+        }
+        return next;
+      });
+      this.loadTablesForDatabaseFromDb(cleanDb, () => {
+        this.expandingDatabaseNodes.update((prev) => {
+          const next = new Set<string>();
+          for (const item of prev) {
+            if (item.toLowerCase() !== lowerDb) next.add(item);
+          }
+          return next;
+        });
+        this.expandedDatabaseNodes.update((prev) => {
+          const next = new Set(prev);
+          next.add(cleanDb);
+          return next;
+        });
+        this.expandedTablesFolderNodes.update((prev) => {
+          const next = new Set(prev);
+          next.add(cleanDb);
+          return next;
+        });
+      });
+    } else {
+      this.clearDatabaseTreeData(cleanDb);
     }
+  }
+
+  public isTablesFolderNodeExpanding(dbName: string): boolean {
+    const lower = (dbName || '').trim().toLowerCase();
+    for (const item of this.expandingTablesFolderNodes()) {
+      if (item.toLowerCase() === lower) return true;
+    }
+    return false;
+  }
+
+  public isTablesFolderNodeExpanded(dbName: string): boolean {
+    if (this.manageTreeSearchQuery().trim().length > 0) return true;
+    const lower = (dbName || '').trim().toLowerCase();
+    for (const item of this.expandedTablesFolderNodes()) {
+      if (item.toLowerCase() === lower) return true;
+    }
+    return false;
+  }
+
+  public toggleTablesFolderNode(dbName: string, event?: Event): void {
+    event?.stopPropagation();
+    const cleanDb = (dbName || '').trim();
+    if (!cleanDb) return;
+    this.selectedObjectExplorerDatabase.set(cleanDb);
+    if (this.isTablesFolderNodeExpanding(cleanDb)) return;
+    const lowerDb = cleanDb.toLowerCase();
+    const lowerPrefix = `${lowerDb}::`;
+    const isCurrentlyExpanded = this.isTablesFolderNodeExpanded(cleanDb);
+
+    if (!isCurrentlyExpanded) {
+      this.expandingTablesFolderNodes.update((prev) => {
+        const next = new Set(prev);
+        next.add(lowerDb);
+        return next;
+      });
+      this.expandedTableNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const k of prev) {
+          if (!k.toLowerCase().startsWith(lowerPrefix)) next.add(k);
+        }
+        return next;
+      });
+      this.expandedColumnsFolderNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const k of prev) {
+          if (!k.toLowerCase().startsWith(lowerPrefix)) next.add(k);
+        }
+        return next;
+      });
+      this.expandingTableNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const k of prev) {
+          if (!k.toLowerCase().startsWith(lowerPrefix)) next.add(k);
+        }
+        return next;
+      });
+      this.expandingColumnsFolderNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const k of prev) {
+          if (!k.toLowerCase().startsWith(lowerPrefix)) next.add(k);
+        }
+        return next;
+      });
+      this.treeLoadedColumnsByTable.update((prev) => {
+        const next: Record<string, GridColumn[]> = {};
+        for (const [k, v] of Object.entries(prev)) {
+          if (!k.toLowerCase().startsWith(lowerPrefix)) next[k] = v;
+        }
+        return next;
+      });
+      this.loadTablesForDatabaseFromDb(cleanDb, () => {
+        this.expandingTablesFolderNodes.update((prev) => {
+          const next = new Set<string>();
+          for (const item of prev) {
+            if (item.toLowerCase() !== lowerDb) next.add(item);
+          }
+          return next;
+        });
+        this.expandedDatabaseNodes.update((prev) => {
+          const next = new Set(prev);
+          next.add(cleanDb);
+          return next;
+        });
+        this.expandedTablesFolderNodes.update((prev) => {
+          const next = new Set(prev);
+          next.add(cleanDb);
+          return next;
+        });
+      });
+    } else {
+      this.expandingTablesFolderNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const item of prev) {
+          if (item.toLowerCase() !== lowerDb) next.add(item);
+        }
+        return next;
+      });
+      this.expandedTablesFolderNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const item of prev) {
+          if (item.toLowerCase() !== lowerDb) next.add(item);
+        }
+        return next;
+      });
+      this.expandedTableNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const k of prev) {
+          if (!k.toLowerCase().startsWith(lowerPrefix)) next.add(k);
+        }
+        return next;
+      });
+      this.expandedColumnsFolderNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const k of prev) {
+          if (!k.toLowerCase().startsWith(lowerPrefix)) next.add(k);
+        }
+        return next;
+      });
+      this.expandingTableNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const k of prev) {
+          if (!k.toLowerCase().startsWith(lowerPrefix)) next.add(k);
+        }
+        return next;
+      });
+      this.expandingColumnsFolderNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const k of prev) {
+          if (!k.toLowerCase().startsWith(lowerPrefix)) next.add(k);
+        }
+        return next;
+      });
+      this.treeLoadedColumnsByTable.update((prev) => {
+        const next: Record<string, GridColumn[]> = {};
+        for (const [k, v] of Object.entries(prev)) {
+          if (!k.toLowerCase().startsWith(lowerPrefix)) next[k] = v;
+        }
+        return next;
+      });
+    }
+  }
+
+  public isTableNodeExpanding(dbName: string, tableName: string): boolean {
+    const targetKey = `${(dbName || '').trim().toLowerCase()}::${(tableName || '').trim().toLowerCase()}`;
+    for (const item of this.expandingTableNodes()) {
+      if (item.toLowerCase() === targetKey) return true;
+    }
+    return false;
   }
 
   public isTableNodeExpanded(dbName: string, tableName: string): boolean {
     if (this.manageTreeSearchQuery().trim().length > 0) return true;
-    return this.expandedTableNodes().has(`${dbName}::${tableName}`);
+    const targetKey = `${(dbName || '').trim().toLowerCase()}::${(tableName || '').trim().toLowerCase()}`;
+    for (const item of this.expandedTableNodes()) {
+      if (item.toLowerCase() === targetKey) return true;
+    }
+    return false;
   }
 
   public toggleTableNode(dbName: string, tableName: string, event?: Event): void {
     event?.stopPropagation();
-    const key = `${dbName}::${tableName}`;
-    let willExpand = false;
-    this.expandedTableNodes.update((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) {
-        next.delete(key);
-      } else {
-        next.add(key);
-        willExpand = true;
-      }
-      return next;
-    });
-    this.saveSidebarTreeStateToStorage();
-    if (willExpand) {
-      this.refreshObjectExplorerTreeFromDb();
+    const cleanDb = (dbName || '').trim();
+    const cleanTbl = (tableName || '').trim();
+    if (!cleanDb || !cleanTbl) return;
+    if (!this.hasDatabaseAccess(cleanDb)) {
+      this.showBanner('error', `You don't have access to ${cleanDb} Database`);
+      return;
+    }
+    if (!this.hasTableAccess(cleanDb, cleanTbl)) {
+      this.showBanner('error', `You don't have access or permission to ${cleanTbl} Table`);
+      return;
+    }
+    this.selectedObjectExplorerDatabase.set(cleanDb);
+    if (this.isTableNodeExpanding(cleanDb, cleanTbl)) return;
+    const key = `${cleanDb}::${cleanTbl}`;
+    const keyLower = key.toLowerCase();
+    const isCurrentlyExpanded = this.isTableNodeExpanded(cleanDb, cleanTbl);
+
+    if (!isCurrentlyExpanded) {
+      this.expandingTableNodes.update((prev) => {
+        const next = new Set(prev);
+        next.add(keyLower);
+        return next;
+      });
+      this.loadFieldsForTableFromDb(cleanDb, cleanTbl, () => {
+        this.expandingTableNodes.update((prev) => {
+          const next = new Set<string>();
+          for (const item of prev) {
+            if (item.toLowerCase() !== keyLower) next.add(item);
+          }
+          return next;
+        });
+        this.expandedTableNodes.update((prev) => {
+          const next = new Set(prev);
+          next.add(key);
+          return next;
+        });
+        this.expandedColumnsFolderNodes.update((prev) => {
+          const next = new Set(prev);
+          next.add(key);
+          return next;
+        });
+      });
+    } else {
+      this.expandingTableNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const item of prev) {
+          if (item.toLowerCase() !== keyLower) next.add(item);
+        }
+        return next;
+      });
+      this.expandedTableNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const item of prev) {
+          if (item.toLowerCase() !== keyLower) next.add(item);
+        }
+        return next;
+      });
+      this.expandingColumnsFolderNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const item of prev) {
+          if (item.toLowerCase() !== keyLower) next.add(item);
+        }
+        return next;
+      });
+      this.expandedColumnsFolderNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const item of prev) {
+          if (item.toLowerCase() !== keyLower) next.add(item);
+        }
+        return next;
+      });
+      this.treeLoadedColumnsByTable.update((prev) => {
+        const next = { ...prev };
+        delete next[keyLower];
+        return next;
+      });
     }
   }
 
+  public isColumnsFolderNodeExpanding(dbName: string, tableName: string): boolean {
+    const targetKey = `${(dbName || '').trim().toLowerCase()}::${(tableName || '').trim().toLowerCase()}`;
+    for (const item of this.expandingColumnsFolderNodes()) {
+      if (item.toLowerCase() === targetKey) return true;
+    }
+    return false;
+  }
+
+  public isColumnsFolderNodeExpanded(dbName: string, tableName: string): boolean {
+    if (this.manageTreeSearchQuery().trim().length > 0) return true;
+    const targetKey = `${(dbName || '').trim().toLowerCase()}::${(tableName || '').trim().toLowerCase()}`;
+    for (const item of this.expandedColumnsFolderNodes()) {
+      if (item.toLowerCase() === targetKey) return true;
+    }
+    return false;
+  }
+
+  public toggleColumnsFolderNode(dbName: string, tableName: string, event?: Event): void {
+    event?.stopPropagation();
+    const cleanDb = (dbName || '').trim();
+    const cleanTbl = (tableName || '').trim();
+    if (!cleanDb || !cleanTbl) return;
+    if (!this.hasDatabaseAccess(cleanDb)) {
+      this.showBanner('error', `You don't have access to ${cleanDb} Database`);
+      return;
+    }
+    if (!this.hasTableAccess(cleanDb, cleanTbl)) {
+      this.showBanner('error', `You don't have access or permission to ${cleanTbl} Table`);
+      return;
+    }
+    this.selectedObjectExplorerDatabase.set(cleanDb);
+    if (this.isColumnsFolderNodeExpanding(cleanDb, cleanTbl)) return;
+    const key = `${cleanDb}::${cleanTbl}`;
+    const keyLower = key.toLowerCase();
+    const isCurrentlyExpanded = this.isColumnsFolderNodeExpanded(cleanDb, cleanTbl);
+
+    if (!isCurrentlyExpanded) {
+      this.expandingColumnsFolderNodes.update((prev) => {
+        const next = new Set(prev);
+        next.add(keyLower);
+        return next;
+      });
+      this.loadFieldsForTableFromDb(cleanDb, cleanTbl, () => {
+        this.expandingColumnsFolderNodes.update((prev) => {
+          const next = new Set<string>();
+          for (const item of prev) {
+            if (item.toLowerCase() !== keyLower) next.add(item);
+          }
+          return next;
+        });
+        this.expandedTableNodes.update((prev) => {
+          const next = new Set(prev);
+          next.add(key);
+          return next;
+        });
+        this.expandedColumnsFolderNodes.update((prev) => {
+          const next = new Set(prev);
+          next.add(key);
+          return next;
+        });
+      });
+    } else {
+      this.expandingColumnsFolderNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const item of prev) {
+          if (item.toLowerCase() !== keyLower) next.add(item);
+        }
+        return next;
+      });
+      this.expandedColumnsFolderNodes.update((prev) => {
+        const next = new Set<string>();
+        for (const item of prev) {
+          if (item.toLowerCase() !== keyLower) next.add(item);
+        }
+        return next;
+      });
+      this.treeLoadedColumnsByTable.update((prev) => {
+        const next = { ...prev };
+        delete next[keyLower];
+        return next;
+      });
+    }
+  }
+
+  /**
+   * Expand Node toolbar button:
+   * Expands ONLY the selected database's Tables folder, tables, Columns folder, and fields.
+   * Disabled if no database is selected.
+   */
   public expandAllManageTree(event?: Event): void {
     event?.stopPropagation();
-    this.refreshObjectExplorerTreeFromDb();
-    const dbSet = new Set<string>();
-    const tblSet = new Set<string>();
-    for (const db of this.databases()) {
-      dbSet.add(db.databaseName);
-      for (const t of db.tables || []) {
-        tblSet.add(`${db.databaseName}::${t.tableName}`);
-      }
+    const targetDb = this.getTargetSelectedExplorerDatabase();
+    if (!targetDb) return;
+    const lowerDb = targetDb.toLowerCase();
+    if (this.isDatabaseNodeExpanding(targetDb) || this.isTablesFolderNodeExpanding(targetDb)) {
+      return;
     }
-    this.isServerNodeExpanded.set(true);
-    this.isDatabasesFolderExpanded.set(true);
-    this.expandedDatabaseNodes.set(dbSet);
-    this.expandedTableNodes.set(tblSet);
-    this.saveSidebarTreeStateToStorage();
+
+    const expandSelectedDbTablesAndFields = () => {
+      this.expandingDatabaseNodes.update((prev) => {
+        const next = new Set(prev);
+        next.add(lowerDb);
+        return next;
+      });
+      this.loadTablesForDatabaseFromDb(targetDb, () => {
+        this.expandingDatabaseNodes.update((prev) => {
+          const next = new Set<string>();
+          for (const item of prev) {
+            if (item.toLowerCase() !== lowerDb) next.add(item);
+          }
+          return next;
+        });
+        this.expandedDatabaseNodes.update((prev) => {
+          const next = new Set(prev);
+          next.add(targetDb);
+          return next;
+        });
+        this.expandedTablesFolderNodes.update((prev) => {
+          const next = new Set(prev);
+          next.add(targetDb);
+          return next;
+        });
+
+        const loadedTables = this.treeLoadedTablesByDb()[lowerDb] || [];
+        for (const tbl of loadedTables) {
+          const key = `${targetDb}::${tbl.tableName}`;
+          const keyLower = key.toLowerCase();
+          this.expandingTableNodes.update((prev) => {
+            const next = new Set(prev);
+            next.add(keyLower);
+            return next;
+          });
+          this.loadFieldsForTableFromDb(targetDb, tbl.tableName, () => {
+            this.expandingTableNodes.update((prev) => {
+              const next = new Set<string>();
+              for (const item of prev) {
+                if (item.toLowerCase() !== keyLower) next.add(item);
+              }
+              return next;
+            });
+            this.expandedTableNodes.update((prev) => {
+              const next = new Set(prev);
+              next.add(key);
+              return next;
+            });
+            this.expandedColumnsFolderNodes.update((prev) => {
+              const next = new Set(prev);
+              next.add(key);
+              return next;
+            });
+          });
+        }
+      });
+    };
+
+    if (
+      !this.isServerNodeExpanded() ||
+      !this.isDatabasesFolderExpanded() ||
+      this.objectExplorerDatabases().length === 0
+    ) {
+      this.isServerNodeExpanding.set(true);
+      this.loadDatabaseListOnlyFromDb(() => {
+        this.isServerNodeExpanding.set(false);
+        this.isServerNodeExpanded.set(true);
+        this.isDatabasesFolderExpanded.set(true);
+        expandSelectedDbTablesAndFields();
+      });
+    } else {
+      expandSelectedDbTablesAndFields();
+    }
   }
 
+  /**
+   * Contract Node toolbar button:
+   * Contracts everything down to the databases list (Server node, Databases folder,
+   * and list of databases remain expanded; only databases' tables and fields contract).
+   */
   public collapseAllManageTree(event?: Event): void {
     event?.stopPropagation();
-    this.isServerNodeExpanded.set(false);
-    this.isDatabasesFolderExpanded.set(false);
     this.expandedDatabaseNodes.set(new Set());
+    this.expandedTablesFolderNodes.set(new Set());
     this.expandedTableNodes.set(new Set());
-    this.saveSidebarTreeStateToStorage();
+    this.expandedColumnsFolderNodes.set(new Set());
+    this.expandingDatabaseNodes.set(new Set());
+    this.expandingTablesFolderNodes.set(new Set());
+    this.expandingTableNodes.set(new Set());
+    this.expandingColumnsFolderNodes.set(new Set());
+    this.treeLoadedTablesByDb.set({});
+    this.treeLoadedColumnsByTable.set({});
+    this.objectExplorerDatabases.update((dbs) =>
+      dbs.map((d) => ({ ...d, tables: [] }))
+    );
+
+    if (!this.isServerNodeExpanded() || !this.isDatabasesFolderExpanded() || this.objectExplorerDatabases().length === 0) {
+      if (this.isServerNodeExpanding()) return;
+      this.isServerNodeExpanding.set(true);
+      this.loadDatabaseListOnlyFromDb(() => {
+        this.isServerNodeExpanding.set(false);
+        this.isServerNodeExpanded.set(true);
+        this.isDatabasesFolderExpanded.set(true);
+      });
+    }
+  }
+
+  public getTablesForManageDatabase(db: DbDatabaseSummary): DbTableSummary[] {
+    if (!this.isDatabaseNodeExpanded(db.databaseName)) return [];
+    const lowerDb = (db.databaseName || '').trim().toLowerCase();
+    const loaded = this.treeLoadedTablesByDb()[lowerDb];
+    return Array.isArray(loaded) ? loaded : db.tables || [];
   }
 
   public getColumnsForManageTable(dbName: string, tbl: DbTableSummary): GridColumn[] {
     if (
-      dbName.toLowerCase() === this.activeDatabaseName().toLowerCase() &&
-      tbl.tableName.toLowerCase() === this.activeTableName().toLowerCase()
+      !this.isTableNodeExpanded(dbName, tbl.tableName) ||
+      !this.isColumnsFolderNodeExpanded(dbName, tbl.tableName)
     ) {
-      return this.sortedColumns();
+      return [];
+    }
+    const keyLower = `${(dbName || '').trim().toLowerCase()}::${(tbl.tableName || '').trim().toLowerCase()}`;
+    const loadedCols = this.treeLoadedColumnsByTable()[keyLower];
+    if (Array.isArray(loadedCols)) {
+      return [...loadedCols].sort((a, b) => a.orderIndex - b.orderIndex);
     }
     return [...(tbl.columns || [])].sort((a, b) => a.orderIndex - b.orderIndex);
   }
@@ -2317,7 +3669,7 @@ export class App implements OnInit, OnDestroy {
 
   /**
    * Right-click context menu action ("Select") on a table in Object Explorer:
-   * Opens the table tab in the bottom bar and displays the selected table onto the screen.
+   * Opens the table tab in the top bar and displays the selected table onto the screen.
    */
   public selectTableFromContextMenu(dbName: string, tableName: string, event?: Event): void {
     event?.stopPropagation();
@@ -2326,18 +3678,28 @@ export class App implements OnInit, OnDestroy {
     const cleanTbl = (tableName || '').trim();
     if (!cleanDb || !cleanTbl) return;
 
+    if (!this.hasDatabaseAccess(cleanDb)) {
+      this.showBanner('error', `You don't have access to ${cleanDb} Database`);
+      return;
+    }
+    if (!this.hasTableAccess(cleanDb, cleanTbl)) {
+      this.showBanner('error', `You don't have access or permission to ${cleanTbl} Table`);
+      return;
+    }
+
+    this.saveCurrentActiveGridTableToMemoryCache();
     this.openTableTab(cleanDb, cleanTbl);
 
     if (
       !this.hasActiveConnection() ||
       cleanDb.toLowerCase() !== this.activeDatabaseName().toLowerCase()
     ) {
-      this.switchDatabase(cleanDb, cleanTbl, event, true);
+      this.switchDatabase(cleanDb, cleanTbl, event, true, true);
       return;
     }
 
     if (cleanTbl.toLowerCase() !== this.activeTableName().toLowerCase()) {
-      this.switchTable(cleanTbl, event);
+      this.switchTable(cleanTbl, event, true);
     } else {
       this.fetchWorkspaceFromServer(false, cleanTbl, cleanDb);
     }
@@ -2406,13 +3768,23 @@ export class App implements OnInit, OnDestroy {
 
   public onSidebarContextMenu(
     event: MouseEvent,
-    targetType: 'server' | 'databases_folder' | 'database' | 'table' | 'field',
+    targetType:
+      | 'server'
+      | 'databases_folder'
+      | 'database'
+      | 'tables_folder'
+      | 'table'
+      | 'columns_folder'
+      | 'field',
     databaseName = '',
     tableName = '',
     column: GridColumn | null = null
   ): void {
     event.preventDefault();
     event.stopPropagation();
+    if (databaseName) {
+      this.selectedObjectExplorerDatabase.set(databaseName);
+    }
     if (this.longPressTimer) {
       clearTimeout(this.longPressTimer);
       this.longPressTimer = null;
@@ -2429,12 +3801,22 @@ export class App implements OnInit, OnDestroy {
 
   public onSidebarTouchStart(
     event: TouchEvent,
-    targetType: 'server' | 'databases_folder' | 'database' | 'table' | 'field',
+    targetType:
+      | 'server'
+      | 'databases_folder'
+      | 'database'
+      | 'tables_folder'
+      | 'table'
+      | 'columns_folder'
+      | 'field',
     databaseName = '',
     tableName = '',
     column: GridColumn | null = null
   ): void {
     event.stopPropagation();
+    if (databaseName) {
+      this.selectedObjectExplorerDatabase.set(databaseName);
+    }
     if (this.longPressTimer) {
       clearTimeout(this.longPressTimer);
     }
@@ -2466,6 +3848,12 @@ export class App implements OnInit, OnDestroy {
     col: GridColumn | null = null,
     event?: Event
   ): void {
+    if (!this.canUpdatePermission()) {
+      event?.stopPropagation();
+      this.closeAllMenus();
+      this.showBanner('error', "You don't have Write/Update permission for this action.");
+      return;
+    }
     this.openRenameSidebarItemModal(targetType, dbName, tableName, col, event);
   }
 
@@ -2476,7 +3864,14 @@ export class App implements OnInit, OnDestroy {
   public openSidebarContextMenuAt(
     clientX: number,
     clientY: number,
-    targetType: 'server' | 'databases_folder' | 'database' | 'table' | 'field',
+    targetType:
+      | 'server'
+      | 'databases_folder'
+      | 'database'
+      | 'tables_folder'
+      | 'table'
+      | 'columns_folder'
+      | 'field',
     databaseName: string,
     tableName: string,
     column: GridColumn | null
@@ -2614,6 +4009,14 @@ export class App implements OnInit, OnDestroy {
               }
               return next;
             });
+            this.expandedTablesFolderNodes.update((prev) => {
+              const next = new Set(prev);
+              if (next.has(dbName)) {
+                next.delete(dbName);
+                next.add(nextDbName);
+              }
+              return next;
+            });
             this.expandedTableNodes.update((prev) => {
               const next = new Set<string>();
               const oldPrefix = `${dbName}::`;
@@ -2624,6 +4027,37 @@ export class App implements OnInit, OnDestroy {
                   next.add(k);
                 }
               }
+              return next;
+            });
+            this.expandedColumnsFolderNodes.update((prev) => {
+              const next = new Set<string>();
+              const oldPrefix = `${dbName}::`;
+              for (const k of prev) {
+                if (k.startsWith(oldPrefix)) {
+                  next.add(`${nextDbName}::${k.slice(oldPrefix.length)}`);
+                } else {
+                  next.add(k);
+                }
+              }
+              return next;
+            });
+            if (this.selectedObjectExplorerDatabase().toLowerCase() === dbName.toLowerCase()) {
+              this.selectedObjectExplorerDatabase.set(nextDbName);
+            }
+            this.objectExplorerDatabases.update((dbs) =>
+              dbs.map((d) =>
+                d.databaseName.toLowerCase() === dbName.toLowerCase()
+                  ? { ...d, databaseName: nextDbName }
+                  : d
+              )
+            );
+            this.treeLoadedTablesByDb.update((prev) => {
+              const oldKey = dbName.toLowerCase();
+              if (!(oldKey in prev)) return prev;
+              const next = { ...prev };
+              const tbls = next[oldKey];
+              delete next[oldKey];
+              next[nextDbName.toLowerCase()] = tbls;
               return next;
             });
             this.saveSidebarTreeStateToStorage();
@@ -2696,6 +4130,15 @@ export class App implements OnInit, OnDestroy {
               this.activities.set(res.activities);
             }
             this.expandedTableNodes.update((prev) => {
+              const next = new Set(prev);
+              const oldKey = `${dbName}::${tableName}`;
+              if (next.has(oldKey)) {
+                next.delete(oldKey);
+                next.add(`${dbName}::${nextTblName}`);
+              }
+              return next;
+            });
+            this.expandedColumnsFolderNodes.update((prev) => {
               const next = new Set(prev);
               const oldKey = `${dbName}::${tableName}`;
               if (next.has(oldKey)) {
@@ -2846,6 +4289,11 @@ export class App implements OnInit, OnDestroy {
               if (Array.isArray(res?.activities)) {
                 this.activities.set(res.activities);
               }
+              const keyLower = `${dbName.toLowerCase()}::${tableName.toLowerCase()}`;
+              this.treeLoadedColumnsByTable.update((prev) => ({
+                ...prev,
+                [keyLower]: nextCols,
+              }));
               this.showBanner('info', `Deleted field "${col.name}" from "${tableName}".`);
             },
           });
@@ -2927,22 +4375,52 @@ export class App implements OnInit, OnDestroy {
         };
       })
     );
+    const keyLower = `${activeDb.toLowerCase()}::${activeTbl.toLowerCase()}`;
+    if (keyLower in this.treeLoadedColumnsByTable()) {
+      this.treeLoadedColumnsByTable.update((prev) => ({
+        ...prev,
+        [keyLower]: syncedActiveCols,
+      }));
+    }
+    this.saveCurrentActiveGridTableToMemoryCache();
   }
 
   // =========================================================================
   // MULTI-DATABASE & MULTI-TABLE ENGINE (SQL SERVER OBJECT EXPLORER)
   // =========================================================================
 
+  /**
+   * Toolbar Refresh icon next to Contract & Expand Node icons:
+   * Refreshes all nodes from the actual PostgreSQL server, and after refresh expands till the database list.
+   */
   public refreshServerAndRetrieveObjects(event?: Event): void {
     event?.stopPropagation();
     this.closeAllMenus();
-    this.refreshObjectExplorerTreeFromDb(true);
-    this.refreshTableData(event);
+    this.expandedDatabaseNodes.set(new Set());
+    this.expandedTablesFolderNodes.set(new Set());
+    this.expandedTableNodes.set(new Set());
+    this.expandedColumnsFolderNodes.set(new Set());
+    this.expandingDatabaseNodes.set(new Set());
+    this.expandingTablesFolderNodes.set(new Set());
+    this.expandingTableNodes.set(new Set());
+    this.expandingColumnsFolderNodes.set(new Set());
+    this.treeLoadedTablesByDb.set({});
+    this.treeLoadedColumnsByTable.set({});
+    this.isServerNodeExpanding.set(true);
+    this.loadDatabaseListOnlyFromDb(() => {
+      this.isServerNodeExpanding.set(false);
+      this.isServerNodeExpanded.set(true);
+      this.isDatabasesFolderExpanded.set(true);
+    });
   }
 
   public openCreateDatabaseModal(event?: Event): void {
     event?.stopPropagation();
     this.closeAllMenus();
+    if (!this.canCreatePermission()) {
+      this.showBanner('error', "You don't have Create permission to create a database.");
+      return;
+    }
     this.createDatabaseErrorMessage.set('');
     const nextNum = this.databases().length + 1;
     this.newDatabaseForm.reset({
@@ -3053,10 +4531,21 @@ export class App implements OnInit, OnDestroy {
           this.isManageSidebarOpen.set(true);
           this.isServerNodeExpanded.set(true);
           this.isDatabasesFolderExpanded.set(true);
-          this.expandedDatabaseNodes.update((prev) => {
-            const next = new Set(prev);
-            next.add(createdDb);
-            return next;
+          this.selectedObjectExplorerDatabase.set(createdDb);
+          this.loadDatabaseListOnlyFromDb(() => {
+            if (raw.createStarterTable && activeTbl) {
+              this.expandedDatabaseNodes.update((prev) => {
+                const next = new Set(prev);
+                next.add(createdDb);
+                return next;
+              });
+              this.expandedTablesFolderNodes.update((prev) => {
+                const next = new Set(prev);
+                next.add(createdDb);
+                return next;
+              });
+              this.loadTablesForDatabaseFromDb(createdDb);
+            }
           });
           this.saveSidebarTreeStateToStorage();
           this.saveDatabasesBackupToStorage(this.databases());
@@ -3148,6 +4637,48 @@ export class App implements OnInit, OnDestroy {
    * Right-click sidebar action: Connect / Switch to Database (opens a new Database Tab or activates its tab,
    * disconnects active focus from the previous database, and syncs the sidebar dropdown + bold highlight).
    */
+  private clearDisconnectedDatabaseState(databaseName: string): void {
+    const cleanDb = (databaseName || '').trim();
+    if (!cleanDb) return;
+    const lowerDb = cleanDb.toLowerCase();
+
+    // 1. In Object Explorer: close the database node & its table nodes and clear loaded tables/fields
+    this.clearDatabaseTreeData(cleanDb);
+
+    // 2. In Main Grid / Top Table Tabs: close all loaded tables and clear their in-memory cache for this database
+    this.openTableTabsByDb.update((prev) => {
+      const next: Record<string, string[]> = {};
+      for (const [k, list] of Object.entries(prev)) {
+        if (k.trim().toLowerCase() !== lowerDb) {
+          next[k] = list;
+        }
+      }
+      return next;
+    });
+
+    const lowerPrefix = `${lowerDb}::`;
+    this.loadedGridTableCacheByKey.update((prev) => {
+      const next: typeof prev = {};
+      for (const [k, v] of Object.entries(prev)) {
+        if (!k.toLowerCase().startsWith(lowerPrefix)) {
+          next[k] = v;
+        }
+      }
+      return next;
+    });
+
+    this.tableLastUsedOrderByDb.update((prev) => {
+      const next: Record<string, string[]> = {};
+      for (const [k, list] of Object.entries(prev)) {
+        if (k.trim().toLowerCase() !== lowerDb) {
+          next[k] = list;
+        }
+      }
+      return next;
+    });
+    this.saveTableLastUsedOrderToStorage();
+  }
+
   public connectDatabaseFromSidebar(
     databaseName: string,
     alwaysCreateNewTab = false,
@@ -3157,6 +4688,13 @@ export class App implements OnInit, OnDestroy {
     this.closeAllMenus();
     const cleanDb = (databaseName || '').trim();
     if (!cleanDb) return;
+
+    if (!this.hasDatabaseAccess(cleanDb)) {
+      this.showBanner('error', `You don't have access to ${cleanDb} Database`);
+      return;
+    }
+
+    this.saveCurrentActiveGridTableToMemoryCache();
 
     if (alwaysCreateNewTab) {
       const openTbl = this.getLastUsedTableForDatabase(cleanDb);
@@ -3178,12 +4716,12 @@ export class App implements OnInit, OnDestroy {
       );
     }
 
-    this.switchDatabase(cleanDb, undefined, event, false);
+    this.switchDatabase(cleanDb, undefined, event, false, false);
   }
 
   /**
    * Right-click sidebar action or Tab close button: Disconnect from `databaseName` and close its Database Tab.
-   * Even if there is only 1 tab, allows closing it and shows the blank "No Active Connection" screen.
+   * Clears all loaded tables & fields for `databaseName` in Object Explorer and closes all loaded tables in the Main Grid.
    */
   public disconnectDatabaseFromSidebar(databaseName: string, event?: Event): void {
     event?.stopPropagation();
@@ -3195,6 +4733,9 @@ export class App implements OnInit, OnDestroy {
       this.commitInlineEdit();
     }
     this.flushAllDirtyRowsAutoSave();
+    this.saveCurrentActiveGridTableToMemoryCache();
+
+    this.clearDisconnectedDatabaseState(cleanDb);
 
     const remaining = this.databaseTabs().filter(
       (t) => t.databaseName.toLowerCase() !== cleanDb.toLowerCase()
@@ -3204,12 +4745,16 @@ export class App implements OnInit, OnDestroy {
       this.databaseTabs.set(remaining);
       this.activeDatabaseTabId.set(nextTab.tabId);
       if (nextTab.databaseName) {
+        const openTbl = this.getLastUsedTableForDatabase(nextTab.databaseName);
         this.switchDatabase(
           nextTab.databaseName,
-          nextTab.activeTableName || undefined,
+          openTbl || undefined,
           undefined,
+          false,
           false
         );
+      } else {
+        this.saveWorkspaceTabsStateToStorage();
       }
       return;
     }
@@ -3218,7 +4763,7 @@ export class App implements OnInit, OnDestroy {
     this.setNoActiveConnectionState();
   }
 
-  private setNoActiveConnectionState(): void {
+  private setNoActiveConnectionState(persistToStorage = true): void {
     this.databaseTabs.set([]);
     this.activeDatabaseTabId.set('');
     this.activeDatabaseName.set('');
@@ -3238,6 +4783,9 @@ export class App implements OnInit, OnDestroy {
     this.cellValidationErrors.set({});
     this.pendingUnsavedRowIds.set(new Set());
     this.pendingUnsavedColIds.set(new Set());
+    if (persistToStorage) {
+      this.saveWorkspaceTabsStateToStorage();
+    }
   }
 
   /**
@@ -3249,6 +4797,8 @@ export class App implements OnInit, OnDestroy {
     if (this.editingCell()) {
       this.commitInlineEdit();
     }
+    this.flushAllDirtyRowsAutoSave();
+    this.saveCurrentActiveGridTableToMemoryCache();
     const newTabId = `db_tab_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
     this.databaseTabs.update((tabs) => [
       ...tabs,
@@ -3259,6 +4809,7 @@ export class App implements OnInit, OnDestroy {
       },
     ]);
     this.activeDatabaseTabId.set(newTabId);
+    this.saveWorkspaceTabsStateToStorage();
   }
 
   /**
@@ -3270,14 +4821,34 @@ export class App implements OnInit, OnDestroy {
     this.closeAllMenus();
     const tab = this.databaseTabs().find((t) => t.tabId === tabId);
     if (!tab) return;
+    if (
+      tab.tabId === this.activeDatabaseTabId() &&
+      (tab.databaseName || '').trim().toLowerCase() ===
+        (this.activeDatabaseName() || '').trim().toLowerCase()
+    ) {
+      return;
+    }
     if (this.editingCell()) {
       this.commitInlineEdit();
     }
     this.flushAllDirtyRowsAutoSave();
+    this.saveCurrentActiveGridTableToMemoryCache();
     this.activeDatabaseTabId.set(tab.tabId);
     if (tab.databaseName) {
-      const openTbl = this.getLastUsedTableForDatabase(tab.databaseName);
-      this.switchDatabase(tab.databaseName, openTbl || undefined, undefined, false);
+      const openTbl =
+        tab.activeTableName && this.isTableOpenInDb(tab.databaseName, tab.activeTableName)
+          ? tab.activeTableName
+          : this.getLastUsedTableForDatabase(tab.databaseName);
+      this.switchDatabase(tab.databaseName, openTbl || undefined, undefined, false, false);
+    } else {
+      this.activeDatabaseName.set('');
+      this.activeTableName.set('');
+      this.columns.set([]);
+      this.rows.set([]);
+      this.dbTotalRows.set(0);
+      this.dbFilteredTotalRows.set(0);
+      this.dbHasMoreRows.set(false);
+      this.saveWorkspaceTabsStateToStorage();
     }
   }
 
@@ -3288,6 +4859,7 @@ export class App implements OnInit, OnDestroy {
     event?.stopPropagation();
     const cleanDb = (databaseName || '').trim();
     if (!cleanDb) return;
+    this.saveCurrentActiveGridTableToMemoryCache();
     const defaultTbl = this.getLastUsedTableForDatabase(cleanDb);
     this.databaseTabs.update((tabs) =>
       tabs.map((t) =>
@@ -3297,12 +4869,12 @@ export class App implements OnInit, OnDestroy {
       )
     );
     this.activeDatabaseTabId.set(tabId);
-    this.switchDatabase(cleanDb, defaultTbl || undefined, undefined, false);
+    this.switchDatabase(cleanDb, defaultTbl || undefined, undefined, false, false);
   }
 
   /**
-   * Closes/disconnects a Database Tab from the top tab bar.
-   * Even when there is only 1 tab, allows closing it and leaves the table screen blank with "No Active Connection".
+   * Closes/disconnects a Database Tab from the bottom tab bar.
+   * Clears all loaded tables & fields for that database in Object Explorer and closes all loaded tables in the Main Grid.
    */
   public closeDatabaseTab(tabId: string, event?: Event): void {
     event?.stopPropagation();
@@ -3311,12 +4883,22 @@ export class App implements OnInit, OnDestroy {
       this.commitInlineEdit();
     }
     this.flushAllDirtyRowsAutoSave();
+    this.saveCurrentActiveGridTableToMemoryCache();
 
     const currentTabs = this.databaseTabs();
     const targetTab = currentTabs.find((t) => t.tabId === tabId);
     if (!targetTab) return;
 
     const remaining = currentTabs.filter((t) => t.tabId !== tabId);
+    const closedDbName = (targetTab.databaseName || '').trim();
+    const stillConnectedInAnotherTab =
+      closedDbName &&
+      remaining.some((t) => (t.databaseName || '').trim().toLowerCase() === closedDbName.toLowerCase());
+
+    if (closedDbName && !stillConnectedInAnotherTab) {
+      this.clearDisconnectedDatabaseState(closedDbName);
+    }
+
     if (remaining.length === 0) {
       this.setNoActiveConnectionState();
       return;
@@ -3328,8 +4910,12 @@ export class App implements OnInit, OnDestroy {
       this.activeDatabaseTabId.set(nextTab.tabId);
       if (nextTab.databaseName) {
         const openTbl = this.getLastUsedTableForDatabase(nextTab.databaseName);
-        this.switchDatabase(nextTab.databaseName, openTbl || undefined, undefined, false);
+        this.switchDatabase(nextTab.databaseName, openTbl || undefined, undefined, false, false);
+      } else {
+        this.saveWorkspaceTabsStateToStorage();
       }
+    } else {
+      this.saveWorkspaceTabsStateToStorage();
     }
   }
 
@@ -3337,15 +4923,26 @@ export class App implements OnInit, OnDestroy {
     databaseName: string,
     requestedTableName?: string,
     event?: Event,
-    ensureTab = true
+    ensureTab = true,
+    forceFetchFromDb = false
   ): void {
     event?.stopPropagation();
     const cleanDb = (databaseName || '').trim();
     if (!cleanDb) return;
+
+    if (!this.hasDatabaseAccess(cleanDb)) {
+      this.showBanner('error', `You don't have access to ${cleanDb} Database`);
+      return;
+    }
+    if (requestedTableName && !this.hasTableAccess(cleanDb, requestedTableName)) {
+      this.showBanner('error', `You don't have access or permission to ${requestedTableName} Table`);
+      return;
+    }
     if (this.editingCell()) {
       this.commitInlineEdit();
     }
     this.flushAllDirtyRowsAutoSave();
+    this.saveCurrentActiveGridTableToMemoryCache();
     this.closeAllMenus();
 
     if (requestedTableName) {
@@ -3360,16 +4957,6 @@ export class App implements OnInit, OnDestroy {
 
     this.activeDatabaseName.set(cleanDb);
     this.syncTablesSignalForActiveDatabase(this.databases(), cleanDb);
-    if (resolvedRequestedTable) {
-      this.recordTableUsed(cleanDb, resolvedRequestedTable);
-    } else {
-      this.activeTableName.set('');
-      this.columns.set([]);
-      this.rows.set([]);
-      this.dbTotalRows.set(0);
-      this.dbFilteredTotalRows.set(0);
-      this.dbHasMoreRows.set(false);
-    }
     this.selectedRowIds.set(new Set());
     this.selectedColumnId.set(null);
     this.activeCell.set(null);
@@ -3382,12 +4969,53 @@ export class App implements OnInit, OnDestroy {
     this.columnHeaderSearches.set({});
     this.globalSearchQuery.set('');
     this.searchInputControl.setValue('');
-    this.fetchWorkspaceFromServer(false, resolvedRequestedTable || undefined, cleanDb);
+
+    if (resolvedRequestedTable) {
+      this.activeTableName.set(resolvedRequestedTable);
+      this.workspaceName.set(resolvedRequestedTable);
+      this.workspaceNameControl.setValue(resolvedRequestedTable);
+      this.recordTableUsed(cleanDb, resolvedRequestedTable);
+      const activeTabId = this.activeDatabaseTabId();
+      this.databaseTabs.update((tabs) =>
+        tabs.map((t) =>
+          t.tabId === activeTabId || t.databaseName.toLowerCase() === cleanDb.toLowerCase()
+            ? { ...t, activeTableName: resolvedRequestedTable }
+            : t
+        )
+      );
+
+      const cached = !forceFetchFromDb
+        ? this.getLoadedGridTableFromMemoryCache(cleanDb, resolvedRequestedTable)
+        : null;
+      if (cached) {
+        this.applyCachedGridTableToActiveGrid(cached);
+        this.saveWorkspaceTabsStateToStorage();
+        return;
+      }
+
+      this.saveWorkspaceTabsStateToStorage();
+      this.fetchWorkspaceFromServer(false, resolvedRequestedTable, cleanDb, false);
+    } else {
+      this.activeTableName.set('');
+      this.workspaceName.set(cleanDb);
+      this.workspaceNameControl.setValue(cleanDb);
+      this.columns.set([]);
+      this.rows.set([]);
+      this.dbTotalRows.set(0);
+      this.dbFilteredTotalRows.set(0);
+      this.dbHasMoreRows.set(false);
+      this.dbUniqueValuesByColumn.set({});
+      this.saveWorkspaceTabsStateToStorage();
+    }
   }
 
   public deleteDatabase(databaseName: string, event?: Event): void {
     event?.stopPropagation();
     this.closeAllMenus();
+    if (!this.canDeletePermission()) {
+      this.showBanner('error', "You don't have Delete permission to delete a database.");
+      return;
+    }
     if (this.databases().length <= 1) {
       this.showBanner('error', 'At least one database must remain on the server.');
       return;
@@ -3433,6 +5061,15 @@ export class App implements OnInit, OnDestroy {
 
               if (Array.isArray(res.databases)) {
                 this.databases.set(res.databases);
+              }
+              this.clearDatabaseTreeData(databaseName);
+              this.objectExplorerDatabases.update((dbs) =>
+                dbs.filter((d) => d.databaseName.toLowerCase() !== databaseName.toLowerCase())
+              );
+              if (
+                this.selectedObjectExplorerDatabase().toLowerCase() === databaseName.toLowerCase()
+              ) {
+                this.selectedObjectExplorerDatabase.set('');
               }
 
               // Remove any open Database Tabs for the deleted database
@@ -3999,6 +5636,10 @@ export class App implements OnInit, OnDestroy {
   public openCreateTableModal(event?: Event, targetDatabaseName?: string): void {
     event?.stopPropagation();
     this.closeAllMenus();
+    if (!this.canCreatePermission()) {
+      this.showBanner('error', "You don't have Create permission to create a table.");
+      return;
+    }
     this.editingTableOriginalName.set('');
     this.createTableErrorMessage.set('');
     const dbName = targetDatabaseName || this.activeDatabaseName() || 'GridPulse_DB';
@@ -4046,12 +5687,25 @@ export class App implements OnInit, OnDestroy {
     const tblObj = dbObj?.tables?.find(
       (t) => t.tableName.toLowerCase() === cleanTbl.toLowerCase()
     );
-    const sourceCols = tblObj
-      ? this.getColumnsForManageTable(cleanDb, tblObj)
-      : cleanDb.toLowerCase() === this.activeDatabaseName().toLowerCase() &&
-        cleanTbl.toLowerCase() === this.activeTableName().toLowerCase()
-      ? this.sortedColumns()
-      : [];
+    const keyLower = `${cleanDb.toLowerCase()}::${cleanTbl.toLowerCase()}`;
+    const treeLoadedCols = this.treeLoadedColumnsByTable()[keyLower];
+    const sourceCols =
+      Array.isArray(treeLoadedCols) && treeLoadedCols.length > 0
+        ? [...treeLoadedCols].sort((a, b) => a.orderIndex - b.orderIndex)
+        : tblObj && Array.isArray(tblObj.columns) && tblObj.columns.length > 0
+        ? [...tblObj.columns].sort((a, b) => a.orderIndex - b.orderIndex)
+        : cleanDb.toLowerCase() === this.activeDatabaseName().toLowerCase() &&
+          cleanTbl.toLowerCase() === this.activeTableName().toLowerCase()
+        ? this.sortedColumns()
+        : [];
+    if (sourceCols.length === 0) {
+      this.loadFieldsForTableFromDb(cleanDb, cleanTbl, () => {
+        const fetched = this.treeLoadedColumnsByTable()[keyLower] || [];
+        if (fetched.length > 0 && this.activeModal() === 'create_table') {
+          this.openEditTableModal(cleanDb, cleanTbl);
+        }
+      });
+    }
 
     const existingDrafts: NewTableColumnDraft[] = sourceCols
       .filter((c) => !this.isProtectedIdColumn(c))
@@ -4706,9 +6360,22 @@ export class App implements OnInit, OnDestroy {
                 }
                 return next;
               });
+              this.expandedColumnsFolderNodes.update((prev) => {
+                const next = new Set(prev);
+                const oldKey = `${databaseName}::${editingOriginalTbl}`;
+                if (next.has(oldKey)) {
+                  next.delete(oldKey);
+                  next.add(`${databaseName}::${nextTblName}`);
+                }
+                return next;
+              });
               this.saveSidebarTreeStateToStorage();
             }
 
+            this.loadTablesForDatabaseFromDb(databaseName);
+            if (this.isTableNodeExpanded(databaseName, nextTblName)) {
+              this.loadFieldsForTableFromDb(databaseName, nextTblName);
+            }
             this.editingTableOriginalName.set('');
             this.activeModal.set('none');
             this.showBanner(
@@ -4772,6 +6439,7 @@ export class App implements OnInit, OnDestroy {
             this.activities.set(res.activities);
           }
 
+          this.saveCurrentActiveGridTableToMemoryCache();
           this.openTableTab(targetDbName, createdTableName);
           this.recordTableUsed(targetDbName, createdTableName);
           if (!this.hasActiveConnection()) {
@@ -4780,9 +6448,21 @@ export class App implements OnInit, OnDestroy {
           }
           const isNowActiveDb =
             targetDbName.toLowerCase() === this.activeDatabaseName().toLowerCase();
+          const sanitizedRows = this.sanitizeClientRowsAgainstColumns(res.columns, res.rows);
+
+          this.setLoadedGridTableInMemoryCache({
+            databaseName: targetDbName,
+            tableName: createdTableName,
+            columns: res.columns,
+            rows: sanitizedRows,
+            totalRows: res.totalRows ?? sanitizedRows.length,
+            filteredTotalRows: res.filteredTotalRows ?? sanitizedRows.length,
+            hasMore: Boolean(res.hasMore),
+            uniqueValuesByColumn: res.uniqueValuesByColumn || {},
+            visibleRowLimit: Math.max(this.lazyBatchSize, sanitizedRows.length),
+          });
 
           if (isNowActiveDb) {
-            const sanitizedRows = this.sanitizeClientRowsAgainstColumns(res.columns, res.rows);
             this.activeTableName.set(createdTableName);
             this.workspaceName.set(createdTableName);
             this.workspaceNameControl.setValue(createdTableName);
@@ -4827,11 +6507,18 @@ export class App implements OnInit, OnDestroy {
 
           this.editingTableOriginalName.set('');
           this.activeModal.set('none');
+          this.selectedObjectExplorerDatabase.set(targetDbName);
           this.expandedDatabaseNodes.update((prev) => {
             const next = new Set(prev);
             next.add(targetDbName);
             return next;
           });
+          this.expandedTablesFolderNodes.update((prev) => {
+            const next = new Set(prev);
+            next.add(targetDbName);
+            return next;
+          });
+          this.loadTablesForDatabaseFromDb(targetDbName);
           this.saveSidebarTreeStateToStorage();
           this.saveDatabasesBackupToStorage(this.databases());
           this.showBanner(
@@ -4846,25 +6533,42 @@ export class App implements OnInit, OnDestroy {
       });
   }
 
-  public switchTable(tableName: string, event?: Event): void {
+  public switchTable(tableName: string, event?: Event, forceFetchFromDb = false): void {
     event?.stopPropagation();
-    if (!tableName || tableName === this.activeTableName()) return;
+    const cleanTbl = (tableName || '').trim();
+    if (!cleanTbl) return;
+    const activeDb = this.activeDatabaseName();
+    if (activeDb && !this.hasDatabaseAccess(activeDb)) {
+      this.showBanner('error', `You don't have access to ${activeDb} Database`);
+      return;
+    }
+    if (activeDb && !this.hasTableAccess(activeDb, cleanTbl)) {
+      this.showBanner('error', `You don't have access or permission to ${cleanTbl} Table`);
+      return;
+    }
+    if (
+      !forceFetchFromDb &&
+      cleanTbl.toLowerCase() === this.activeTableName().trim().toLowerCase()
+    ) {
+      return;
+    }
     if (this.editingCell()) {
       this.commitInlineEdit();
     }
     this.flushAllDirtyRowsAutoSave();
+    this.saveCurrentActiveGridTableToMemoryCache();
     this.closeAllMenus();
     const currentDb = this.activeDatabaseName();
-    this.openTableTab(currentDb, tableName);
-    this.recordTableUsed(currentDb, tableName);
-    this.activeTableName.set(tableName);
-    this.workspaceName.set(tableName);
-    this.workspaceNameControl.setValue(tableName);
+    this.openTableTab(currentDb, cleanTbl);
+    this.recordTableUsed(currentDb, cleanTbl);
+    this.activeTableName.set(cleanTbl);
+    this.workspaceName.set(cleanTbl);
+    this.workspaceNameControl.setValue(cleanTbl);
     const activeTabId = this.activeDatabaseTabId();
     this.databaseTabs.update((tabs) =>
       tabs.map((t) =>
         t.tabId === activeTabId || t.databaseName.toLowerCase() === currentDb.toLowerCase()
-          ? { ...t, activeTableName: tableName }
+          ? { ...t, activeTableName: cleanTbl }
           : t
       )
     );
@@ -4880,7 +6584,17 @@ export class App implements OnInit, OnDestroy {
     this.columnHeaderSearches.set({});
     this.globalSearchQuery.set('');
     this.searchInputControl.setValue('');
-    this.fetchWorkspaceFromServer(false, tableName, currentDb);
+
+    const cached = !forceFetchFromDb
+      ? this.getLoadedGridTableFromMemoryCache(currentDb, cleanTbl)
+      : null;
+    if (cached) {
+      this.applyCachedGridTableToActiveGrid(cached);
+      this.saveWorkspaceTabsStateToStorage();
+    } else {
+      this.saveWorkspaceTabsStateToStorage();
+      this.fetchWorkspaceFromServer(false, cleanTbl, currentDb);
+    }
     if (this.isBrowser) {
       setTimeout(() => {
         const el = document.getElementById('excel-sheet-tabs-scroll-container');
@@ -4892,6 +6606,10 @@ export class App implements OnInit, OnDestroy {
   public deleteTable(tableName: string, event?: Event, targetDatabaseName?: string): void {
     event?.stopPropagation();
     this.closeAllMenus();
+    if (!this.canDeletePermission()) {
+      this.showBanner('error', "You don't have Delete permission to delete a table.");
+      return;
+    }
     const dbName = targetDatabaseName || this.activeDatabaseName();
 
     this.requestConfirmation(
@@ -4937,9 +6655,6 @@ export class App implements OnInit, OnDestroy {
               this.removeTableFromLastUsedOrder(dbName, tableName);
               if (isTargetActiveDb) {
                 const nextActive = this.getLastUsedTableForDatabase(dbName);
-                this.activeTableName.set(nextActive);
-                this.workspaceName.set(nextActive || this.activeDatabaseName());
-                this.workspaceNameControl.setValue(nextActive || this.activeDatabaseName());
                 this.databaseTabs.update((tabs) =>
                   tabs.map((t) =>
                     t.databaseName.toLowerCase() === dbName.toLowerCase()
@@ -4948,9 +6663,11 @@ export class App implements OnInit, OnDestroy {
                   )
                 );
                 if (nextActive) {
-                  this.recordTableUsed(dbName, nextActive);
-                  this.fetchWorkspaceFromServer(false, nextActive, dbName);
+                  this.switchTable(nextActive, undefined, false);
                 } else {
+                  this.activeTableName.set('');
+                  this.workspaceName.set(this.activeDatabaseName());
+                  this.workspaceNameControl.setValue(this.activeDatabaseName());
                   this.columns.set([]);
                   this.rows.set([]);
                   this.dbTotalRows.set(0);
@@ -4960,7 +6677,31 @@ export class App implements OnInit, OnDestroy {
                   this.selectedColumnId.set(null);
                   this.activeCell.set(null);
                   this.editingCell.set(null);
+                  this.saveWorkspaceTabsStateToStorage();
                 }
+              }
+              const keyLower = `${dbName.toLowerCase()}::${tableName.toLowerCase()}`;
+              this.expandedTableNodes.update((prev) => {
+                const next = new Set<string>();
+                for (const item of prev) {
+                  if (item.toLowerCase() !== keyLower) next.add(item);
+                }
+                return next;
+              });
+              this.expandedColumnsFolderNodes.update((prev) => {
+                const next = new Set<string>();
+                for (const item of prev) {
+                  if (item.toLowerCase() !== keyLower) next.add(item);
+                }
+                return next;
+              });
+              this.treeLoadedColumnsByTable.update((prev) => {
+                const next = { ...prev };
+                delete next[keyLower];
+                return next;
+              });
+              if (this.isDatabaseNodeExpanded(dbName)) {
+                this.loadTablesForDatabaseFromDb(dbName);
               }
               if (Array.isArray(res.activities)) {
                 this.activities.set(res.activities);
@@ -5316,8 +7057,9 @@ export class App implements OnInit, OnDestroy {
   public refreshTableData(event?: Event): void {
     event?.stopPropagation();
     this.closeAllMenus();
-    if (!this.hasActiveConnection()) {
-      this.refreshObjectExplorerTreeFromDb();
+    const currentDb = (this.activeDatabaseName() || '').trim();
+    const currentTbl = (this.activeTableName() || '').trim();
+    if (!this.hasActiveConnection() || !currentDb || !currentTbl) {
       return;
     }
     if (this.editingCell()) {
@@ -5330,11 +7072,7 @@ export class App implements OnInit, OnDestroy {
     this.pendingUnsavedColIds.set(new Set());
     this.invalidCellKey.set(null);
     this.cloudSyncStatus.set('syncing');
-    this.fetchWorkspaceFromServer(
-      true,
-      this.activeTableName() || undefined,
-      this.activeDatabaseName()
-    );
+    this.fetchWorkspaceFromServer(true, currentTbl, currentDb, false);
   }
 
   public clearCacheFromContextMenu(event?: Event): void {
@@ -5386,15 +7124,13 @@ export class App implements OnInit, OnDestroy {
       }
     }
 
-    if (this.hasActiveConnection()) {
+    if (this.hasActiveConnection() && this.activeTableName()) {
       this.cloudSyncStatus.set('syncing');
       this.fetchWorkspaceFromServer(
         false,
-        this.activeTableName() || undefined,
+        this.activeTableName(),
         this.activeDatabaseName()
       );
-    } else {
-      this.refreshObjectExplorerTreeFromDb();
     }
 
     this.showBanner(
@@ -5406,7 +7142,8 @@ export class App implements OnInit, OnDestroy {
   private fetchWorkspaceFromServer(
     showRefreshToast = false,
     requestedTableName?: string,
-    requestedDatabaseName?: string
+    requestedDatabaseName?: string,
+    noTable = false
   ): void {
     const queryPayload: Record<string, unknown> = {
       limit: String(this.lazyBatchSize),
@@ -5416,6 +7153,9 @@ export class App implements OnInit, OnDestroy {
     }
     if (requestedTableName) {
       queryPayload['tableName'] = requestedTableName;
+    }
+    if (noTable) {
+      queryPayload['noTable'] = '1';
     }
     this.realtimeSync
       .executeCrud<{
@@ -5445,18 +7185,13 @@ export class App implements OnInit, OnDestroy {
       .subscribe({
         next: (res) => {
           if (res && Array.isArray(res.columns) && Array.isArray(res.rows)) {
-            if (res.serverName) this.serverName.set(res.serverName);
-            if (res.serverHost) this.serverHost.set(res.serverHost);
-            if (res.serverClusterName) this.serverClusterName.set(res.serverClusterName);
-            if (res.serverVersion) this.serverVersion.set(res.serverVersion);
-            if (res.serverEngine) this.serverEngine.set(res.serverEngine);
-            if (res.serverLoginUser) this.serverLoginUser.set(res.serverLoginUser);
+            this.applyServerInfoFromResponse(res);
             if (!res.serverName || !res.serverHost) {
-              this.refreshObjectExplorerTreeFromDb(true);
+              this.loadServerNodeOnlyFromDb();
             }
             const activeDb =
               requestedDatabaseName || res.activeDatabaseName || this.activeDatabaseName() || 'GridPulse_DB';
-            let activeTbl = res.activeTableName ?? '';
+            let activeTbl = noTable ? '' : (requestedTableName ?? res.activeTableName ?? '');
 
             if (!this.hasInitializedWorkspace) {
               this.hasInitializedWorkspace = true;
@@ -5465,7 +7200,9 @@ export class App implements OnInit, OnDestroy {
               }
             } else {
               const openNames = this.getOpenTableNamesForDb(activeDb);
-              if (requestedTableName) {
+              if (noTable) {
+                activeTbl = '';
+              } else if (requestedTableName) {
                 this.openTableTab(activeDb, requestedTableName);
               } else if (openNames.length === 0) {
                 activeTbl = '';
@@ -5477,20 +7214,13 @@ export class App implements OnInit, OnDestroy {
               }
             }
 
-            const sanitizedRows = activeTbl
-              ? this.sanitizeClientRowsAgainstColumns(res.columns, res.rows)
-              : [];
             const effectiveCols = activeTbl ? res.columns : [];
+            const sanitizedRows = activeTbl
+              ? this.sanitizeClientRowsAgainstColumns(effectiveCols, res.rows)
+              : [];
 
             this.workspaceId.set(res.workspaceId || 'ws_gridpulse_main');
             this.activeDatabaseName.set(activeDb);
-            if (Array.isArray(res.databases)) {
-              this.databases.set(res.databases);
-              this.syncTablesSignalForActiveDatabase(res.databases, activeDb);
-              this.checkAndRestoreClientBackupIfNeeded(res.databases);
-            } else if (Array.isArray(res.tables)) {
-              this.tables.set(res.tables);
-            }
             this.activeTableName.set(activeTbl);
             if (activeTbl) {
               this.recordTableUsed(activeDb, activeTbl);
@@ -5520,17 +7250,39 @@ export class App implements OnInit, OnDestroy {
                 )
               );
             }
+            const totalRowsVal = activeTbl ? (res.totalRows ?? sanitizedRows.length) : 0;
+            const filteredTotalRowsVal = activeTbl
+              ? (res.filteredTotalRows ?? res.totalRows ?? sanitizedRows.length)
+              : 0;
+            const hasMoreVal = activeTbl ? Boolean(res.hasMore) : false;
+            const uniqueVals = activeTbl ? (res.uniqueValuesByColumn || {}) : {};
+            const visLimitVal = Math.max(this.lazyBatchSize, sanitizedRows.length);
+
             this.columns.set(effectiveCols);
             this.rows.set(sanitizedRows);
-            this.visibleRowLimit.set(Math.max(this.lazyBatchSize, sanitizedRows.length));
-            this.dbTotalRows.set(activeTbl ? (res.totalRows ?? sanitizedRows.length) : 0);
-            this.dbFilteredTotalRows.set(
-              activeTbl
-                ? (res.filteredTotalRows ?? res.totalRows ?? sanitizedRows.length)
-                : 0
-            );
-            this.dbHasMoreRows.set(activeTbl ? Boolean(res.hasMore) : false);
-            this.dbUniqueValuesByColumn.set(activeTbl ? (res.uniqueValuesByColumn || {}) : {});
+            this.visibleRowLimit.set(visLimitVal);
+            this.dbTotalRows.set(totalRowsVal);
+            this.dbFilteredTotalRows.set(filteredTotalRowsVal);
+            this.dbHasMoreRows.set(hasMoreVal);
+            this.dbUniqueValuesByColumn.set(uniqueVals);
+
+            // Cache ONLY this single loaded/refreshed table in memory without touching other opened tables
+            if (activeDb && activeTbl) {
+              this.setLoadedGridTableInMemoryCache({
+                databaseName: activeDb,
+                tableName: activeTbl,
+                columns: effectiveCols,
+                rows: sanitizedRows,
+                totalRows: totalRowsVal,
+                filteredTotalRows: filteredTotalRowsVal,
+                hasMore: hasMoreVal,
+                uniqueValuesByColumn: uniqueVals,
+                visibleRowLimit: visLimitVal,
+              });
+            } else {
+              this.saveWorkspaceTabsStateToStorage();
+            }
+
             if (Array.isArray(res.versions)) {
               this.versions.set(res.versions);
             }
@@ -5553,8 +7305,8 @@ export class App implements OnInit, OnDestroy {
               this.showBanner(
                 'success',
                 activeTbl
-                  ? `Synced "${activeDb}.${activeTbl}" (${sanitizedRows.length} rows loaded, ${this.dbTotalRows()} total in database).`
-                  : `Synced database "${activeDb}".`
+                  ? `Refreshed "${activeDb}.${activeTbl}" (${sanitizedRows.length} rows loaded, ${this.dbTotalRows()} total in database).`
+                  : `Refreshed database "${activeDb}".`
               );
             }
           }
@@ -5663,6 +7415,7 @@ export class App implements OnInit, OnDestroy {
           if (res.uniqueValuesByColumn) {
             this.dbUniqueValuesByColumn.set(res.uniqueValuesByColumn);
           }
+          this.saveCurrentActiveGridTableToMemoryCache();
         },
         error: () => {
           this.isLazyLoadingMore.set(false);
@@ -5924,11 +7677,10 @@ export class App implements OnInit, OnDestroy {
     this.syncLocalActiveTableIntoDatabasesTree();
 
     const invalidRows = this.invalidRowIds();
-
     // Update our lastValidRowSnapshots for all currently valid rows
     this.snapshotValidRows(this.rows());
 
-    // Build database-safe row list where any currently invalid row falls back to its last valid DB snapshot
+    // Build database-safe row list where any currently invalid row falls back to its last valid DB snapshot (or is excluded if brand new & invalid)
     const dbSafeRows: GridRow[] = [];
     for (const r of this.rows()) {
       if (invalidRows.has(r.id)) {
@@ -5999,9 +7751,7 @@ export class App implements OnInit, OnDestroy {
               const localInvalid = this.invalidRowIds();
               const localMap = new Map<string, GridRow>(this.rows().map((r) => [r.id, r]));
               const merged = sanitized.map((r) =>
-                (localInvalid.has(r.id) || this.dirtyRowIds.has(r.id)) && localMap.has(r.id)
-                  ? localMap.get(r.id)!
-                  : r
+                localInvalid.has(r.id) && localMap.has(r.id) ? localMap.get(r.id)! : r
               );
               this.rows.set(merged);
               this.snapshotValidRows(merged);
@@ -6016,6 +7766,9 @@ export class App implements OnInit, OnDestroy {
             if (this.activeFilterCount() === 0 && !this.globalSearchQuery().trim()) {
               this.dbFilteredTotalRows.set(res.totalRows);
             }
+          }
+          if (isStillSameTable) {
+            this.saveCurrentActiveGridTableToMemoryCache();
           }
           if (Array.isArray(res.activities)) {
             this.activities.set(res.activities);
@@ -6058,75 +7811,591 @@ export class App implements OnInit, OnDestroy {
   }
 
   // =========================================================================
-  // POSTGRESQL USER AUTHENTICATION & COLLABORATOR PROFILE
+  // STANDALONE OAUTH2 4-DIGIT OTP AUTHENTICATION & "SYSTEM" DB RBAC ADMIN PANEL
   // =========================================================================
 
-  public handleGoogleSignIn(event?: Event): void {
-    event?.stopPropagation();
-    this.closeAllMenus();
-    this.authErrorMessage.set('');
-    this.authMode.set('login');
-    this.activeModal.set('postgres_auth');
+  public hasDatabaseAccess(dbName: string): boolean {
+    const targetDb = (dbName || '').trim();
+    if (!targetDb) return false;
+    const u = this.firebaseUser();
+    if (!u) return false;
+    if (u.isAdmin || (u.role || '').toLowerCase() === 'admin') return true;
+    if (!u.isReviewedByAdmin && !u.accessAllDatabases) {
+      const hasAnyDb = Object.values(u.databasePermissions || {}).some(Boolean);
+      const hasAnyTbl = Object.values(u.tablePermissions || {}).some((m) =>
+        Object.values(m || {}).some(Boolean)
+      );
+      if (!hasAnyDb && !hasAnyTbl) return false;
+    }
+    if (u.accessAllDatabases) return true;
+    const dbLower = targetDb.toLowerCase();
+    for (const [k, v] of Object.entries(u.databasePermissions || {})) {
+      if (k.toLowerCase() === dbLower && v === true) {
+        return true;
+      }
+    }
+    // Also allow database connection if at least one table inside that database is explicitly granted
+    for (const [k, tblMap] of Object.entries(u.tablePermissions || {})) {
+      if (k.toLowerCase() === dbLower && tblMap) {
+        if (Object.values(tblMap).some(Boolean)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
-  public fillDemoPostgresUser(email: string, displayName: string): void {
-    this.authErrorMessage.set('');
-    this.authForm.patchValue({
-      email,
-      password: 'GridPulse@2026',
-      displayName,
+  public hasTableAccess(dbName: string, tableName: string): boolean {
+    const targetDb = (dbName || '').trim();
+    const targetTbl = (tableName || '').trim();
+    if (!targetDb || !targetTbl) return false;
+    const u = this.firebaseUser();
+    if (!u) return false;
+    if (u.isAdmin || (u.role || '').toLowerCase() === 'admin') return true;
+    if (!this.hasDatabaseAccess(targetDb)) return false;
+
+    const dbLower = targetDb.toLowerCase();
+    const tblLower = targetTbl.toLowerCase();
+
+    // Check explicit table permission override first
+    for (const [k, tblMap] of Object.entries(u.tablePermissions || {})) {
+      if (k.toLowerCase() === dbLower && tblMap) {
+        for (const [tk, tv] of Object.entries(tblMap)) {
+          if (tk.toLowerCase() === tblLower) {
+            return Boolean(tv);
+          }
+        }
+      }
+    }
+
+    if (u.accessAllDatabases) return true;
+    for (const [k, v] of Object.entries(u.databasePermissions || {})) {
+      if (k.toLowerCase() === dbLower) {
+        return Boolean(v);
+      }
+    }
+    return false;
+  }
+
+  public enforceActiveWorkspaceAccessForCurrentUser(): void {
+    if (this.isUnreviewedFirstTimeUser()) {
+      this.setNoActiveConnectionState(false);
+      return;
+    }
+    const curDb = this.activeDatabaseName();
+    const curTbl = this.activeTableName();
+    if (curDb && !this.hasDatabaseAccess(curDb)) {
+      this.setNoActiveConnectionState(false);
+      return;
+    } else if (curDb && curTbl && !this.hasTableAccess(curDb, curTbl)) {
+      this.activeTableName.set('');
+      this.columns.set([]);
+      this.rows.set([]);
+    }
+    this.databaseTabs.update((tabs) =>
+      tabs.filter((t) => !t.databaseName || this.hasDatabaseAccess(t.databaseName))
+    );
+    this.openTableTabsByDb.update((prev) => {
+      const next: Record<string, string[]> = {};
+      for (const [db, list] of Object.entries(prev)) {
+        if (this.hasDatabaseAccess(db)) {
+          next[db] = (list || []).filter((tbl) => this.hasTableAccess(db, tbl));
+        }
+      }
+      return next;
     });
   }
 
-  public submitPostgresAuth(): void {
+  public handleGoogleSignIn(event?: Event, target: 'user' | 'admin' = 'user'): void {
+    event?.stopPropagation();
+    this.closeAllMenus();
+    this.authErrorMessage.set('');
+    this.oauthDeliveryNotice.set('');
+    this.oauthGeneratedOtpPreview.set('');
+    this.oauthLoginTarget.set(target);
+    this.oauthOtpStep.set('request');
+    if (target === 'admin') {
+      this.oauthContactChannel.set('email');
+      this.authForm.patchValue({
+        email: 'admin@gridario.com',
+        phone: '+15550109999',
+        displayName: 'System Administrator',
+        otpCode: '',
+      });
+    } else {
+      const currentEmail = this.authForm.controls.email.value;
+      if (currentEmail === 'admin@gridario.com') {
+        this.authForm.patchValue({
+          email: '',
+          phone: '',
+          displayName: '',
+          otpCode: '',
+        });
+      } else {
+        this.authForm.patchValue({ otpCode: '' });
+      }
+    }
+    this.activeModal.set('postgres_auth');
+  }
+
+  public openAdminLoginModal(event?: Event): void {
+    this.handleGoogleSignIn(event, 'admin');
+  }
+
+  public fillDemoPostgresUser(
+    email: string,
+    displayName: string,
+    phone = '+15550109999',
+    target: 'user' | 'admin' = 'user'
+  ): void {
+    this.authErrorMessage.set('');
+    this.oauthDeliveryNotice.set('');
+    this.oauthGeneratedOtpPreview.set('');
+    this.oauthLoginTarget.set(target);
+    this.oauthOtpStep.set('request');
+    this.authForm.patchValue({
+      email,
+      phone,
+      displayName,
+      otpCode: '',
+    });
+  }
+
+  public requestOAuthOtp(): void {
+    this.authErrorMessage.set('');
+    this.oauthDeliveryNotice.set('');
+    const raw = this.authForm.getRawValue();
+    const channel = this.oauthContactChannel();
+    const email = channel === 'email' ? raw.email.trim() : raw.email.trim();
+    const phone = channel === 'phone' ? raw.phone.trim() : raw.phone.trim();
+
+    if (channel === 'email' && !email) {
+      this.authErrorMessage.set('Please enter your Email ID to receive your 4-digit OTP.');
+      return;
+    }
+    if (channel === 'phone' && !phone) {
+      this.authErrorMessage.set(
+        'Please enter your Phone Number to receive your 4-digit OTP via SMS / WhatsApp.'
+      );
+      return;
+    }
+
+    this.isRequestingOtp.set(true);
+    const identifier = channel === 'email' ? email : phone;
+    this.http
+      .post<{
+        ok: boolean;
+        otpCode?: string;
+        deliveryChannel?: string;
+        recipient?: string;
+        message?: string;
+        isNewUser?: boolean;
+        isAdminLogin?: boolean;
+        error?: string;
+      }>('/api/oauth2/request-otp', {
+        identifier,
+        email: channel === 'email' ? email : '',
+        phone: channel === 'phone' ? phone : '',
+        displayName: raw.displayName.trim(),
+        color: raw.color || '#10b981',
+        loginSection: this.oauthLoginTarget(),
+        isAdminLogin: this.oauthLoginTarget() === 'admin',
+      })
+      .subscribe({
+        next: (res) => {
+          this.isRequestingOtp.set(false);
+          if (!res?.ok) {
+            this.authErrorMessage.set(res?.error || 'Failed to generate 4-digit OTP.');
+            return;
+          }
+          const code = String(res.otpCode || '');
+          this.oauthGeneratedOtpPreview.set(code);
+          this.oauthDeliveryNotice.set(
+            res.message || `New 4-digit OTP generated and set as your current login password.`
+          );
+          this.authForm.patchValue({ otpCode: code });
+          this.oauthOtpStep.set('verify');
+        },
+        error: (err) => {
+          this.isRequestingOtp.set(false);
+          this.authErrorMessage.set(
+            err?.error?.error || 'Could not reach standalone OAuth2 OTP server.'
+          );
+        },
+      });
+  }
+
+  public verifyOAuthOtpAndLogin(): void {
     this.authErrorMessage.set('');
     const raw = this.authForm.getRawValue();
-    const endpoint =
-      this.authMode() === 'register' ? '/api/auth/register' : '/api/auth/login';
+    const channel = this.oauthContactChannel();
+    const otp = raw.otpCode.trim();
+    if (!/^\d{4}$/.test(otp)) {
+      this.authErrorMessage.set('Please enter a valid 4-digit numeric OTP code.');
+      return;
+    }
+
+    this.isVerifyingOtp.set(true);
+    const identifier = channel === 'email' ? raw.email.trim() : raw.phone.trim();
+    this.http
+      .post<{
+        ok: boolean;
+        access_token?: string;
+        token?: string;
+        user?: PostgresAuthUser;
+        error?: string;
+      }>('/api/oauth2/token', {
+        grant_type: 'otp_password',
+        identifier,
+        email: channel === 'email' ? raw.email.trim() : '',
+        phone: channel === 'phone' ? raw.phone.trim() : '',
+        otp,
+        otpCode: otp,
+        password: otp,
+        displayName: raw.displayName.trim(),
+        color: raw.color || '#10b981',
+        loginSection: this.oauthLoginTarget(),
+        isAdminLogin: this.oauthLoginTarget() === 'admin',
+      })
+      .subscribe({
+        next: (res) => {
+          this.isVerifyingOtp.set(false);
+          const token = res?.access_token || res?.token;
+          if (!res?.ok || !res.user || !token) {
+            this.authErrorMessage.set(res?.error || 'Invalid or expired 4-digit OTP.');
+            return;
+          }
+          if (this.isBrowser) {
+            localStorage.setItem('gridpulse_pg_token', token);
+            localStorage.setItem('gridpulse_user_name', res.user.displayName);
+            localStorage.setItem('gridpulse_user_color', res.user.color || '#10b981');
+          }
+          this.firebaseUser.set(res.user);
+          this.currentUserName.set(res.user.displayName);
+          this.currentUserColor.set(res.user.color || '#10b981');
+          this.profileForm.patchValue({
+            displayName: res.user.displayName,
+            color: res.user.color || '#10b981',
+          });
+          this.activeModal.set('none');
+          this.enforceActiveWorkspaceAccessForCurrentUser();
+          this.loadDatabaseListOnlyFromDb();
+          this.broadcastPresence();
+
+          if (this.isCurrentUserAdmin() && this.oauthLoginTarget() === 'admin') {
+            this.openAdminPanelModal();
+            this.showBanner(
+              'success',
+              `Admin OAuth2 Login verified for ${res.user.displayName} (${res.user.email}).`
+            );
+          } else if (this.isUnreviewedFirstTimeUser()) {
+            this.showBanner(
+              'info',
+              `Signed in as ${res.user.displayName}. Your account is awaiting Admin review to grant database & role permissions.`
+            );
+          } else {
+            this.showBanner(
+              'success',
+              `Signed in via OAuth2 OTP as ${res.user.displayName} (Role: ${res.user.role}).`
+            );
+          }
+        },
+        error: (err) => {
+          this.isVerifyingOtp.set(false);
+          this.authErrorMessage.set(
+            err?.error?.error || 'Invalid 4-digit OTP or authentication failed.'
+          );
+        },
+      });
+  }
+
+  public submitPostgresAuth(): void {
+    if (this.oauthOtpStep() === 'request') {
+      this.requestOAuthOtp();
+    } else {
+      this.verifyOAuthOtpAndLogin();
+    }
+  }
+
+  public openAdminPanelModal(event?: Event): void {
+    event?.stopPropagation();
+    this.closeAllMenus();
+    if (!this.isCurrentUserAdmin()) {
+      this.openAdminLoginModal(event);
+      return;
+    }
+    this.activeModal.set('admin_panel');
+    this.loadAdminOverview();
+  }
+
+  public loadAdminOverview(): void {
+    const token = this.isBrowser ? localStorage.getItem('gridpulse_pg_token') || '' : '';
+    this.isLoadingAdminOverview.set(true);
+    this.http
+      .get<{
+        ok: boolean;
+        users?: PostgresAuthUser[];
+        roles?: SystemRoleConfig[];
+        databasesSchema?: { databaseName: string; tables: string[] }[];
+        defaultAdminCredentials?: {
+          email: string;
+          phone: string;
+          role: string;
+          authMethod: string;
+          systemDatabaseName: string;
+        };
+      }>('/api/admin/overview', {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      })
+      .subscribe({
+        next: (res) => {
+          this.isLoadingAdminOverview.set(false);
+          if (res?.ok) {
+            const users = res.users || [];
+            const roles = res.roles || [];
+            const schema = res.databasesSchema || [];
+            this.adminUsersList.set(users);
+            this.adminRolesList.set(roles);
+            this.adminDatabasesSchema.set(schema);
+            if (res.defaultAdminCredentials) {
+              this.defaultAdminLoginInfo.set(res.defaultAdminCredentials);
+            }
+            const curSel = this.selectedAdminUserId();
+            const targetUser =
+              users.find((u) => u.id === curSel) ||
+              users.find((u) => !u.isAdmin) ||
+              users[0] ||
+              null;
+            if (targetUser) {
+              this.selectUserInAdminPanel(targetUser);
+            }
+          }
+        },
+        error: () => {
+          this.isLoadingAdminOverview.set(false);
+          this.showBanner('error', 'Failed to load System database Admin Panel overview.');
+        },
+      });
+  }
+
+  public selectUserInAdminPanel(user: PostgresAuthUser): void {
+    this.selectedAdminUserId.set(user.id);
+    this.adminEditRole.set(user.role || 'Basic');
+    this.adminEditIsReviewed.set(Boolean(user.isReviewedByAdmin));
+    this.adminEditAccessAllDbs.set(Boolean(user.accessAllDatabases));
+
+    const dbPermsCopy: Record<string, boolean> = {};
+    const tblPermsCopy: Record<string, Record<string, boolean>> = {};
+
+    for (const dbItem of this.adminDatabasesSchema()) {
+      const dbName = dbItem.databaseName;
+      const hasDb =
+        Boolean(user.accessAllDatabases) ||
+        Boolean(user.databasePermissions?.[dbName]);
+      dbPermsCopy[dbName] = hasDb;
+      tblPermsCopy[dbName] = {};
+      for (const tblName of dbItem.tables) {
+        const explicitTbl = user.tablePermissions?.[dbName]?.[tblName];
+        tblPermsCopy[dbName][tblName] =
+          explicitTbl !== undefined ? Boolean(explicitTbl) : hasDb;
+      }
+    }
+    this.adminEditDbPermissions.set(dbPermsCopy);
+    this.adminEditTablePermissions.set(tblPermsCopy);
+  }
+
+  public toggleAdminEditAccessAllDatabases(checked: boolean): void {
+    this.adminEditAccessAllDbs.set(checked);
+    const nextDb: Record<string, boolean> = {};
+    const nextTbl: Record<string, Record<string, boolean>> = {};
+    for (const dbItem of this.adminDatabasesSchema()) {
+      nextDb[dbItem.databaseName] = checked;
+      nextTbl[dbItem.databaseName] = {};
+      for (const tblName of dbItem.tables) {
+        nextTbl[dbItem.databaseName][tblName] = checked;
+      }
+    }
+    this.adminEditDbPermissions.set(nextDb);
+    this.adminEditTablePermissions.set(nextTbl);
+  }
+
+  public toggleAdminEditDatabasePermission(dbName: string, checked: boolean): void {
+    // Requirement: "If i set permission for a database to true the all it table also is set to true until I explicitly uncheck the permission for that list of table in that specific database"
+    this.adminEditDbPermissions.update((prev) => ({
+      ...prev,
+      [dbName]: checked,
+    }));
+    if (!checked) {
+      this.adminEditAccessAllDbs.set(false);
+    }
+    const schemaDb = this.adminDatabasesSchema().find((d) => d.databaseName === dbName);
+    const tables = schemaDb ? schemaDb.tables : [];
+    this.adminEditTablePermissions.update((prev) => {
+      const nextForDb: Record<string, boolean> = {};
+      for (const t of tables) {
+        nextForDb[t] = checked;
+      }
+      return {
+        ...prev,
+        [dbName]: nextForDb,
+      };
+    });
+  }
+
+  public toggleAdminEditTablePermission(
+    dbName: string,
+    tableName: string,
+    checked: boolean
+  ): void {
+    this.adminEditTablePermissions.update((prev) => {
+      const existingDbMap = { ...(prev[dbName] || {}) };
+      existingDbMap[tableName] = checked;
+      return {
+        ...prev,
+        [dbName]: existingDbMap,
+      };
+    });
+  }
+
+  public saveAdminUserPermissions(approveReview = true): void {
+    const targetUser = this.selectedAdminUser();
+    if (!targetUser) return;
+    const token = this.isBrowser ? localStorage.getItem('gridpulse_pg_token') || '' : '';
+    const isReviewed = approveReview ? true : this.adminEditIsReviewed();
+    this.isSavingAdminUser.set(true);
 
     this.http
       .post<{
         ok: boolean;
-        token?: string;
         user?: PostgresAuthUser;
+        users?: PostgresAuthUser[];
         error?: string;
-      }>(endpoint, {
-        email: raw.email.trim(),
-        password: raw.password,
-        displayName: raw.displayName.trim(),
-        color: raw.color || '#f59e0b',
-      })
+      }>(
+        '/api/admin/users/permissions',
+        {
+          userId: targetUser.id,
+          role: this.adminEditRole(),
+          isReviewedByAdmin: isReviewed,
+          accessAllDatabases: this.adminEditAccessAllDbs(),
+          databasePermissions: this.adminEditDbPermissions(),
+          tablePermissions: this.adminEditTablePermissions(),
+        },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      )
       .subscribe({
         next: (res) => {
-          if (!res?.ok || !res.user || !res.token) {
-            this.authErrorMessage.set(
-              res?.error || 'Could not authenticate user account.'
-            );
+          this.isSavingAdminUser.set(false);
+          if (!res?.ok) {
+            this.showBanner('error', res?.error || 'Failed to update user permissions.');
             return;
           }
-          if (this.isBrowser) {
-            localStorage.setItem('gridpulse_pg_token', res.token);
-            localStorage.setItem('gridpulse_user_name', res.user.displayName);
-            localStorage.setItem('gridpulse_user_color', res.user.color);
+          if (Array.isArray(res.users)) {
+            this.adminUsersList.set(res.users);
           }
-          this.firebaseUser.set(res.user);
-          this.currentUserName.set(res.user.displayName);
-          this.currentUserColor.set(res.user.color);
-          this.profileForm.patchValue({
-            displayName: res.user.displayName,
-            color: res.user.color,
-          });
-          this.activeModal.set('none');
-          this.broadcastPresence();
+          if (res.user) {
+            this.adminEditIsReviewed.set(Boolean(res.user.isReviewedByAdmin));
+            if (this.firebaseUser()?.id === res.user.id) {
+              this.firebaseUser.set(res.user);
+              this.enforceActiveWorkspaceAccessForCurrentUser();
+            }
+          }
+          // Refresh System database tables if currently viewing System database
+          if (this.activeDatabaseName().toLowerCase() === 'system') {
+            this.switchTable(this.activeTableName() || 'Users');
+          }
+          this.loadDatabaseListOnlyFromDb();
           this.showBanner(
             'success',
-            `Signed in as ${res.user.displayName} (${res.user.email}).`
+            `Saved role (${this.adminEditRole()}) & database/table permissions for ${targetUser.displayName} in "System" database.`
           );
         },
         error: () => {
-          this.authErrorMessage.set('Could not reach authentication endpoint.');
+          this.isSavingAdminUser.set(false);
+          this.showBanner('error', 'Failed to save user permissions to System database.');
         },
       });
+  }
+
+  public populateRoleFormForEdit(role: SystemRoleConfig): void {
+    this.adminRoleForm.patchValue({
+      roleName: role.roleName,
+      description: role.description,
+      canCreate: role.canCreate,
+      canRead: role.canRead,
+      canUpdate: role.canUpdate,
+      canDelete: role.canDelete,
+    });
+  }
+
+  public saveAdminRoleConfig(): void {
+    if (this.adminRoleForm.invalid) return;
+    const raw = this.adminRoleForm.getRawValue();
+    const roleName = raw.roleName.trim();
+    if (!roleName) return;
+
+    const token = this.isBrowser ? localStorage.getItem('gridpulse_pg_token') || '' : '';
+    this.isSavingAdminRole.set(true);
+    this.http
+      .post<{
+        ok: boolean;
+        roles?: SystemRoleConfig[];
+        users?: PostgresAuthUser[];
+        error?: string;
+      }>(
+        '/api/admin/roles',
+        {
+          roleName,
+          description: raw.description.trim(),
+          canCreate: raw.canCreate,
+          canRead: raw.canRead,
+          canUpdate: raw.canUpdate,
+          canDelete: raw.canDelete,
+        },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      )
+      .subscribe({
+        next: (res) => {
+          this.isSavingAdminRole.set(false);
+          if (!res?.ok) {
+            this.showBanner('error', res?.error || 'Could not save role.');
+            return;
+          }
+          if (Array.isArray(res.roles)) {
+            this.adminRolesList.set(res.roles);
+          }
+          if (Array.isArray(res.users)) {
+            this.adminUsersList.set(res.users);
+            const cur = this.firebaseUser();
+            if (cur) {
+              const updatedSelf = res.users.find((u) => u.id === cur.id);
+              if (updatedSelf) {
+                this.firebaseUser.set(updatedSelf);
+              }
+            }
+          }
+          this.adminRoleForm.reset({
+            roleName: '',
+            description: 'Custom role with granular CRUD permissions',
+            canCreate: false,
+            canRead: true,
+            canUpdate: false,
+            canDelete: false,
+          });
+          this.showBanner('success', `Role "${roleName}" saved to System.Roles table.`);
+        },
+        error: () => {
+          this.isSavingAdminRole.set(false);
+          this.showBanner('error', 'Failed to save role in System database.');
+        },
+      });
+  }
+
+  public openSystemDatabaseTableFromAdmin(tableName: string): void {
+    this.activeModal.set('none');
+    this.connectDatabaseFromSidebar('System');
+    setTimeout(() => {
+      this.selectTableFromTree('System', tableName);
+    }, 150);
   }
 
   public handleSignOut(): void {
@@ -6135,6 +8404,7 @@ export class App implements OnInit, OnDestroy {
       localStorage.removeItem('gridpulse_pg_token');
     }
     this.firebaseUser.set(null);
+    this.enforceActiveWorkspaceAccessForCurrentUser();
     if (token) {
       this.http
         .post(
@@ -6468,14 +8738,7 @@ export class App implements OnInit, OnDestroy {
   public onDataRowFocusIn(rowId: string): void {
     const prevRowId = this.activeEditingRowId();
     if (prevRowId && prevRowId !== rowId) {
-      if (prevRowId === this.newRowSentinelId) {
-        this.commitAllNewRowLiveDrafts();
-        if (this.hasNewRowDraftValues()) {
-          this.commitFirstRowAddRow();
-        }
-      } else {
-        this.flushRowAutoSave(prevRowId);
-      }
+      this.flushRowAutoSave(prevRowId);
     }
     this.activeEditingRowId.set(rowId);
   }
@@ -6561,29 +8824,39 @@ export class App implements OnInit, OnDestroy {
     // Clicking/focusing a cell or row is a pure UI selection — do NOT call broadcastPresence() or trigger any Redis/DB call!
   }
 
-  private idleLiveCellCommitTimers = new Map<string, ReturnType<typeof setTimeout>>();
-
   public onContentEditableCellInput(rowId: string, colId: string, event: Event): void {
     const el = event.target as HTMLElement | null;
     if (!el) return;
     const rawText = (el.innerText ?? el.textContent ?? '').replace(/\r?\n/g, ' ');
     const row = this.rows().find((r) => r.id === rowId);
     const col = this.columns().find((c) => c.id === colId);
-    const currentDomText = row && col ? this.getEditableCellDomText(row, col) : '';
+    const savedVal =
+      row && col
+        ? col.colType === 'lookup'
+          ? String(this.getDisplayCellValue(row, col) ?? '')
+          : String(
+              (row.cells[col.name] !== undefined ? row.cells[col.name] : row.cells[col.id]) ?? ''
+            )
+        : '';
     const cellKey = `${rowId}:${colId}`;
+    this.clearCellAutoCommitTimer(cellKey);
 
-    const existingIdleTimer = this.idleLiveCellCommitTimers.get(cellKey);
-    if (existingIdleTimer) {
-      clearTimeout(existingIdleTimer);
-      this.idleLiveCellCommitTimers.delete(cellKey);
-    }
-
-    if (rawText === currentDomText) {
+    if (rawText === savedVal) {
       this.liveCellDraftMap.delete(cellKey);
       this.recomputeRowDirtyFlag(rowId);
+      this.hasStagedCellChanges.set(this.dirtyRowIds.size > 0 || this.liveCellDraftMap.size > 0);
     } else {
       this.liveCellDraftMap.set(cellKey, rawText);
       this.dirtyRowIds.add(rowId);
+      this.hasStagedCellChanges.set(true);
+      if (this.isBrowser) {
+        const timer = setTimeout(() => {
+          this.cellAutoCommitTimerMap.delete(cellKey);
+          const liveEl = document.getElementById(`grid-cell-${rowId}-${colId}`);
+          this.commitLiveCellDraft(rowId, colId, liveEl);
+        }, 2000);
+        this.cellAutoCommitTimerMap.set(cellKey, timer);
+      }
     }
 
     if (col && !col.isPrimaryKey && !col.isIdentity && col.colType !== 'formula') {
@@ -6610,15 +8883,6 @@ export class App implements OnInit, OnDestroy {
             }
           }
         }
-        if (rawText !== currentDomText && this.isBrowser) {
-          const timer = setTimeout(() => {
-            this.idleLiveCellCommitTimers.delete(cellKey);
-            if (this.liveCellDraftMap.has(cellKey)) {
-              this.commitLiveCellDraft(rowId, colId, el);
-            }
-          }, 650);
-          this.idleLiveCellCommitTimers.set(cellKey, timer);
-        }
       }
     }
 
@@ -6628,25 +8892,27 @@ export class App implements OnInit, OnDestroy {
   public onDocumentPointerDown(event: MouseEvent): void {
     const target = event.target as HTMLElement | null;
     if (!target) return;
-    if (target.closest('[data-first-row-reset="true"]')) {
+    if (
+      target.closest('[data-first-row-reset="true"]') ||
+      target.closest('.context-menu-popup')
+    ) {
       return;
     }
     const clickedRowEl = target.closest('tr[data-row-id]');
     const clickedRowId = clickedRowEl?.getAttribute('data-row-id') || null;
-
-    if (this.dirtyRowIds.size > 0 || this.liveCellDraftMap.size > 0) {
-      const currentRowId = this.activeEditingRowId();
-      if (!clickedRowId || clickedRowId !== currentRowId) {
+    const currentRowId = this.activeEditingRowId();
+    if (currentRowId && currentRowId !== clickedRowId) {
+      this.flushRowAutoSave(currentRowId);
+    }
+    if (!clickedRowId) {
+      if (this.dirtyRowIds.size > 0 || this.liveCellDraftMap.size > 0) {
         this.flushAllDirtyRowsAutoSave();
       }
-    }
-    if (
-      (this.hasNewRowDraftValues() || this.newRowLiveDraftMap.size > 0) &&
-      (!clickedRowId || clickedRowId !== this.newRowSentinelId)
-    ) {
-      this.commitAllNewRowLiveDrafts();
-      if (this.hasNewRowDraftValues()) {
-        this.commitFirstRowAddRow();
+      if (this.hasNewRowDraftValues() || this.newRowLiveDraftMap.size > 0) {
+        this.commitAllNewRowLiveDrafts();
+        if (this.hasNewRowDraftValues()) {
+          this.commitFirstRowAddRow();
+        }
       }
     }
   }
@@ -6666,10 +8932,6 @@ export class App implements OnInit, OnDestroy {
         this.dirtyRowIds.add(rowId);
         return;
       }
-    }
-    if (this.isRowInvalid(rowId) || this.pendingUnsavedRowIds().has(rowId)) {
-      this.dirtyRowIds.add(rowId);
-      return;
     }
     const row = this.rows().find((r) => r.id === rowId);
     if (!row) {
@@ -6703,12 +8965,21 @@ export class App implements OnInit, OnDestroy {
     this.commitLiveCellDraft(rowId, colId, el);
   }
 
+  private clearCellAutoCommitTimer(cellKey: string): void {
+    const existing = this.cellAutoCommitTimerMap.get(cellKey);
+    if (existing) {
+      clearTimeout(existing);
+      this.cellAutoCommitTimerMap.delete(cellKey);
+    }
+  }
+
   public commitLiveCellDraft(
     rowId: string,
     colId: string,
     el?: HTMLElement | null
   ): void {
     const draftKey = `${rowId}:${colId}`;
+    this.clearCellAutoCommitTimer(draftKey);
     if (!this.liveCellDraftMap.has(draftKey)) return;
     const rawText = this.liveCellDraftMap.get(draftKey) ?? '';
     this.liveCellDraftMap.delete(draftKey);
@@ -6723,8 +8994,8 @@ export class App implements OnInit, OnDestroy {
     const selectEl = this.isBrowser
       ? (document.getElementById(`grid-cell-${rowId}-${colId}`) as HTMLElement | null)
       : null;
-    // Stage the change in the row only; Redis will save when the user exits the row
     this.stageCellEditInRow(rowId, colId, newValue, selectEl);
+    this.flushRowAutoSave(rowId);
   }
 
   public onDateCellChange(rowId: string, colId: string, newValue: string): void {
@@ -6739,8 +9010,10 @@ export class App implements OnInit, OnDestroy {
   ): void {
     event?.stopPropagation();
     this.onCellFocus(rowId, colId, event);
-    // Stage the change in the row only; Redis will save when the user exits the row
     this.stageCellEditInRow(rowId, colId, checked);
+    const cellKey = `${rowId}:${colId}`;
+    this.markCellsPendingInRedis([cellKey]);
+    this.flushRowAutoSave(rowId);
   }
 
   private stageCellEditInRow(
@@ -6839,13 +9112,17 @@ export class App implements OnInit, OnDestroy {
       });
       this.dirtyRowIds.add(rowId);
       this.clearCellFromRedisAndDbHighlight(cellKey);
-      this.validateAndSyncRows(
-        [rowId],
-        [],
-        'Cell Updated',
-        `Validation check on "${col.name}"`
-      );
+      this.invalidCellKey.set(cellKey);
+      this.showBanner('error', `Validation Error: ${validation.errorMessage}`);
       return;
+    }
+
+    if (this.cellValidationErrors()[cellKey]) {
+      this.cellValidationErrors.update((prev) => {
+        const next = { ...prev };
+        delete next[cellKey];
+        return next;
+      });
     }
 
     this.recomputeRowDirtyFlag(rowId);
@@ -6870,7 +9147,7 @@ export class App implements OnInit, OnDestroy {
     }
 
     this.recomputeRowDirtyFlag(rowId);
-    if (!this.dirtyRowIds.has(rowId)) {
+    if (!this.dirtyRowIds.has(rowId) && !this.isRowInvalid(rowId)) {
       return;
     }
 
@@ -7005,6 +9282,7 @@ export class App implements OnInit, OnDestroy {
 
     if (nextRIdx < 0) {
       // Move up into First Row (Add Row)
+      this.flushRowAutoSave(currentRowId);
       const targetCol = colsPool[nextCIdx] || allCols[0];
       if (targetCol) {
         this.focusFirstRowCellDom(targetCol.id);
@@ -7052,7 +9330,6 @@ export class App implements OnInit, OnDestroy {
       this.commitInlineEdit();
     }
 
-    this.onDataRowFocusIn(rowId);
     this.activeCell.set({ rowId, colId });
     this.selectedColumnId.set(colId);
 
@@ -7449,6 +9726,7 @@ export class App implements OnInit, OnDestroy {
     const col = this.columns().find((c) => c.id === colId);
     if (!col || this.isProtectedIdColumn(col)) return;
     this.onDataRowFocusIn(this.newRowSentinelId);
+    this.commitAllNewRowLiveDrafts();
     const curr = this.getNewRowCellDisplayValue(col) === true;
     const nextVal = !curr;
     this.newRowDraftCells.update((prev) => ({
@@ -7655,6 +9933,10 @@ export class App implements OnInit, OnDestroy {
 
   public commitFirstRowAddRow(event?: Event): void {
     event?.stopPropagation();
+    if (!this.canCreatePermission()) {
+      this.showBanner('error', "You don't have Create permission to add rows.");
+      return;
+    }
     this.commitAllNewRowLiveDrafts();
     if (this.editingNewRowColId()) {
       this.commitNewRowCellEdit(false);
@@ -7934,6 +10216,10 @@ export class App implements OnInit, OnDestroy {
 
   public toggleCheckboxCell(rowId: string, colId: string, event?: Event): void {
     event?.stopPropagation();
+    if (!this.canUpdatePermission()) {
+      this.showBanner('error', "You don't have Write/Update permission to edit cells.");
+      return;
+    }
     const row = this.rows().find((r) => r.id === rowId);
     const col = this.columns().find((c) => c.id === colId);
     if (!row || !col || col.isPrimaryKey || col.isIdentity) return;
@@ -7947,11 +10233,20 @@ export class App implements OnInit, OnDestroy {
     if (!col || col.isPrimaryKey || col.isIdentity) return;
 
     if (rowId === this.newRowSentinelId) {
+      if (!this.canCreatePermission()) {
+        this.showBanner('error', "You don't have Create permission to add rows.");
+        return;
+      }
       const domEl = this.isBrowser
         ? (document.getElementById(`new-row-inline-input-${colId}`) as HTMLElement | null)
         : null;
       this.newRowLiveDraftMap.set(colId, String(rawInput ?? ''));
       this.commitNewRowLiveCellDraft(colId, domEl);
+      return;
+    }
+
+    if (!this.canUpdatePermission()) {
+      this.showBanner('error', "You don't have Write/Update permission to edit cells.");
       return;
     }
 
@@ -7963,6 +10258,7 @@ export class App implements OnInit, OnDestroy {
       : null;
     this.liveCellDraftMap.delete(`${rowId}:${colId}`);
     this.stageCellEditInRow(rowId, colId, rawInput, domEl);
+    this.flushRowAutoSave(rowId);
   }
 
   /**
@@ -8240,6 +10536,7 @@ export class App implements OnInit, OnDestroy {
 
   public toggleRowSelection(rowId: string, event?: Event): void {
     event?.stopPropagation();
+    this.onDataRowFocusIn(rowId);
     const next = new Set(this.selectedRowIds());
     if (next.has(rowId)) {
       next.delete(rowId);
@@ -8254,6 +10551,10 @@ export class App implements OnInit, OnDestroy {
     anchorRowId?: string | null
   ): void {
     this.closeAllMenus();
+    if (!this.canCreatePermission()) {
+      this.showBanner('error', "You don't have Create permission to insert rows.");
+      return;
+    }
     const refRowId = anchorRowId || this.activeCell()?.rowId;
 
     if (position === 'above_active' && this.isAddRowAboveOrPasteAboveDisabled(refRowId)) {
@@ -8559,6 +10860,10 @@ export class App implements OnInit, OnDestroy {
   public deleteSelectedOrSpecificRow(specificRowId?: string | null, event?: Event): void {
     event?.stopPropagation();
     this.closeAllMenus();
+    if (!this.canDeletePermission()) {
+      this.showBanner('error', "You don't have Delete permission to delete rows.");
+      return;
+    }
     if (specificRowId === this.newRowSentinelId && this.selectedRowIds().size === 0) {
       this.showBanner('info', 'The First Row (Add Row) cannot be deleted.');
       return;
@@ -9031,10 +11336,22 @@ export class App implements OnInit, OnDestroy {
 
   public openAddColumnModal(targetDbName?: string, targetTableName?: string): void {
     this.closeAllMenus();
+    if (!this.canCreatePermission()) {
+      this.showBanner('error', "You don't have Create permission to add columns.");
+      return;
+    }
     this.editingSchemaColId.set(null);
     this.schemaModalColType.set('text');
-    this.targetColumnSchemaDbName.set(targetDbName || this.activeDatabaseName());
-    this.targetColumnSchemaTableName.set(targetTableName || this.activeTableName());
+    const resolvedDb = (targetDbName || this.activeDatabaseName()).trim();
+    const resolvedTbl = (targetTableName || this.activeTableName()).trim();
+    this.targetColumnSchemaDbName.set(resolvedDb);
+    this.targetColumnSchemaTableName.set(resolvedTbl);
+    if (resolvedDb && resolvedTbl) {
+      const keyLower = `${resolvedDb.toLowerCase()}::${resolvedTbl.toLowerCase()}`;
+      if (!this.treeLoadedColumnsByTable()[keyLower]) {
+        this.loadFieldsForTableFromDb(resolvedDb, resolvedTbl);
+      }
+    }
     this.columnSchemaForm.reset({
       name: '',
       colType: 'text',
@@ -9067,6 +11384,10 @@ export class App implements OnInit, OnDestroy {
   ): void {
     event?.stopPropagation();
     this.closeAllMenus();
+    if (!this.canUpdatePermission()) {
+      this.showBanner('error', "You don't have Write/Update permission to edit columns.");
+      return;
+    }
     if (this.isProtectedIdColumn(col)) {
       this.showBanner(
         'info',
@@ -9426,6 +11747,11 @@ export class App implements OnInit, OnDestroy {
               if (Array.isArray(res?.activities)) {
                 this.activities.set(res.activities);
               }
+              const keyLower = `${targetDbName.toLowerCase()}::${targetTableName.toLowerCase()}`;
+              this.treeLoadedColumnsByTable.update((prev) => ({
+                ...prev,
+                [keyLower]: updatedCols,
+              }));
               this.showBanner('success', `Updated field "${cleanName}" in table "${targetTableName}".`);
             },
           });
@@ -9684,6 +12010,11 @@ export class App implements OnInit, OnDestroy {
               if (Array.isArray(res?.activities)) {
                 this.activities.set(res.activities);
               }
+              const keyLower = `${targetDbName.toLowerCase()}::${targetTableName.toLowerCase()}`;
+              this.treeLoadedColumnsByTable.update((prev) => ({
+                ...prev,
+                [keyLower]: updatedCols,
+              }));
               this.showBanner(
                 'success',
                 `Created field "${cleanName}" (${newCol.colType}) in table "${targetTableName}".`
@@ -9768,6 +12099,10 @@ export class App implements OnInit, OnDestroy {
   public deleteColumn(colId: string | null, event?: Event): void {
     event?.stopPropagation();
     this.closeAllMenus();
+    if (!this.canDeletePermission()) {
+      this.showBanner('error', "You don't have Delete permission to drop columns.");
+      return;
+    }
     if (!colId) return;
     const target = this.columns().find((c) => c.id === colId);
     if (!target) return;
@@ -10439,29 +12774,56 @@ export class App implements OnInit, OnDestroy {
     this.showBanner('success', `Exported ${rows.length} rows to CSV.`);
   }
 
+  public commitAllUncommittedChangesToRedis(event?: Event): void {
+    event?.stopPropagation();
+    for (const [key, timer] of this.cellAutoCommitTimerMap.entries()) {
+      clearTimeout(timer);
+      this.cellAutoCommitTimerMap.delete(key);
+    }
+    if (this.editingCell()) {
+      this.commitInlineEdit();
+    }
+    this.flushAllDirtyRowsAutoSave();
+    this.hasStagedCellChanges.set(false);
+    this.showBanner('success', 'Committed all staged changes to Redis.');
+  }
+
   public onGlobalKeydown(event: KeyboardEvent): void {
+    if (!event) return;
+
     if (this.loader.isLoading()) {
       event.preventDefault();
       event.stopPropagation();
       return;
     }
+
+    const key = event.key || '';
+    const lowerKey = key.toLowerCase();
+    const isCmdOrCtrl = Boolean(event.ctrlKey || event.metaKey);
+
+    // Ctrl+S / Cmd+S: commit all staged grid changes to Redis immediately even if still inside a cell
+    if (isCmdOrCtrl && lowerKey === 's') {
+      event.preventDefault();
+      event.stopPropagation();
+      this.commitAllUncommittedChangesToRedis();
+      return;
+    }
+
     const target = event.target as HTMLElement | null;
-    const tagName = target?.tagName?.toLowerCase();
+    const tagName = target?.tagName ? target.tagName.toLowerCase() : '';
     if (tagName === 'input' || tagName === 'textarea' || tagName === 'select') {
-      if (event.key === 'Escape') {
+      if (key === 'Escape') {
         this.cancelInlineEdit();
         this.closeAllMenus();
       }
       return;
     }
 
-    if (event.key === 'Escape') {
+    if (key === 'Escape') {
       this.closeAllMenus();
       return;
     }
 
-    const isCmdOrCtrl = event.ctrlKey || event.metaKey;
-    const lowerKey = event.key.toLowerCase();
     if (isCmdOrCtrl && lowerKey === 'z' && !event.shiftKey) {
       event.preventDefault();
       this.undo();
@@ -12195,6 +14557,7 @@ export class App implements OnInit, OnDestroy {
     const startX =
       'touches' in event ? event.touches[0]?.clientX ?? 0 : event.clientX;
     const startWidth = Number(col.width) || 140;
+    const preResizeSnap = this.captureCurrentSnapshot(`Resize Column "${col.name}"`);
     this.resizingColId.set(col.id);
 
     const onMove = (moveEv: MouseEvent | TouchEvent) => {
@@ -12213,6 +14576,8 @@ export class App implements OnInit, OnDestroy {
       this.syncLocalActiveTableIntoDatabasesTree();
       const updatedCol = this.columns().find((c) => c.id === col.id);
       if (updatedCol && updatedCol.width !== startWidth) {
+        this.undoStack.update((prev) => [...prev, preResizeSnap].slice(-this.maxHistorySteps));
+        this.redoStack.set([]);
         this.persistToCloud(
           'Column Resized',
           `Resized column "${updatedCol.name}" to ${updatedCol.width}px`,
@@ -12250,6 +14615,7 @@ export class App implements OnInit, OnDestroy {
     }
     const idealWidth = Math.max(54, Math.min(480, Math.round(maxCharLen * 7.5 + 38)));
     const nextWidth = Math.abs((col.width || 140) - idealWidth) <= 6 ? 64 : idealWidth;
+    this.recordHistorySnapshot(`Auto-Fit Column "${col.name}"`);
     let updatedCol: GridColumn | undefined;
     this.columns.update((cols) =>
       cols.map((c) => {

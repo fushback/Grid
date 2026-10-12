@@ -7026,7 +7026,7 @@ function collectProjectFiles(
 
     if (stat.isDirectory()) {
       results.push(...collectProjectFiles(baseDir, relPath));
-    } else if (stat.isFile() && stat.size < 512 * 1024) {
+    } else if (stat.isFile() && stat.size < 2 * 1024 * 1024) {
       try {
         let content = readFileSync(fullPath, 'utf-8');
         if (!content.includes('\u0000')) {
