@@ -44,11 +44,12 @@
   <!-- COMPACT TOP HEADER ALIGNED WITH TOOLBAR & GRID DESIGN                 -->
   <!-- ===================================================================== -->
   <header class="gridario-compact-header shrink-0 z-40">
-    <!-- Left Hand Side: Compact Brand -->
+    <!-- Left Hand Side: Compact Brand & Main Navigation -->
     <div class="d-flex align-items-center gap-2 flex-wrap">
       <a
         href="/"
-        class="font-bold tracking-tight text-slate-900 no-underline whitespace-nowrap d-inline-flex align-items-center gap-1.5"
+        (click)="$event.preventDefault(); switchToWorkspaceView($event)"
+        class="font-bold tracking-tight text-slate-900 no-underline whitespace-nowrap d-inline-flex align-items-center gap-1.5 cursor-pointer"
         style="font-size: 12px; line-height: 1"
         data-office-tip="Gridario Home"
       >
@@ -60,10 +61,83 @@
         </span>
         <span>Gridario</span>
       </a>
+
+      <!-- Header Navigation Links -->
+      <nav class="d-inline-flex align-items-center gap-1 ms-1 ms-sm-2" aria-label="Application Views">
+        <button
+          type="button"
+          (click)="switchToWorkspaceView($event)"
+          class="btn btn-sm py-0 px-2 d-inline-flex align-items-center gap-1 text-xs font-semibold rounded border transition-all"
+          [class.bg-blue-50]="currentView() === 'workspace'"
+          [class.border-blue-400]="currentView() === 'workspace'"
+          [class.text-blue-700]="currentView() === 'workspace'"
+          [class.bg-white]="currentView() !== 'workspace'"
+          [class.border-slate-200]="currentView() !== 'workspace'"
+          [class.text-slate-600]="currentView() !== 'workspace'"
+          style="height: 22px; font-size: 11px; line-height: 1"
+          data-office-tip="Data Grid Workspace (Spreadsheet & SQL Explorer)"
+        >
+          <mat-icon style="font-size: 13px; width: 13px; height: 13px">table_chart</mat-icon>
+          <span>Data Grid</span>
+        </button>
+
+        <!-- Admin Navigation: EXCLUSIVELY visible if logged in as Admin -->
+        @if (isCurrentUserAdmin()) {
+          <button
+            type="button"
+            (click)="switchToAdminView($event)"
+            class="btn btn-sm py-0 px-2.5 d-inline-flex align-items-center gap-1.5 text-xs font-semibold rounded border transition-all shadow-sm"
+            [class.bg-emerald-600]="currentView() === 'admin'"
+            [class.text-white]="currentView() === 'admin'"
+            [class.border-emerald-700]="currentView() === 'admin'"
+            [class.bg-emerald-50]="currentView() !== 'admin'"
+            [class.text-emerald-900]="currentView() !== 'admin'"
+            [class.border-emerald-300]="currentView() !== 'admin'"
+            style="height: 22px; font-size: 11px; line-height: 1"
+            data-office-tip="Admin Panel (Users, UserRole, UserPermission & System DB)"
+            aria-label="Admin Panel Navigation"
+          >
+            <mat-icon style="font-size: 14px; width: 14px; height: 14px">admin_panel_settings</mat-icon>
+            <span class="font-bold">Admin Panel</span>
+            @if (pendingReviewUsersCount() > 0) {
+              <span
+                class="badge rounded-pill bg-amber-500 text-slate-900 font-mono-tabular font-bold"
+                style="font-size: 9px; padding: 1px 4px"
+              >
+                {{ pendingReviewUsersCount() }} pending
+              </span>
+            } @else {
+              <span
+                class="px-1 py-0 rounded font-mono-tabular font-bold uppercase"
+                style="font-size: 8.5px"
+                [class.bg-emerald-700]="currentView() === 'admin'"
+                [class.text-emerald-100]="currentView() === 'admin'"
+                [class.bg-emerald-200]="currentView() !== 'admin'"
+                [class.text-emerald-900]="currentView() !== 'admin'"
+              >
+                Admin
+              </span>
+            }
+          </button>
+        }
+      </nav>
     </div>
 
-    <!-- Right Hand Side: Compact Login + 24x24 Circular User Avatar -->
+    <!-- Right Hand Side: View Switcher, Login + 24x24 Circular User Avatar -->
     <div class="d-inline-flex align-items-center gap-1.5 position-relative">
+      @if (currentView() === 'admin') {
+        <button
+          type="button"
+          (click)="switchToWorkspaceView($event)"
+          class="btn btn-sm btn-outline-secondary py-0 px-2 d-none d-sm-inline-flex align-items-center gap-1 text-xs"
+          style="height: 22px; font-size: 11px; line-height: 1"
+          data-office-tip="Return to Spreadsheet & Data Grid"
+        >
+          <mat-icon style="font-size: 13px; width: 13px; height: 13px">arrow_back</mat-icon>
+          <span>Back to Grid</span>
+        </button>
+      }
+
       @if (!firebaseUser()) {
         <button
           type="button"
@@ -233,11 +307,11 @@
               @if (isCurrentUserAdmin()) {
                 <button
                   type="button"
-                  (click)="isSettingsDropdownOpen.set(false); openAdminPanelModal($event)"
+                  (click)="isSettingsDropdownOpen.set(false); switchToAdminView($event)"
                   class="w-100 btn btn-sm btn-success d-flex align-items-center justify-content-center gap-1.5 text-xs font-semibold"
                 >
                   <mat-icon>admin_panel_settings</mat-icon>
-                  <span>Open Admin Panel (Users, Roles &amp; Access)</span>
+                  <span>Open Admin Panel Page (Users, Roles &amp; Access)</span>
                 </button>
               } @else {
                 <button
@@ -379,16 +453,20 @@
   </header>
 
   <!-- ===================================================================== -->
-  <!-- WORD / EXCEL / SQL SERVER RIBBON COMMAND TOOLBAR (BELOW HEADER)       -->
-  <!-- Includes Submenu Category Tabs, Text + Icon Groups, Paste Submenu,    -->
-  <!-- and Ribbon Collapse Toggle.                                           -->
+  <!-- MAIN APPLICATION VIEW SWITCH: WORKSPACE (DATA GRID) VS ADMIN PANEL      -->
   <!-- ===================================================================== -->
-  <section
-    class="gridario-office-ribbon shrink-0"
-    [class.ribbon-icon-only]="!isRibbonTextVisible()"
-    aria-label="Office & SQL Server Command Ribbon"
-    (mouseleave)="clearActionTooltip()"
-  >
+  @if (currentView() === 'workspace') {
+    <!-- ===================================================================== -->
+    <!-- WORD / EXCEL / SQL SERVER RIBBON COMMAND TOOLBAR (BELOW HEADER)       -->
+    <!-- Includes Submenu Category Tabs, Text + Icon Groups, Paste Submenu,    -->
+    <!-- and Ribbon Collapse Toggle.                                           -->
+    <!-- ===================================================================== -->
+    <section
+      class="gridario-office-ribbon shrink-0"
+      [class.ribbon-icon-only]="!isRibbonTextVisible()"
+      aria-label="Office & SQL Server Command Ribbon"
+      (mouseleave)="clearActionTooltip()"
+    >
     <!-- RIBBON TOP TAB BAR (Submenu Categories + Active Context Badge + Icon/Text Toggle + Collapse Toggle) -->
     <div class="gridario-ribbon-tab-bar">
       <div class="d-flex flex-nowrap align-items-center gap-0.5 shrink-0">
@@ -2624,22 +2702,21 @@
                       [attr.aria-label]="'New row ' + col.name"
                     />
                   } @else {
-                    <div
+                    <input
                       [id]="'new-row-inline-input-' + col.id"
-                      contenteditable="true"
-                      spellcheck="false"
-                      role="textbox"
-                      [attr.aria-label]="'New row ' + col.name"
-                      [attr.data-placeholder]="newRowErr ? '(Required)' : 'Add ' + col.name + (isColumnNotNull(col) ? ' *' : '')"
-                      class="excel-cell-editable text-slate-900"
+                      type="text"
+                      class="excel-cell-input text-slate-900"
                       [class.text-end]="col.colType === 'number'"
                       [class.font-mono-tabular]="col.colType === 'number' || col.colType === 'lookup'"
-                      [textContent]="getNewRowEditableCellDomText(col)"
+                      [value]="getNewRowEditableCellDomText(col)"
+                      [placeholder]="newRowErr ? '(Required)' : 'Add ' + col.name + (isColumnNotNull(col) ? ' *' : '')"
+                      (click)="$event.stopPropagation()"
                       (focus)="onNewRowCellFocus(col.id, $event)"
                       (input)="onNewRowContentEditableInput(col.id, $event)"
                       (blur)="onNewRowEditableCellBlur(col.id, $event)"
                       (keydown)="onNewRowCellKeydown($event, col.id)"
-                    ></div>
+                      [attr.aria-label]="'New row ' + col.name"
+                    />
                   }
                 </td>
               }
@@ -2861,29 +2938,31 @@
                       [attr.aria-label]="col.name"
                     />
                   } @else {
-                    <div
+                    <input
                       [id]="'grid-cell-' + row.id + '-' + col.id"
-                      contenteditable="true"
-                      spellcheck="false"
-                      role="textbox"
-                      [attr.aria-label]="col.name"
-                      [attr.data-placeholder]="isInvalid ? '(Empty / Invalid)' : ''"
-                      class="excel-cell-editable text-slate-900"
+                      type="text"
+                      class="excel-cell-input text-slate-900"
                       [class.text-end]="col.colType === 'number'"
                       [class.font-mono-tabular]="col.colType === 'number' || col.colType === 'lookup'"
-                      [textContent]="getEditableCellDomText(row, col)"
+                      [value]="getEditableCellDomText(row, col)"
+                      [placeholder]="isInvalid ? '(Empty / Invalid)' : ''"
+                      (click)="$event.stopPropagation()"
                       (focus)="onCellFocus(row.id, col.id, $event)"
                       (input)="onContentEditableCellInput(row.id, col.id, $event)"
                       (blur)="onEditableCellBlur(row.id, col.id, $event)"
                       (keydown)="onAlwaysEditableCellKeydown($event, row.id, col.id)"
-                    ></div>
+                      [attr.aria-label]="col.name"
+                    />
                   }
                   <div
                     class="gridario-cell-col-resizer"
                     [class.col-resizing]="resizingColId() === col.id"
+                    tabindex="0"
+                    role="separator"
                     (mousedown)="startColumnWidthResize(col, $event)"
                     (touchstart)="startColumnWidthResize(col, $event)"
                     (dblclick)="autoFitColumnWidth(col, $event)"
+                    (keydown.enter)="autoFitColumnWidth(col, $event)"
                     (click)="$event.stopPropagation()"
                   ></div>
                 </td>
@@ -3100,9 +3179,248 @@
           </div>
         </div>
 
-        <!-- Empty Tab Panes (All 4 tabs empty for future features) -->
+        <!-- Tab Panes -->
         @if (activeRightSidebarTab() === 'ai_explorer') {
-          <div class="manage-tree-scroll flex-grow-1 min-h-0 p-2.5 d-flex flex-column gap-2.5 bg-white text-slate-900"></div>
+          <div class="flex-grow-1 min-h-0 d-flex flex-column bg-slate-50 text-slate-900 overflow-hidden">
+            <!-- AI Explorer Header / Context Bar -->
+            <div class="p-2 bg-white border-b border-slate-200 shrink-0 d-flex flex-column gap-1.5 shadow-2xs">
+              <div class="d-flex align-items-center justify-content-between gap-1.5">
+                <div class="d-flex align-items-center gap-1 min-w-0">
+                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 truncate" [title]="activeDatabaseName()">
+                    <mat-icon style="font-size: 13px; width: 13px; height: 13px; margin-right: 2px">database</mat-icon>
+                    {{ activeDatabaseName() || 'No DB' }}
+                  </span>
+                  <span class="text-slate-400 font-bold">/</span>
+                  <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200 truncate" [title]="activeTableName()">
+                    <mat-icon style="font-size: 13px; width: 13px; height: 13px; margin-right: 2px">table_chart</mat-icon>
+                    {{ activeTableName() || 'No Table' }}
+                  </span>
+                </div>
+                <div class="d-flex align-items-center gap-1 shrink-0">
+                  <button
+                    type="button"
+                    (click)="toggleAiExplorerWidth()"
+                    class="btn btn-sm p-1 rounded border border-slate-300 bg-white hover:bg-slate-100 text-slate-700 d-inline-flex align-items-center justify-content-center shadow-2xs"
+                    style="width: 26px; height: 26px"
+                    [title]="isRightSidebarExpanded() ? 'Compact AI Sidebar' : 'Expand AI Sidebar (Wide)'"
+                    aria-label="Toggle AI Explorer Width"
+                  >
+                    <mat-icon style="font-size: 15px; width: 15px; height: 15px">{{ isRightSidebarExpanded() ? 'close_fullscreen' : 'open_in_full' }}</mat-icon>
+                  </button>
+                  <button
+                    type="button"
+                    (click)="clearAiChatHistory()"
+                    class="btn btn-sm p-1 rounded border border-slate-300 bg-white hover:bg-rose-50 hover:text-rose-600 text-slate-600 d-inline-flex align-items-center justify-content-center shadow-2xs"
+                    style="width: 26px; height: 26px"
+                    title="Reset AI Conversation"
+                    aria-label="Reset AI Conversation"
+                  >
+                    <mat-icon style="font-size: 15px; width: 15px; height: 15px">delete_outline</mat-icon>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Action Bar: Deep Learn & System Knowledge -->
+              <div class="d-flex align-items-center justify-content-between gap-1.5 pt-1 border-t border-slate-100">
+                <button
+                  type="button"
+                  (click)="triggerAiDeepLearn()"
+                  [disabled]="isAiLearning() || isAiLoading()"
+                  class="btn btn-sm px-2 py-1 rounded bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white font-medium text-xs d-inline-flex align-items-center gap-1 shadow-2xs transition-all disabled:opacity-50"
+                  title="Deep learn this table's schema, constraints, records, and .NET/Angular contracts into System database"
+                >
+                  @if (isAiLearning()) {
+                    <mat-icon class="animate-spin" style="font-size: 13px; width: 13px; height: 13px">sync</mat-icon>
+                    <span>Learning...</span>
+                  } @else {
+                    <mat-icon style="font-size: 14px; width: 14px; height: 14px">psychology</mat-icon>
+                    <span>Deep Learn Table</span>
+                  }
+                </button>
+
+                <button
+                  type="button"
+                  (click)="openSystemDbLearnedKnowledge()"
+                  class="btn btn-sm px-2 py-1 rounded border border-purple-200 bg-purple-50 hover:bg-purple-100 text-purple-800 font-medium text-xs d-inline-flex align-items-center gap-1 shadow-2xs transition-all"
+                  title="View persistent System database AI knowledge base"
+                >
+                  <mat-icon style="font-size: 14px; width: 14px; height: 14px; color: #7c3aed">history_edu</mat-icon>
+                  <span>System Memory ({{ aiKnowledgeCount() }})</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Quick Questions Strip (Click to Ask) -->
+            <div class="px-2 py-1.5 bg-slate-100/80 border-b border-slate-200 shrink-0 d-flex align-items-center gap-1 overflow-x-auto select-none no-scrollbar" style="font-size: 11px">
+              <span class="text-slate-500 font-semibold uppercase text-2xs shrink-0 tracking-wider">Quick:</span>
+              <button
+                type="button"
+                (click)="sendAiChatMessage('Summarize table statistics, record counts, and column distributions.')"
+                class="px-2 py-0.5 rounded-full bg-white hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200 hover:border-blue-300 text-xs shrink-0 transition-colors shadow-2xs"
+              >
+                📊 Summary
+              </button>
+              <button
+                type="button"
+                (click)="sendAiChatMessage('Inspect the table schema, column data types, nullable constraints, and primary key identity.')"
+                class="px-2 py-0.5 rounded-full bg-white hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200 hover:border-blue-300 text-xs shrink-0 transition-colors shadow-2xs"
+              >
+                📐 Schema
+              </button>
+              <button
+                type="button"
+                (click)="sendAiChatMessage('Generate optimized PostgreSQL JSONB queries and C# LINQ queries for this table.')"
+                class="px-2 py-0.5 rounded-full bg-white hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200 hover:border-blue-300 text-xs shrink-0 transition-colors shadow-2xs"
+              >
+                ⚡ SQL & LINQ
+              </button>
+              <button
+                type="button"
+                (click)="sendAiChatMessage('Explain how this table interacts with Angular 21 zoneless signals and ASP.NET Core EF Core backend.')"
+                class="px-2 py-0.5 rounded-full bg-white hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200 hover:border-blue-300 text-xs shrink-0 transition-colors shadow-2xs"
+              >
+                🧩 Full-Stack
+              </button>
+            </div>
+
+            <!-- Message Stream Area -->
+            <div class="flex-grow-1 min-h-0 p-2.5 overflow-y-auto d-flex flex-column gap-3 bg-slate-50">
+              @for (msg of aiMessages(); track msg.id) {
+                @if (msg.sender === 'user') {
+                  <!-- User Message Bubble -->
+                  <div class="d-flex flex-column align-items-end gap-1">
+                    <div class="d-flex align-items-center gap-1.5 text-2xs text-slate-500 font-mono-tabular">
+                      <span class="font-medium">You</span>
+                      <span>•</span>
+                      <span>{{ msg.timestamp }}</span>
+                      @if (msg.tableName) {
+                        <span class="px-1 py-0.2 bg-slate-200 text-slate-600 rounded text-3xs">{{ msg.tableName }}</span>
+                      }
+                    </div>
+                    <div class="p-2.5 rounded-2xl rounded-tr-xs bg-blue-600 text-white shadow-xs max-w-95/100 text-xs leading-relaxed whitespace-pre-wrap select-text">
+                      {{ msg.text }}
+                    </div>
+                  </div>
+                } @else {
+                  <!-- AI Message Card -->
+                  <div class="d-flex flex-column align-items-start gap-1 w-100">
+                    <div class="d-flex align-items-center justify-content-between w-100 text-2xs text-slate-500 font-mono-tabular">
+                      <div class="d-flex align-items-center gap-1.5">
+                        <span class="inline-flex items-center px-1.5 py-0.2 rounded font-bold text-3xs bg-gradient-to-r from-blue-600 to-indigo-600 text-white tracking-wide">
+                          GEMINI FREE
+                        </span>
+                        <span class="font-semibold text-slate-800">Deep Reasoning</span>
+                      </div>
+                      <span>{{ msg.timestamp }}</span>
+                    </div>
+
+                    <div class="p-3 rounded-2xl rounded-tl-xs bg-white border border-slate-200 shadow-xs w-100 text-xs text-slate-800 d-flex flex-column gap-2.5 select-text">
+                      <!-- Collapsible Deep Thinking Process Drawer -->
+                      @if (msg.thinking) {
+                        <div class="rounded-xl border border-blue-200 bg-blue-50/60 overflow-hidden">
+                          <button
+                            type="button"
+                            (click)="toggleAiThinking(msg.id)"
+                            class="w-100 px-2.5 py-1.5 d-flex align-items-center justify-content-between text-left bg-blue-100/60 hover:bg-blue-100 text-blue-900 transition-colors"
+                          >
+                            <div class="d-flex align-items-center gap-1.5 font-medium text-xs">
+                              <span class="relative flex h-2 w-2">
+                                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                                <span class="relative inline-flex rounded-full h-2 w-2 bg-blue-600"></span>
+                              </span>
+                              <span>Deep Thinking Process</span>
+                            </div>
+                            <mat-icon style="font-size: 16px; width: 16px; height: 16px; color: #2563eb">
+                              {{ msg.isThinkingExpanded ? 'expand_less' : 'expand_more' }}
+                            </mat-icon>
+                          </button>
+                          @if (msg.isThinkingExpanded) {
+                            <div class="p-2.5 bg-slate-900 text-slate-200 font-mono text-2xs leading-relaxed overflow-x-auto whitespace-pre-wrap border-t border-blue-200">
+                              {{ msg.thinking }}
+                            </div>
+                          }
+                        </div>
+                      }
+
+                      <!-- Main Answer Body -->
+                      <div class="leading-relaxed whitespace-pre-wrap font-sans text-xs text-slate-900">
+                        {{ msg.text }}
+                      </div>
+
+                      <!-- Stored in System Database Learning Badge & Insights -->
+                      @if (msg.learnedInsights && msg.learnedInsights.length > 0) {
+                        <div class="p-2 rounded-lg bg-emerald-50/80 border border-emerald-200 text-emerald-950 d-flex flex-column gap-1">
+                          <div class="d-flex align-items-center justify-content-between">
+                            <div class="d-flex align-items-center gap-1 text-2xs font-semibold text-emerald-800">
+                              <mat-icon style="font-size: 13px; width: 13px; height: 13px; color: #059669">bookmark_added</mat-icon>
+                              <span>Saved to "System" Database (AIKnowledgeBase)</span>
+                            </div>
+                            <button
+                              type="button"
+                              (click)="navigateToSystemDbKnowledgeTable()"
+                              class="text-3xs text-emerald-700 hover:text-emerald-900 underline font-medium"
+                            >
+                              Inspect Table →
+                            </button>
+                          </div>
+                          <ul class="m-0 pl-3 text-2xs text-emerald-900 list-disc leading-normal">
+                            @for (insight of msg.learnedInsights; track insight) {
+                              <li>{{ insight }}</li>
+                            }
+                          </ul>
+                        </div>
+                      }
+                    </div>
+                  </div>
+                }
+              }
+
+              <!-- Thinking Loading Animation -->
+              @if (isAiLoading()) {
+                <div class="p-3 rounded-2xl rounded-tl-xs bg-white border border-blue-200 shadow-xs w-100 text-xs text-slate-800 d-flex flex-column gap-2">
+                  <div class="d-flex align-items-center gap-2">
+                    <span class="relative flex h-2.5 w-2.5">
+                      <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-500 opacity-75"></span>
+                      <span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-600"></span>
+                    </span>
+                    <span class="font-semibold text-xs text-blue-900">Gemini 3.8 Flash is deep thinking...</span>
+                  </div>
+                  <div class="text-2xs text-slate-500 font-mono animate-pulse">
+                    Analyzing {{ activeDatabaseName() }}.{{ activeTableName() }} schema, data statistics, and .NET/Angular contracts...
+                  </div>
+                </div>
+              }
+            </div>
+
+            <!-- Chat Input Footer -->
+            <div class="p-2.5 bg-white border-t border-slate-200 shrink-0 d-flex flex-column gap-1.5 shadow-md">
+              <div class="d-flex gap-1.5 align-items-end">
+                <textarea
+                  rows="2"
+                  [value]="aiInputQuery()"
+                  (input)="aiInputQuery.set($any($event.target).value)"
+                  (keydown)="onAiInputKeyDown($event)"
+                  placeholder="Ask Gemini about {{ activeTableName() || 'the current table' }}, data, SQL, LINQ, or system architecture... (Enter to send)"
+                  class="form-control text-xs p-2 rounded-lg border border-slate-300 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none flex-grow-1"
+                ></textarea>
+                <button
+                  type="button"
+                  (click)="sendAiChatMessage()"
+                  [disabled]="!aiInputQuery().trim() || isAiLoading()"
+                  class="btn btn-primary px-2.5 py-2 rounded-lg bg-blue-600 hover:bg-blue-700 text-white d-inline-flex align-items-center justify-content-center shrink-0 shadow-2xs transition-all disabled:opacity-40"
+                  style="height: 48px; width: 44px"
+                  title="Send Query to Gemini Deep Reasoning"
+                  aria-label="Send AI Query"
+                >
+                  <mat-icon style="font-size: 18px; width: 18px; height: 18px">send</mat-icon>
+                </button>
+              </div>
+              <div class="d-flex align-items-center justify-content-between text-3xs text-slate-400 font-mono-tabular px-0.5">
+                <span>Free Gemini 3.8 Flash • Deep Thinking Active</span>
+                <span>Enter ↵ to send</span>
+              </div>
+            </div>
+          </div>
         } @else if (activeRightSidebarTab() === 'cloud_explorer') {
           <div class="manage-tree-scroll flex-grow-1 min-h-0 p-2.5 d-flex flex-column gap-2.5 bg-white text-slate-900"></div>
         } @else if (activeRightSidebarTab() === 'extensions') {
@@ -3131,7 +3449,11 @@
             </span>
           </div>
           <div class="d-flex align-items-center gap-1 shrink-0">
-            <span>Ready</span>
+            @if (activeRightSidebarTab() === 'ai_explorer') {
+              <span class="truncate max-w-44 text-3xs" [title]="aiStatusMessage()">{{ aiStatusMessage() }}</span>
+            } @else {
+              <span>Ready</span>
+            }
           </div>
         </div>
       </aside>
@@ -4092,6 +4414,880 @@
         </button>
       </div>
     </div>
+  }
+} @else if (currentView() === 'admin') {
+    <!-- ===================================================================== -->
+    <!-- REDESIGNED RESPONSIVE ADMIN PANEL PAGE (DEDICATED FULL-VIEW CONSOLE)  -->
+    <!-- UserRole & UserPermission Simplified Management                       -->
+    <!-- ===================================================================== -->
+    <main
+      class="flex-grow-1 overflow-y-auto bg-slate-50 text-slate-900 d-flex flex-column"
+      style="min-height: 0"
+      role="main"
+      aria-label="Admin Control Panel"
+    >
+      <!-- TOP BREADCRUMB & ADMIN ACTION STRIP -->
+      <div class="px-3 py-2 px-sm-4 bg-white border-b border-slate-200 shrink-0 d-flex align-items-center justify-content-between flex-wrap gap-2">
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <button
+            type="button"
+            (click)="switchToWorkspaceView($event)"
+            class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1.5 text-xs font-semibold py-1 px-2.5"
+            data-office-tip="Exit Admin Console and return to Data Grid"
+          >
+            <mat-icon style="font-size: 15px; width: 15px; height: 15px">arrow_back</mat-icon>
+            <span>Return to Data Grid</span>
+          </button>
+          <span class="text-slate-300">/</span>
+          <div class="d-flex align-items-center gap-1.5 text-xs font-semibold text-slate-800">
+            <mat-icon style="font-size: 16px; width: 16px; height: 16px" class="text-emerald-600">shield</mat-icon>
+            <span class="font-bold text-slate-900">Admin Console</span>
+            <span class="text-slate-400">·</span>
+            <span class="text-slate-600">UserRole &amp; UserPermission Management</span>
+          </div>
+        </div>
+
+        <div class="d-flex align-items-center gap-2 flex-wrap">
+          <span class="px-2 py-0.5 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-300 d-inline-flex align-items-center gap-1">
+            <span class="rounded-full bg-emerald-600" style="width: 6px; height: 6px"></span>
+            <span>System DB Live Sync</span>
+          </span>
+          <button
+            type="button"
+            (click)="loadAdminOverview()"
+            [disabled]="isLoadingAdminOverview()"
+            class="btn btn-sm btn-outline-secondary d-inline-flex align-items-center gap-1 text-xs py-1 px-2.5"
+            data-office-tip="Refresh System Database State"
+          >
+            <mat-icon [class.animate-spin]="isLoadingAdminOverview()" style="font-size: 14px; width: 14px; height: 14px">refresh</mat-icon>
+            <span>{{ isLoadingAdminOverview() ? 'Refreshing...' : 'Refresh' }}</span>
+          </button>
+          <button
+            type="button"
+            (click)="isCreatingNewAdminUser.set(!isCreatingNewAdminUser())"
+            class="btn btn-sm btn-primary d-inline-flex align-items-center gap-1.5 text-xs font-semibold py-1 px-3 shadow-sm"
+          >
+            <mat-icon style="font-size: 15px; width: 15px; height: 15px">{{ isCreatingNewAdminUser() ? 'close' : 'person_add' }}</mat-icon>
+            <span>{{ isCreatingNewAdminUser() ? 'Close Form' : 'Add New User' }}</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- MAIN ADMIN CONTENT CONTAINER -->
+      <div class="p-3 p-sm-4 max-w-7xl w-100 mx-auto d-flex flex-column gap-3.5 flex-grow-1">
+
+        <!-- EXECUTIVE KPI METRICS CARDS ROW (RESPONSIVE GRID) -->
+        <div class="row g-3">
+          <!-- Metric 1: Total Users -->
+          <div class="col-6 col-lg-3">
+            <div class="p-3 rounded-xl bg-white border border-slate-200 shadow-sm d-flex flex-column gap-1 transition-all hover:border-slate-300">
+              <div class="d-flex align-items-center justify-content-between text-slate-500 text-xs font-semibold">
+                <span>Total Users</span>
+                <mat-icon class="text-blue-600" style="font-size: 18px; width: 18px; height: 18px">people</mat-icon>
+              </div>
+              <div class="font-bold text-2xl text-slate-900 font-mono-tabular">
+                {{ adminUsersList().length }}
+              </div>
+              <div class="text-xs text-slate-500 font-mono-tabular truncate">
+                {{ approvedUsersCount() }} Active · {{ adminUsersCount() }} Admins
+              </div>
+            </div>
+          </div>
+
+          <!-- Metric 2: Pending Review Users (Urgent Action Card) -->
+          <div class="col-6 col-lg-3">
+            <div
+              class="p-3 rounded-xl border shadow-sm d-flex flex-column gap-1 transition-all"
+              [class.bg-amber-50]="pendingReviewUsersCount() > 0"
+              [class.border-amber-300]="pendingReviewUsersCount() > 0"
+              [class.bg-white]="pendingReviewUsersCount() === 0"
+              [class.border-slate-200]="pendingReviewUsersCount() === 0"
+            >
+              <div class="d-flex align-items-center justify-content-between text-xs font-semibold" [class.text-amber-800]="pendingReviewUsersCount() > 0" [class.text-slate-500]="pendingReviewUsersCount() === 0">
+                <span>Pending Review</span>
+                <mat-icon [class.text-amber-600]="pendingReviewUsersCount() > 0" [class.text-slate-400]="pendingReviewUsersCount() === 0" style="font-size: 18px; width: 18px; height: 18px">pending_actions</mat-icon>
+              </div>
+              <div class="font-bold text-2xl font-mono-tabular" [class.text-amber-900]="pendingReviewUsersCount() > 0" [class.text-slate-900]="pendingReviewUsersCount() === 0">
+                {{ pendingReviewUsersCount() }}
+              </div>
+              <div class="text-xs font-mono-tabular truncate" [class.text-amber-700]="pendingReviewUsersCount() > 0" [class.text-slate-500]="pendingReviewUsersCount() === 0">
+                {{ pendingReviewUsersCount() > 0 ? 'Requires Admin Approval' : 'All accounts approved' }}
+              </div>
+            </div>
+          </div>
+
+          <!-- Metric 3: Active Roles (UserRole) -->
+          <div class="col-6 col-lg-3">
+            <div class="p-3 rounded-xl bg-white border border-slate-200 shadow-sm d-flex flex-column gap-1 transition-all hover:border-slate-300">
+              <div class="d-flex align-items-center justify-content-between text-slate-500 text-xs font-semibold">
+                <span>Configured Roles</span>
+                <mat-icon class="text-purple-600" style="font-size: 18px; width: 18px; height: 18px">badge</mat-icon>
+              </div>
+              <div class="font-bold text-2xl text-slate-900 font-mono-tabular">
+                {{ adminRolesList().length }}
+              </div>
+              <div class="text-xs text-slate-500 font-mono-tabular truncate">
+                CRUD policies &amp; permissions
+              </div>
+            </div>
+          </div>
+
+          <!-- Metric 4: Databases in Schema -->
+          <div class="col-6 col-lg-3">
+            <div class="p-3 rounded-xl bg-white border border-slate-200 shadow-sm d-flex flex-column gap-1 transition-all hover:border-slate-300">
+              <div class="d-flex align-items-center justify-content-between text-slate-500 text-xs font-semibold">
+                <span>System Databases</span>
+                <mat-icon class="text-emerald-600" style="font-size: 18px; width: 18px; height: 18px">database</mat-icon>
+              </div>
+              <div class="font-bold text-2xl text-slate-900 font-mono-tabular">
+                {{ adminDatabasesSchema().length }}
+              </div>
+              <div class="text-xs text-slate-500 font-mono-tabular truncate">
+                Available for RBAC scoping
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- INLINE CREATE NEW USER PANEL (IF TOGGLED) -->
+        @if (isCreatingNewAdminUser()) {
+          <div class="p-4 rounded-xl bg-white border-2 border-blue-500 shadow-md">
+            <div class="d-flex align-items-center justify-content-between pb-2 mb-3 border-b border-slate-200">
+              <div class="d-flex align-items-center gap-2">
+                <mat-icon class="text-blue-600">person_add_alt_1</mat-icon>
+                <h3 class="text-sm font-bold text-slate-900 m-0">Add &amp; Register New User (Direct Admin Setup)</h3>
+              </div>
+              <button
+                type="button"
+                (click)="isCreatingNewAdminUser.set(false)"
+                class="btn btn-sm btn-outline-secondary py-0 px-2 text-xs"
+              >
+                Cancel
+              </button>
+            </div>
+            <form [formGroup]="newAdminUserForm" (ngSubmit)="createNewAdminUser()" class="row g-3 align-items-end">
+              <div class="col-12 col-sm-6 col-md-3">
+                <label class="form-label text-xs font-bold text-slate-700 mb-1" for="new-user-identifier">
+                  Email or Phone *
+                </label>
+                <input
+                  id="new-user-identifier"
+                  type="text"
+                  formControlName="identifier"
+                  class="form-control form-control-sm text-xs font-mono-tabular"
+                  placeholder="user@example.com or +1555..."
+                />
+              </div>
+              <div class="col-12 col-sm-6 col-md-3">
+                <label class="form-label text-xs font-bold text-slate-700 mb-1" for="new-user-name">
+                  Full Display Name
+                </label>
+                <input
+                  id="new-user-name"
+                  type="text"
+                  formControlName="displayName"
+                  class="form-control form-control-sm text-xs"
+                  placeholder="e.g. Sarah Connor"
+                />
+              </div>
+              <div class="col-12 col-sm-6 col-md-2">
+                <label class="form-label text-xs font-bold text-slate-700 mb-1" for="new-user-role">
+                  Assigned UserRole
+                </label>
+                <select
+                  id="new-user-role"
+                  formControlName="role"
+                  class="form-select form-select-sm text-xs font-semibold"
+                >
+                  @for (r of adminRolesList(); track r.id) {
+                    <option [value]="r.roleName">{{ r.roleName }}</option>
+                  }
+                </select>
+              </div>
+              <div class="col-12 col-sm-6 col-md-2">
+                <label class="d-inline-flex align-items-center gap-2 text-xs font-bold text-slate-800 cursor-pointer p-1">
+                  <input type="checkbox" formControlName="hasAllDatabaseAccess" class="form-check-input m-0" />
+                  <span>Grant All DBs</span>
+                </label>
+              </div>
+              <div class="col-12 col-md-2 d-flex justify-content-end">
+                <button
+                  type="submit"
+                  [disabled]="newAdminUserForm.invalid || isSavingAdminUser()"
+                  class="btn btn-sm btn-primary w-100 d-inline-flex align-items-center justify-content-center gap-1.5 text-xs font-bold py-1.5"
+                >
+                  <mat-icon style="font-size: 15px; width: 15px; height: 15px">check_circle</mat-icon>
+                  <span>{{ isSavingAdminUser() ? 'Creating...' : 'Create & Generate OTP' }}</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        }
+
+        <!-- ADMIN NAVIGATION TABS -->
+        <div class="d-flex align-items-center justify-content-between gap-2 border-b border-slate-200 pb-2 flex-wrap">
+          <div class="d-flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              (click)="adminPanelTab.set('users')"
+              class="btn btn-sm text-xs d-inline-flex align-items-center gap-1.5 font-bold py-1.5 px-3 rounded-lg transition-all"
+              [class.btn-primary]="adminPanelTab() === 'users'"
+              [class.btn-light]="adminPanelTab() !== 'users'"
+              [class.text-slate-700]="adminPanelTab() !== 'users'"
+            >
+              <mat-icon style="font-size: 15px; width: 15px; height: 15px">manage_accounts</mat-icon>
+              <span>UserRole &amp; UserPermission (Users &amp; Access)</span>
+              <span class="badge rounded-pill bg-slate-900/10 text-slate-800 font-mono-tabular" style="font-size: 10px">
+                {{ adminUsersList().length }}
+              </span>
+              @if (pendingReviewUsersCount() > 0) {
+                <span class="badge rounded-pill bg-amber-500 text-slate-900 font-bold" style="font-size: 9.5px">
+                  {{ pendingReviewUsersCount() }} pending
+                </span>
+              }
+            </button>
+
+            <button
+              type="button"
+              (click)="adminPanelTab.set('roles')"
+              class="btn btn-sm text-xs d-inline-flex align-items-center gap-1.5 font-bold py-1.5 px-3 rounded-lg transition-all"
+              [class.btn-primary]="adminPanelTab() === 'roles'"
+              [class.btn-light]="adminPanelTab() !== 'roles'"
+              [class.text-slate-700]="adminPanelTab() !== 'roles'"
+            >
+              <mat-icon style="font-size: 15px; width: 15px; height: 15px">badge</mat-icon>
+              <span>System Roles &amp; CRUD Policies</span>
+              <span class="badge rounded-pill bg-slate-900/10 text-slate-800 font-mono-tabular" style="font-size: 10px">
+                {{ adminRolesList().length }}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              (click)="adminPanelTab.set('matrix')"
+              class="btn btn-sm text-xs d-inline-flex align-items-center gap-1.5 font-bold py-1.5 px-3 rounded-lg transition-all"
+              [class.btn-primary]="adminPanelTab() === 'matrix'"
+              [class.btn-light]="adminPanelTab() !== 'matrix'"
+              [class.text-slate-700]="adminPanelTab() !== 'matrix'"
+            >
+              <mat-icon style="font-size: 15px; width: 15px; height: 15px">table_chart</mat-icon>
+              <span>Database &amp; Table Access Matrix</span>
+            </button>
+
+            <button
+              type="button"
+              (click)="adminPanelTab.set('system_db')"
+              class="btn btn-sm text-xs d-inline-flex align-items-center gap-1.5 font-bold py-1.5 px-3 rounded-lg transition-all"
+              [class.btn-primary]="adminPanelTab() === 'system_db'"
+              [class.btn-light]="adminPanelTab() !== 'system_db'"
+              [class.text-slate-700]="adminPanelTab() !== 'system_db'"
+            >
+              <mat-icon style="font-size: 15px; width: 15px; height: 15px">storage</mat-icon>
+              <span>System DB &amp; Credentials</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- TAB 1: USERROLE & USERPERMISSION (SIMPLIFIED & USER-FRIENDLY MAPPING) -->
+        @if (adminPanelTab() === 'users') {
+          <div class="row g-3 flex-grow-1">
+            <!-- Left Column: User Directory & Filters (Responsive) -->
+            <div class="col-12 col-xl-5 col-lg-5 d-flex flex-column gap-2.5">
+              <div class="p-3 bg-white rounded-xl border border-slate-200 shadow-sm d-flex flex-column gap-2">
+                <div class="d-flex align-items-center justify-content-between">
+                  <span class="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                    User Directory ({{ filteredAdminUsersList().length }})
+                  </span>
+                  <span class="text-xs text-slate-400 font-mono-tabular">
+                    Click a user to map role &amp; permissions
+                  </span>
+                </div>
+
+                <!-- Instant Search Input -->
+                <div class="position-relative">
+                  <input
+                    type="text"
+                    [value]="adminUserSearchQuery()"
+                    (input)="adminUserSearchQuery.set($any($event.target).value)"
+                    placeholder="Search by name, email, phone, role..."
+                    class="form-control form-control-sm text-xs ps-4"
+                  />
+                  <mat-icon
+                    class="position-absolute start-0 top-50 translate-middle-y ms-2 text-slate-400"
+                    style="font-size: 14px; width: 14px; height: 14px"
+                  >
+                    search
+                  </mat-icon>
+                </div>
+
+                <!-- Status Filter Pills -->
+                <div class="d-flex flex-wrap gap-1" style="font-size: 10px">
+                  <button
+                    type="button"
+                    (click)="adminUserFilterStatus.set('all')"
+                    class="btn btn-xs py-0.5 px-2 rounded-full border text-xs"
+                    [class.btn-dark]="adminUserFilterStatus() === 'all'"
+                    [class.btn-outline-secondary]="adminUserFilterStatus() !== 'all'"
+                  >
+                    All ({{ adminUsersList().length }})
+                  </button>
+                  <button
+                    type="button"
+                    (click)="adminUserFilterStatus.set('pending')"
+                    class="btn btn-xs py-0.5 px-2 rounded-full border text-xs"
+                    [class.btn-warning]="adminUserFilterStatus() === 'pending'"
+                    [class.btn-outline-secondary]="adminUserFilterStatus() !== 'pending'"
+                  >
+                    Pending Review ({{ pendingReviewUsersCount() }})
+                  </button>
+                  <button
+                    type="button"
+                    (click)="adminUserFilterStatus.set('approved')"
+                    class="btn btn-xs py-0.5 px-2 rounded-full border text-xs"
+                    [class.btn-success]="adminUserFilterStatus() === 'approved'"
+                    [class.btn-outline-secondary]="adminUserFilterStatus() !== 'approved'"
+                  >
+                    Approved ({{ approvedUsersCount() }})
+                  </button>
+                  <button
+                    type="button"
+                    (click)="adminUserFilterStatus.set('admin')"
+                    class="btn btn-xs py-0.5 px-2 rounded-full border text-xs"
+                    [class.btn-primary]="adminUserFilterStatus() === 'admin'"
+                    [class.btn-outline-secondary]="adminUserFilterStatus() !== 'admin'"
+                  >
+                    Admins ({{ adminUsersCount() }})
+                  </button>
+                </div>
+              </div>
+
+              <!-- Scrollable User Cards List -->
+              <div class="d-flex flex-column gap-2 overflow-y-auto" style="max-height: 540px">
+                @for (u of filteredAdminUsersList(); track u.id) {
+                  @let isSelected = selectedAdminUserId() === u.id;
+                  <div
+                    (click)="selectUserInAdminPanel(u)"
+                    (keydown.enter)="selectUserInAdminPanel(u)"
+                    tabindex="0"
+                    class="p-2.5 rounded-xl border cursor-pointer transition-all bg-white"
+                    [class.border-blue-500]="isSelected"
+                    [class.bg-blue-50]="isSelected"
+                    [class.shadow-sm]="isSelected"
+                    [class.border-slate-200]="!isSelected"
+                    [class.hover:border-slate-300]="!isSelected"
+                  >
+                    <div class="d-flex align-items-center justify-content-between gap-2">
+                      <div class="d-flex align-items-center gap-2 overflow-hidden">
+                        <div
+                          class="rounded-full shrink-0 border d-flex align-items-center justify-content-center font-bold text-white"
+                          style="width: 28px; height: 28px; font-size: 11px"
+                          [style.background-color]="u.color || '#3b82f6'"
+                        >
+                          {{ (u.displayName || 'U').charAt(0).toUpperCase() }}
+                        </div>
+                        <div class="overflow-hidden">
+                          <div class="text-xs font-bold text-slate-900 truncate">
+                            {{ u.displayName }}
+                          </div>
+                          <div class="text-slate-500 font-mono-tabular truncate" style="font-size: 10px">
+                            {{ u.email || u.phone }}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div class="d-flex flex-column align-items-end gap-1 shrink-0">
+                        <span
+                          class="px-1.5 py-0.5 rounded font-mono-tabular font-bold text-[9.5px]"
+                          [class.bg-emerald-100]="u.isAdmin"
+                          [class.text-emerald-800]="u.isAdmin"
+                          [class.bg-amber-100]="!u.isAdmin && !u.isReviewedByAdmin"
+                          [class.text-amber-800]="!u.isAdmin && !u.isReviewedByAdmin"
+                          [class.bg-blue-100]="!u.isAdmin && u.isReviewedByAdmin"
+                          [class.text-blue-800]="!u.isAdmin && u.isReviewedByAdmin"
+                        >
+                          {{ u.isAdmin ? 'Admin' : (!u.isReviewedByAdmin ? 'Pending Review' : u.role) }}
+                        </span>
+
+                        @if (!u.isAdmin && !u.isReviewedByAdmin) {
+                          <button
+                            type="button"
+                            (click)="quickApproveUser(u, true, $event)"
+                            [disabled]="isQuickApprovingUserId() === u.id"
+                            class="btn btn-xs btn-success py-0.5 px-2 text-[10px] font-bold d-inline-flex align-items-center gap-1 shadow-sm"
+                            title="1-Click Approve and grant database access"
+                          >
+                            <mat-icon style="font-size: 12px; width: 12px; height: 12px">verified</mat-icon>
+                            <span>{{ isQuickApprovingUserId() === u.id ? 'Approving...' : 'Approve' }}</span>
+                          </button>
+                        }
+                      </div>
+                    </div>
+                  </div>
+                } @empty {
+                  <div class="p-4 text-center text-slate-400 bg-white rounded-xl border border-slate-200 text-xs">
+                    No users match your search criteria.
+                  </div>
+                }
+              </div>
+            </div>
+
+            <!-- Right Column: UserRole & UserPermission Mapping Inspector -->
+            <div class="col-12 col-xl-7 col-lg-7">
+              @if (selectedAdminUser(); as selUser) {
+                <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 d-flex flex-column gap-3">
+                  <!-- Selected User Profile Header Bar -->
+                  <div class="p-3 rounded-xl bg-slate-50 border border-slate-200 d-flex align-items-center justify-content-between flex-wrap gap-2">
+                    <div class="d-flex align-items-center gap-2.5">
+                      <div
+                        class="rounded-full shrink-0 border d-flex align-items-center justify-content-center font-bold text-white"
+                        style="width: 36px; height: 36px; font-size: 14px"
+                        [style.background-color]="selUser.color || '#3b82f6'"
+                      >
+                        {{ (selUser.displayName || 'U').charAt(0).toUpperCase() }}
+                      </div>
+                      <div>
+                        <div class="text-sm font-bold text-slate-900 d-flex align-items-center gap-1.5 flex-wrap">
+                          <span>{{ selUser.displayName }}</span>
+                          <span class="text-xs font-normal text-slate-500 font-mono-tabular">
+                            ({{ selUser.email || selUser.phone }})
+                          </span>
+                        </div>
+                        <div class="text-xs text-slate-500 mt-0.5">
+                          Status:
+                          @if (adminEditIsReviewed() || selUser.isAdmin) {
+                            <strong class="text-emerald-700 font-semibold">Active &amp; Reviewed by Admin</strong>
+                          } @else {
+                            <strong class="text-amber-700 font-semibold">Pending Admin Review (Currently Blocked)</strong>
+                          }
+                        </div>
+                      </div>
+                    </div>
+
+                    <!-- Master Review Toggle Switch -->
+                    <label class="d-inline-flex align-items-center gap-1.5 text-xs font-bold text-slate-800 cursor-pointer p-1.5 rounded-lg border bg-white shadow-xs">
+                      <input
+                        type="checkbox"
+                        class="form-check-input m-0"
+                        [checked]="adminEditIsReviewed() || selUser.isAdmin"
+                        [disabled]="selUser.isAdmin"
+                        (change)="adminEditIsReviewed.set($any($event.target).checked)"
+                      />
+                      <span>{{ adminEditIsReviewed() || selUser.isAdmin ? 'User Approved' : 'Enable & Approve Access' }}</span>
+                    </label>
+                  </div>
+
+                  <!-- SECTION 1: UserRole Mapping ("Which user has what role and what he can do with that role") -->
+                  <div class="p-3 rounded-xl border border-slate-200 bg-white d-flex flex-column gap-2">
+                    <div class="d-flex align-items-center justify-content-between">
+                      <span class="text-xs font-bold text-slate-900 d-flex align-items-center gap-1.5">
+                        <mat-icon class="text-purple-600" style="font-size: 16px; width: 16px; height: 16px">badge</mat-icon>
+                        <span>1. UserRole Mapping — What this user can do with their role</span>
+                      </span>
+                      <span class="text-slate-400 font-mono-tabular" style="font-size: 10px">CRUD Capabilities</span>
+                    </div>
+
+                    <div class="row g-2 align-items-center">
+                      <div class="col-12 col-sm-5">
+                        <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="admin-user-role-select">
+                          Assigned UserRole
+                        </label>
+                        <select
+                          id="admin-user-role-select"
+                          class="form-select form-select-sm text-xs font-bold"
+                          [value]="adminEditRole()"
+                          [disabled]="selUser.isAdmin"
+                          (change)="adminEditRole.set($any($event.target).value)"
+                        >
+                          @for (r of adminRolesList(); track r.id) {
+                            <option [value]="r.roleName" [selected]="r.roleName === adminEditRole()">
+                              {{ r.roleName }}
+                            </option>
+                          }
+                        </select>
+                      </div>
+
+                      <!-- Visual Capability Badges for Selected Role -->
+                      <div class="col-12 col-sm-7">
+                        @let activeRoleObj = currentAdminEditRoleConfig();
+                        <div class="p-2 rounded-lg bg-slate-50 border border-slate-200 d-flex flex-column gap-1">
+                          <span class="text-slate-600 font-semibold" style="font-size: 10px">
+                            Capabilities granted by <strong>{{ adminEditRole() }}</strong>:
+                          </span>
+                          <div class="d-flex flex-wrap gap-1" style="font-size: 10px">
+                            <span class="px-1.5 py-0.5 rounded border" [class.bg-emerald-100]="activeRoleObj?.canRead" [class.text-emerald-900]="activeRoleObj?.canRead" [class.bg-slate-100]="!activeRoleObj?.canRead" [class.text-slate-400]="!activeRoleObj?.canRead">
+                              Read: {{ activeRoleObj?.canRead ? 'Yes' : 'No' }}
+                            </span>
+                            <span class="px-1.5 py-0.5 rounded border" [class.bg-emerald-100]="activeRoleObj?.canCreate" [class.text-emerald-900]="activeRoleObj?.canCreate" [class.bg-slate-100]="!activeRoleObj?.canCreate" [class.text-slate-400]="!activeRoleObj?.canCreate">
+                              Create: {{ activeRoleObj?.canCreate ? 'Yes' : 'No' }}
+                            </span>
+                            <span class="px-1.5 py-0.5 rounded border" [class.bg-emerald-100]="activeRoleObj?.canUpdate" [class.text-emerald-900]="activeRoleObj?.canUpdate" [class.bg-slate-100]="!activeRoleObj?.canUpdate" [class.text-slate-400]="!activeRoleObj?.canUpdate">
+                              Write/Update: {{ activeRoleObj?.canUpdate ? 'Yes' : 'No' }}
+                            </span>
+                            <span class="px-1.5 py-0.5 rounded border" [class.bg-emerald-100]="activeRoleObj?.canDelete" [class.text-emerald-900]="activeRoleObj?.canDelete" [class.bg-slate-100]="!activeRoleObj?.canDelete" [class.text-slate-400]="!activeRoleObj?.canDelete">
+                              Delete: {{ activeRoleObj?.canDelete ? 'Yes' : 'No' }}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  <!-- SECTION 2: UserPermission Mapping ("Database & Table Access") -->
+                  <div class="p-3 rounded-xl border border-slate-200 bg-white d-flex flex-column gap-2.5">
+                    <div class="d-flex align-items-center justify-content-between flex-wrap gap-1">
+                      <span class="text-xs font-bold text-slate-900 d-flex align-items-center gap-1.5">
+                        <mat-icon class="text-emerald-600" style="font-size: 16px; width: 16px; height: 16px">lock_open</mat-icon>
+                        <span>2. UserPermission — Database &amp; Table Access Scopes</span>
+                      </span>
+                      <span class="text-slate-500" style="font-size: 10px">
+                        Control exactly which DBs and tables this user can see
+                      </span>
+                    </div>
+
+                    <!-- Master "Grant Access to ALL Databases" Switch -->
+                    <div class="p-2.5 rounded-xl border border-emerald-300 bg-emerald-50/70 d-flex align-items-center justify-content-between">
+                      <label class="d-inline-flex align-items-center gap-2 text-xs font-bold text-emerald-950 cursor-pointer m-0">
+                        <input
+                          type="checkbox"
+                          class="form-check-input m-0"
+                          [checked]="adminEditAccessAllDbs() || selUser.isAdmin"
+                          [disabled]="selUser.isAdmin"
+                          (change)="toggleAdminEditAccessAllDatabases($any($event.target).checked)"
+                        />
+                        <span>Grant Access to ALL Databases &amp; Tables (Unrestricted Data Scope)</span>
+                      </label>
+                      <span class="badge bg-emerald-600 text-white font-mono-tabular" style="font-size: 9.5px">
+                        {{ adminEditAccessAllDbs() || selUser.isAdmin ? 'Full System Scope' : 'Custom Scoped' }}
+                      </span>
+                    </div>
+
+                    <!-- Granular Database & Table Matrix -->
+                    <div class="d-flex flex-column gap-2" style="max-height: 240px; overflow-y: auto">
+                      @for (dbItem of adminDatabasesSchema(); track dbItem.databaseName) {
+                        @let isDbChecked = !!(adminEditDbPermissions()[dbItem.databaseName] || adminEditAccessAllDbs() || selUser.isAdmin);
+                        <div class="p-2.5 rounded-xl border border-slate-200 bg-slate-50">
+                          <div class="d-flex align-items-center justify-content-between pb-1.5 border-b border-slate-200">
+                            <label class="d-inline-flex align-items-center gap-2 text-xs font-bold text-slate-900 cursor-pointer m-0">
+                              <input
+                                type="checkbox"
+                                class="form-check-input m-0"
+                                [checked]="isDbChecked"
+                                [disabled]="selUser.isAdmin"
+                                (change)="toggleAdminEditDatabasePermission(dbItem.databaseName, $any($event.target).checked)"
+                              />
+                              <mat-icon style="font-size: 15px; width: 15px; height: 15px" class="text-blue-600">database</mat-icon>
+                              <span>{{ dbItem.databaseName }} (Database)</span>
+                            </label>
+                            <span class="text-slate-500 font-mono-tabular" style="font-size: 10px">
+                              {{ dbItem.tables.length }} tables
+                            </span>
+                          </div>
+                          <!-- Granular Tables Checklist -->
+                          <div class="pt-2 d-flex flex-wrap gap-1.5">
+                            @for (tblName of dbItem.tables; track tblName) {
+                              @let isTblChecked = !!(adminEditTablePermissions()[dbItem.databaseName]?.[tblName] || adminEditAccessAllDbs() || selUser.isAdmin);
+                              <label
+                                class="px-2 py-1 rounded-lg border d-inline-flex align-items-center gap-1.5 text-xs cursor-pointer transition-all"
+                                [class.bg-emerald-100]="isTblChecked"
+                                [class.border-emerald-300]="isTblChecked"
+                                [class.text-emerald-950]="isTblChecked"
+                                [class.bg-white]="!isTblChecked"
+                                [class.border-slate-200]="!isTblChecked"
+                                [class.text-slate-400]="!isTblChecked"
+                              >
+                                <input
+                                  type="checkbox"
+                                  class="form-check-input m-0"
+                                  [checked]="isTblChecked"
+                                  [disabled]="selUser.isAdmin"
+                                  (change)="toggleAdminEditTablePermission(dbItem.databaseName, tblName, $any($event.target).checked)"
+                                />
+                                <span class="font-mono-tabular font-semibold" style="font-size: 10.5px">{{ tblName }}</span>
+                              </label>
+                            }
+                          </div>
+                        </div>
+                      }
+                    </div>
+                  </div>
+
+                  <!-- ACTION FOOTER: SAVE & APPLY PERMISSIONS -->
+                  <div class="d-flex align-items-center justify-content-between gap-2 pt-2 border-t border-slate-200 flex-wrap">
+                    <button
+                      type="button"
+                      (click)="quickApproveUser(selUser, true, $event)"
+                      [disabled]="isSavingAdminUser() || selUser.isAdmin"
+                      class="btn btn-sm btn-outline-success text-xs font-semibold d-inline-flex align-items-center gap-1"
+                    >
+                      <mat-icon style="font-size: 14px; width: 14px; height: 14px">all_inclusive</mat-icon>
+                      <span>Approve &amp; Grant All Databases (1-Click)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      (click)="saveAdminUserPermissions(true)"
+                      [disabled]="isSavingAdminUser()"
+                      class="btn btn-sm btn-success d-inline-flex align-items-center gap-1.5 text-xs font-bold px-3 py-1.5 shadow-sm"
+                    >
+                      <mat-icon style="font-size: 16px; width: 16px; height: 16px">verified</mat-icon>
+                      <span>{{ isSavingAdminUser() ? 'Saving to System DB...' : 'Save UserRole & UserPermission to System DB' }}</span>
+                    </button>
+                  </div>
+                </div>
+              } @else {
+                <div class="p-5 text-center text-slate-400 bg-white rounded-xl border border-slate-200 text-xs">
+                  Select a user from the directory on the left to configure their UserRole and UserPermission.
+                </div>
+              }
+            </div>
+          </div>
+        }
+
+        <!-- TAB 2: ROLES & CRUD POLICIES -->
+        @if (adminPanelTab() === 'roles') {
+          <div class="row g-3 flex-grow-1">
+            <div class="col-12 col-lg-7 d-flex flex-column gap-2.5">
+              <div class="text-xs font-bold text-slate-800 uppercase tracking-wider">
+                Configured System Roles (System.Roles Table)
+              </div>
+              <div class="d-flex flex-column gap-2">
+                @for (role of adminRolesList(); track role.id) {
+                  <div class="p-3 rounded-xl border border-slate-200 bg-white shadow-sm d-flex align-items-center justify-content-between gap-2">
+                    <div>
+                      <div class="d-flex align-items-center gap-2">
+                        <span class="text-xs font-bold text-slate-900">{{ role.roleName }}</span>
+                        @if (role.isSystemDefault) {
+                          <span class="px-1.5 py-0 rounded bg-blue-100 text-blue-800 font-mono-tabular" style="font-size: 9.5px">Default</span>
+                        }
+                      </div>
+                      <div class="text-xs text-slate-500 mt-0.5">{{ role.description }}</div>
+                      <div class="d-flex flex-wrap gap-1.5 mt-2" style="font-size: 10.5px">
+                        <span class="px-2 py-0.5 rounded border" [class.bg-emerald-100]="role.canRead" [class.text-emerald-900]="role.canRead">Read: {{ role.canRead ? 'Yes' : 'No' }}</span>
+                        <span class="px-2 py-0.5 rounded border" [class.bg-emerald-100]="role.canCreate" [class.text-emerald-900]="role.canCreate">Create: {{ role.canCreate ? 'Yes' : 'No' }}</span>
+                        <span class="px-2 py-0.5 rounded border" [class.bg-emerald-100]="role.canUpdate" [class.text-emerald-900]="role.canUpdate">Write/Update: {{ role.canUpdate ? 'Yes' : 'No' }}</span>
+                        <span class="px-2 py-0.5 rounded border" [class.bg-emerald-100]="role.canDelete" [class.text-emerald-900]="role.canDelete">Delete: {{ role.canDelete ? 'Yes' : 'No' }}</span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      (click)="populateRoleFormForEdit(role)"
+                      class="btn btn-sm btn-outline-primary text-xs shrink-0 d-inline-flex align-items-center gap-1"
+                    >
+                      <mat-icon style="font-size: 14px; width: 14px; height: 14px">edit</mat-icon>
+                      <span>Edit Role</span>
+                    </button>
+                  </div>
+                }
+              </div>
+            </div>
+
+            <!-- Role Creator Form -->
+            <div class="col-12 col-lg-5">
+              <form [formGroup]="adminRoleForm" (ngSubmit)="saveAdminRoleConfig()" class="p-3.5 rounded-xl border border-slate-200 bg-white shadow-sm d-flex flex-column gap-2.5">
+                <div class="text-xs font-bold text-slate-800 d-flex align-items-center gap-1.5">
+                  <mat-icon class="text-purple-600" style="font-size: 16px; width: 16px; height: 16px">add_circle</mat-icon>
+                  <span>Create or Update System Role</span>
+                </div>
+                <div>
+                  <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="role-name-input">Role Name *</label>
+                  <input id="role-name-input" type="text" formControlName="roleName" class="form-control form-control-sm text-xs font-bold" placeholder="e.g. Basic, Editor, Auditor, Manager" />
+                </div>
+                <div>
+                  <label class="form-label text-xs font-semibold text-slate-700 mb-1" for="role-desc-input">Description</label>
+                  <input id="role-desc-input" type="text" formControlName="description" class="form-control form-control-sm text-xs" />
+                </div>
+                <div class="d-flex flex-column gap-1.5 pt-1">
+                  <label class="d-inline-flex align-items-center gap-2 text-xs cursor-pointer">
+                    <input type="checkbox" formControlName="canRead" class="form-check-input m-0" />
+                    <span><strong>Read Permission</strong> (View tables, columns &amp; grid rows)</span>
+                  </label>
+                  <label class="d-inline-flex align-items-center gap-2 text-xs cursor-pointer">
+                    <input type="checkbox" formControlName="canCreate" class="form-check-input m-0" />
+                    <span><strong>Create Permission</strong> (Create DBs, tables, columns &amp; rows)</span>
+                  </label>
+                  <label class="d-inline-flex align-items-center gap-2 text-xs cursor-pointer">
+                    <input type="checkbox" formControlName="canUpdate" class="form-check-input m-0" />
+                    <span><strong>Write / Update Permission</strong> (Edit cells, rename &amp; schema)</span>
+                  </label>
+                  <label class="d-inline-flex align-items-center gap-2 text-xs cursor-pointer">
+                    <input type="checkbox" formControlName="canDelete" class="form-check-input m-0" />
+                    <span><strong>Delete Permission</strong> (Delete rows, columns, tables &amp; DBs)</span>
+                  </label>
+                </div>
+                <button type="submit" [disabled]="isSavingAdminRole()" class="btn btn-sm btn-primary text-xs font-bold mt-2 d-inline-flex align-items-center justify-content-center gap-1.5 py-1.5">
+                  <mat-icon style="font-size: 15px; width: 15px; height: 15px">save</mat-icon>
+                  <span>{{ isSavingAdminRole() ? 'Saving...' : 'Save Role to System.Roles' }}</span>
+                </button>
+              </form>
+            </div>
+          </div>
+        }
+
+        <!-- TAB 3: DATABASE & TABLE ACCESS MATRIX -->
+        @if (adminPanelTab() === 'matrix') {
+          <div class="bg-white rounded-xl border border-slate-200 shadow-sm p-3.5 d-flex flex-column gap-2.5 overflow-x-auto">
+            <div class="d-flex align-items-center justify-content-between">
+              <div>
+                <h3 class="text-xs font-bold text-slate-900 m-0">Cross-User Database &amp; Table Access Matrix</h3>
+                <p class="text-xs text-slate-500 m-0 mt-0.5">High-level overview of which registered users have permission to read/access each database.</p>
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="table table-sm table-bordered text-xs m-0">
+                <thead class="table-light">
+                  <tr>
+                    <th style="min-width: 140px">Database / Table</th>
+                    @for (u of adminUsersList(); track u.id) {
+                      <th class="text-center" style="min-width: 110px">
+                        <div class="fw-bold truncate">{{ u.displayName }}</div>
+                        <div class="text-slate-400 font-mono-tabular" style="font-size: 9px">{{ u.role }}</div>
+                      </th>
+                    }
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (db of adminDatabasesSchema(); track db.databaseName) {
+                    <tr class="table-secondary font-bold">
+                      <td class="d-flex align-items-center gap-1.5">
+                        <mat-icon style="font-size: 14px; width: 14px; height: 14px" class="text-blue-600">database</mat-icon>
+                        <span>{{ db.databaseName }}</span>
+                      </td>
+                      @for (u of adminUsersList(); track u.id) {
+                        @let hasAccess = u.isAdmin || u.hasAllDatabaseAccess || u.accessAllDatabases || u.databasePermissions?.[db.databaseName];
+                        <td class="text-center font-mono-tabular">
+                          @if (hasAccess) {
+                            <span class="text-emerald-700 font-bold">✓ Granted</span>
+                          } @else {
+                            <span class="text-slate-300 font-bold">—</span>
+                          }
+                        </td>
+                      }
+                    </tr>
+                    @for (tbl of db.tables; track tbl) {
+                      <tr>
+                        <td class="ps-4 font-mono-tabular text-slate-600">
+                          ↳ {{ tbl }}
+                        </td>
+                        @for (u of adminUsersList(); track u.id) {
+                          @let hasAccess = u.isAdmin || u.hasAllDatabaseAccess || u.accessAllDatabases || u.tablePermissions?.[db.databaseName]?.[tbl] || u.databasePermissions?.[db.databaseName];
+                          <td class="text-center font-mono-tabular">
+                            @if (hasAccess) {
+                              <span class="text-emerald-600">✓</span>
+                            } @else {
+                              <span class="text-slate-300">—</span>
+                            }
+                          </td>
+                        }
+                      </tr>
+                    }
+                  }
+                </tbody>
+              </table>
+            </div>
+          </div>
+        }
+
+        <!-- TAB 4: SYSTEM DATABASE & CREDENTIALS -->
+        @if (adminPanelTab() === 'system_db') {
+          <div class="d-flex flex-column gap-3">
+            <div class="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs">
+              <div class="font-bold text-emerald-950 mb-1">Default Admin Account Credentials (Pre-seeded in System.Users)</div>
+              <div class="font-mono-tabular text-emerald-900">
+                Email: <strong>{{ defaultAdminLoginInfo().email }}</strong> | Phone: <strong>{{ defaultAdminLoginInfo().phone }}</strong> | Role: <strong>{{ defaultAdminLoginInfo().role }}</strong> | Auth: <strong>{{ defaultAdminLoginInfo().authMethod }}</strong>
+              </div>
+              <div class="text-emerald-700 mt-1" style="font-size: 11px">
+                Admins have unrestricted access to all databases and tables and can review newly registered users.
+              </div>
+            </div>
+
+            <div>
+              <div class="text-xs font-bold text-slate-800 mb-2">
+                "System" Database Tables (RBAC Schema stored in Cloud Postgres / Server state)
+              </div>
+              <div class="row g-2.5">
+                <div class="col-12 col-sm-6 col-md-3">
+                  <div class="p-3 rounded-xl border border-slate-200 bg-white shadow-sm d-flex flex-column gap-1">
+                    <div class="d-flex align-items-center justify-content-between">
+                      <span class="text-xs font-bold text-slate-900 font-mono-tabular">System.Users</span>
+                      <mat-icon style="font-size: 16px; width: 16px; height: 16px" class="text-blue-600">group</mat-icon>
+                    </div>
+                    <div class="text-slate-500" style="font-size: 11px">
+                      User profiles, roles, and review status.
+                    </div>
+                    <button
+                      type="button"
+                      (click)="openSystemDatabaseTableFromAdmin('Users')"
+                      class="btn btn-sm btn-outline-primary text-xs py-0.5 mt-1"
+                    >
+                      Open in Data Grid
+                    </button>
+                  </div>
+                </div>
+
+                <div class="col-12 col-sm-6 col-md-3">
+                  <div class="p-3 rounded-xl border border-slate-200 bg-white shadow-sm d-flex flex-column gap-1">
+                    <div class="d-flex align-items-center justify-content-between">
+                      <span class="text-xs font-bold text-slate-900 font-mono-tabular">System.Roles</span>
+                      <mat-icon style="font-size: 16px; width: 16px; height: 16px" class="text-purple-600">badge</mat-icon>
+                    </div>
+                    <div class="text-slate-500" style="font-size: 11px">
+                      Role CRUD permissions (Read, Create, Update, Delete).
+                    </div>
+                    <button
+                      type="button"
+                      (click)="openSystemDatabaseTableFromAdmin('Roles')"
+                      class="btn btn-sm btn-outline-primary text-xs py-0.5 mt-1"
+                    >
+                      Open in Data Grid
+                    </button>
+                  </div>
+                </div>
+
+                <div class="col-12 col-sm-6 col-md-3">
+                  <div class="p-3 rounded-xl border border-slate-200 bg-white shadow-sm d-flex flex-column gap-1">
+                    <div class="d-flex align-items-center justify-content-between">
+                      <span class="text-xs font-bold text-slate-900 font-mono-tabular">System.DatabasePermissions</span>
+                      <mat-icon style="font-size: 16px; width: 16px; height: 16px" class="text-emerald-600">dns</mat-icon>
+                    </div>
+                    <div class="text-slate-500" style="font-size: 11px">
+                      Per-database access mapping per user.
+                    </div>
+                    <button
+                      type="button"
+                      (click)="openSystemDatabaseTableFromAdmin('DatabasePermissions')"
+                      class="btn btn-sm btn-outline-primary text-xs py-0.5 mt-1"
+                    >
+                      Open in Data Grid
+                    </button>
+                  </div>
+                </div>
+
+                <div class="col-12 col-sm-6 col-md-3">
+                  <div class="p-3 rounded-xl border border-slate-200 bg-white shadow-sm d-flex flex-column gap-1">
+                    <div class="d-flex align-items-center justify-content-between">
+                      <span class="text-xs font-bold text-slate-900 font-mono-tabular">System.TablePermissions</span>
+                      <mat-icon style="font-size: 16px; width: 16px; height: 16px" class="text-amber-600">table_chart</mat-icon>
+                    </div>
+                    <div class="text-slate-500" style="font-size: 11px">
+                      Per-table granular access overrides.
+                    </div>
+                    <button
+                      type="button"
+                      (click)="openSystemDatabaseTableFromAdmin('TablePermissions')"
+                      class="btn btn-sm btn-outline-primary text-xs py-0.5 mt-1"
+                    >
+                      Open in Data Grid
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        }
+
+      </div>
+    </main>
   }
 
   <!-- ===================================================================== -->
@@ -7238,6 +8434,110 @@
             type="button"
             (click)="activeModal.set('none')"
             class="btn btn-sm btn-outline-secondary text-xs"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- AI Knowledge Base & Memory Modal (System Database Inspector) -->
+  @if (isAiMemoryModalOpen()) {
+    <div
+      class="fixed inset-0 bg-slate-900/50 z-50 d-flex align-items-center justify-content-center p-2 sm:p-4 backdrop-blur-xs gridpulse-modal-backdrop"
+      (click)="closeAiMemoryModal()"
+      (keydown.escape)="closeAiMemoryModal()"
+      tabindex="0"
+    >
+      <div
+        class="bg-white rounded-2xl shadow-2xl border border-slate-200 w-100 max-w-2xl max-h-[85vh] d-flex flex-column overflow-hidden gridpulse-popup-card"
+        (click)="$event.stopPropagation()"
+        (keydown.escape)="closeAiMemoryModal()"
+        tabindex="0"
+      >
+        <!-- Modal Header -->
+        <div class="px-5 py-4 bg-gradient-to-r from-blue-900 to-indigo-900 text-white d-flex align-items-center justify-content-between shrink-0">
+          <div class="d-flex align-items-center gap-2.5">
+            <div class="w-9 h-9 rounded-xl bg-white/10 d-flex align-items-center justify-content-center shrink-0">
+              <mat-icon style="font-size: 22px; width: 22px; height: 22px; color: #60a5fa">psychology</mat-icon>
+            </div>
+            <div>
+              <h3 class="font-bold text-base m-0 leading-tight d-flex align-items-center gap-2">
+                <span>System Database: AI Knowledge & Memory</span>
+                <span class="px-2 py-0.5 rounded-full text-2xs font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                  Persistent
+                </span>
+              </h3>
+              <p class="text-xs text-blue-200/80 m-0 mt-0.5">
+                Table: <code class="text-white font-mono bg-white/10 px-1 rounded">System.AIKnowledgeBase</code> ({{ aiKnowledgeCount() }} learned insights)
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            (click)="closeAiMemoryModal()"
+            class="btn btn-sm p-1 rounded-lg text-white/70 hover:text-white hover:bg-white/10 d-inline-flex align-items-center"
+            aria-label="Close"
+          >
+            <mat-icon style="font-size: 20px; width: 20px; height: 20px">close</mat-icon>
+          </button>
+        </div>
+
+        <!-- Modal Body: Knowledge Items List -->
+        <div class="p-5 overflow-y-auto flex-grow-1 min-h-0 d-flex flex-column gap-3 bg-slate-50">
+          <div class="p-3 rounded-xl bg-blue-50 border border-blue-200 text-blue-950 text-xs d-flex align-items-center gap-2.5">
+            <mat-icon style="font-size: 20px; width: 20px; height: 20px; color: #2563eb; flex-shrink: 0">auto_awesome</mat-icon>
+            <div class="leading-relaxed">
+              Every insight learned by Gemini Free Deep Reasoning is permanently registered in the workspace <strong>System</strong> database so that future queries retain full context across tables and sessions.
+            </div>
+          </div>
+
+          <div class="d-flex flex-column gap-2.5">
+            @for (item of aiKnowledgeList(); track item.id) {
+              <div class="p-3.5 rounded-xl bg-white border border-slate-200 shadow-2xs d-flex flex-column gap-2 hover:border-blue-300 transition-colors">
+                <div class="d-flex align-items-center justify-content-between gap-2 flex-wrap">
+                  <div class="d-flex align-items-center gap-1.5 min-w-0">
+                    <span class="px-2 py-0.5 rounded-md font-semibold text-2xs bg-slate-100 text-slate-800 border border-slate-200 truncate">
+                      {{ item.databaseName }} / {{ item.tableName }}
+                    </span>
+                    <span class="px-2 py-0.5 rounded-md font-medium text-2xs bg-indigo-50 text-indigo-700 border border-indigo-200">
+                      {{ item.topic }}
+                    </span>
+                  </div>
+                  <div class="d-flex align-items-center gap-2 text-2xs font-mono text-slate-400">
+                    <span class="inline-flex items-center gap-0.5 text-emerald-600 font-semibold">
+                      <mat-icon style="font-size: 13px; width: 13px; height: 13px">verified</mat-icon>
+                      {{ (item.confidence * 100).toFixed(0) }}% confidence
+                    </span>
+                  </div>
+                </div>
+                <div class="text-xs text-slate-800 leading-relaxed font-sans">
+                  {{ item.insight }}
+                </div>
+                <div class="text-3xs text-slate-400 font-mono d-flex align-items-center justify-content-between pt-1 border-t border-slate-100">
+                  <span>Learned: {{ item.learnedAt ? item.learnedAt.slice(0, 19).replace('T', ' ') : 'Initial' }}</span>
+                  <span>Agent: {{ item.updatedBy }}</span>
+                </div>
+              </div>
+            }
+          </div>
+        </div>
+
+        <!-- Modal Footer -->
+        <div class="px-5 py-3 bg-white border-t border-slate-200 d-flex align-items-center justify-content-between shrink-0">
+          <button
+            type="button"
+            (click)="navigateToSystemDbKnowledgeTable()"
+            class="btn btn-sm px-3 py-1.5 rounded-lg bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-300 font-medium text-xs d-inline-flex align-items-center gap-1.5 shadow-2xs transition-all"
+          >
+            <mat-icon style="font-size: 16px; width: 16px; height: 16px">open_in_new</mat-icon>
+            <span>Open "AIKnowledgeBase" in Grid View</span>
+          </button>
+          <button
+            type="button"
+            (click)="closeAiMemoryModal()"
+            class="btn btn-sm btn-secondary px-3 py-1.5 rounded-lg text-xs"
           >
             Close
           </button>

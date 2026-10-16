@@ -1,10 +1,10 @@
 // @ts-check
-const eslint = require('@eslint/js');
-const {defineConfig} = require('eslint/config');
-const tseslint = require('typescript-eslint');
-const angular = require('angular-eslint');
+import eslint from '@eslint/js';
+import { defineConfig } from 'eslint/config';
+import tseslint from 'typescript-eslint';
+import angular from 'angular-eslint';
 
-module.exports = defineConfig([
+export default defineConfig([
   {
     ignores: ['dist/**/*', '.angular/**/*'],
   },
@@ -12,9 +12,9 @@ module.exports = defineConfig([
     files: ['**/*.ts'],
     extends: [
       eslint.configs.recommended,
-      tseslint.configs.recommended,
-      tseslint.configs.stylistic,
-      angular.configs.tsRecommended,
+      ...tseslint.configs.recommended,
+      ...tseslint.configs.stylistic,
+      ...angular.configs.tsRecommended,
     ],
     processor: angular.processInlineTemplates,
     rules: {
@@ -39,8 +39,8 @@ module.exports = defineConfig([
   {
     files: ['**/*.html'],
     extends: [
-      angular.configs.templateRecommended,
-      angular.configs.templateAccessibility,
+      ...angular.configs.templateRecommended,
+      ...angular.configs.templateAccessibility,
     ],
     rules: {},
   },

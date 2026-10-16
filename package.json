@@ -1,9 +1,9 @@
 {
   "name": "ai-studio-angular-app",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "scripts": {
     "ng": "ng",
-    "start": "ng serve",
+    "start": "node server.ts",
     "dev": "cross-env ng serve --port=3000 --host=0.0.0.0 --allowed-hosts=true ${DISABLE_HMR:+--live-reload=false}",
     "build": "ng build",
     "watch": "ng build --watch --configuration development",
@@ -12,10 +12,14 @@
     "serve:ssr:app": "node dist/app/server/server.mjs"
   },
   "private": true,
+  "type": "module",
   "dependencies": {
+    "@angular/build": "^21.0.0",
     "@angular/cdk": "^21.0.0",
+    "@angular/cli": "^21.0.0",
     "@angular/common": "^21.0.0",
     "@angular/compiler": "^21.0.0",
+    "@angular/compiler-cli": "^21.0.0",
     "@angular/core": "^21.0.0",
     "@angular/forms": "^21.0.0",
     "@angular/material": "^21.0.0",
@@ -25,28 +29,25 @@
     "@angular/ssr": "^21.0.0",
     "@google/genai": "^2.4.0",
     "@ngrx/signals": "^21.0.0",
+    "@tailwindcss/postcss": "^4.1.12",
     "bootstrap": "^5.3.8",
+    "cross-env": "^10.1.0",
     "express": "^5.1.0",
     "motion": "^12.23.24",
     "pg": "^8.23.1",
+    "postcss": "^8.5.3",
     "rxjs": "~7.8.0",
-    "tslib": "^2.3.0"
+    "tailwindcss": "^4.1.12",
+    "tslib": "^2.3.0",
+    "typescript": "~5.9.2"
   },
   "devDependencies": {
-    "@angular/build": "^21.0.0",
-    "@angular/cli": "^21.0.0",
-    "@angular/compiler-cli": "^21.0.0",
-    "@tailwindcss/postcss": "^4.1.12",
     "@types/express": "^5.0.1",
     "@types/node": "^20.17.19",
     "@types/pg": "^8.23.1",
     "angular-eslint": "21.1.0",
-    "cross-env": "^10.1.0",
     "eslint": "^9.39.1",
     "jsdom": "^27.0.0",
-    "postcss": "^8.5.3",
-    "tailwindcss": "^4.1.12",
-    "typescript": "~5.9.2",
     "typescript-eslint": "8.47.0",
     "vitest": "^4.0.0"
   }

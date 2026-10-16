@@ -1008,3 +1008,38 @@ function evaluateMathTokens(tokens: string[]): number {
   return parseExpression();
 }
 
+export interface AIChatMessage {
+  id: string;
+  sender: 'user' | 'ai';
+  text: string;
+  timestamp: string;
+  thinking?: string;
+  isThinkingExpanded?: boolean;
+  databaseName?: string;
+  tableName?: string;
+  learnedInsights?: string[];
+  isError?: boolean;
+}
+
+export interface AIKnowledgeBaseItem {
+  id: number;
+  databaseName: string;
+  tableName: string;
+  topic: string;
+  insight: string;
+  confidence: number;
+  learnedAt: string;
+  updatedBy: string;
+}
+
+export interface AIMemoryItem {
+  id: number;
+  databaseName: string;
+  tableName: string;
+  userQuery: string;
+  thinkingProcess: string;
+  aiResponse: string;
+  learnedInsights: string;
+  createdAt: string;
+}
+

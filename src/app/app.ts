@@ -35,6 +35,9 @@ import {
   extractLookupTemplateTokens,
   formatLookupTemplateFromFieldNames,
   resolveLookupTemplateAndColumns,
+  AIChatMessage,
+  AIKnowledgeBaseItem,
+  AIMemoryItem,
 } from './grid-models';
 import { OperationLoader } from './operation-loader';
 import {
@@ -66,6 +69,7 @@ export interface PostgresAuthUser {
   isAdmin?: boolean;
   isReviewedByAdmin?: boolean;
   accessAllDatabases?: boolean;
+  hasAllDatabaseAccess?: boolean;
   permissions?: {
     canCreate: boolean;
     canRead: boolean;
@@ -465,6 +469,35 @@ export class App implements OnInit, OnDestroy {
   readonly isRightSidebarExpanded = computed<boolean>(() => this.rightSidebarWidthPx() >= 420);
   private suppressNextTabClick = false;
 
+  // AI Explorer & Gemini Deep Reasoning State
+  readonly aiMessages = signal<AIChatMessage[]>([
+    {
+      id: 'ai_welcome_msg',
+      sender: 'ai',
+      text:
+        '👋 Welcome to **GridPulse AI Explorer** powered by Gemini 2.5 / Flash Deep Reasoning!\n\n' +
+        'I deeply analyze your active database, tables, fields, rows, and constraints, along with the full-stack Angular 21 zoneless signals and ASP.NET Core EF Core backend.\n\n' +
+        'Every time we chat, I reason in depth and persistently store new understandings into the **"System"** database (`System.AIKnowledgeBase` and `System.AIMemory`) to continuously learn across your workspace.',
+      timestamp: 'Just now',
+      thinking:
+        'Initialized Gemini 2.5/Flash deep reasoning engine. Connected to live database schema, .NET entity contracts, Angular signal states, and System DB persistent learning store.',
+      isThinkingExpanded: false,
+      learnedInsights: [
+        'AI Explorer initialized with full-stack Angular + .NET + System DB relational context.',
+      ],
+    },
+  ]);
+  readonly aiInputQuery = signal<string>('');
+  readonly isAiLoading = signal<boolean>(false);
+  readonly isAiLearning = signal<boolean>(false);
+  readonly aiKnowledgeCount = signal<number>(6);
+  readonly aiMemoryCount = signal<number>(1);
+  readonly isAiMemoryModalOpen = signal<boolean>(false);
+  readonly aiKnowledgeList = signal<AIKnowledgeBaseItem[]>([]);
+  readonly aiMemoryList = signal<AIMemoryItem[]>([]);
+  readonly aiThinkingExpandedMap = signal<Record<string, boolean>>({});
+  readonly aiStatusMessage = signal<string>('Ready • Gemini Deep Reasoning Active');
+
   // Table View Split-Screen & Expand / Contract State (See More or Fewer Rows)
   readonly tableViewHeightPx = signal<number>(380);
   readonly isDraggingTableHeight = signal<boolean>(false);
@@ -591,8 +624,11 @@ export class App implements OnInit, OnDestroy {
     color: ['#10b981'],
   });
 
+  // Application View: 'workspace' (Data Grid) or 'admin' (Dedicated Admin Console Page)
+  readonly currentView = signal<'workspace' | 'admin'>('workspace');
+
   // Admin Panel State ("System" Database Users, Roles, Claims, Database & Table Permissions)
-  readonly adminPanelTab = signal<'users' | 'roles' | 'system_db'>('users');
+  readonly adminPanelTab = signal<'users' | 'roles' | 'matrix' | 'system_db'>('users');
   readonly adminUsersList = signal<PostgresAuthUser[]>([]);
   readonly adminRolesList = signal<SystemRoleConfig[]>([]);
   readonly adminDatabasesSchema = signal<{ databaseName: string; tables: string[] }[]>([]);
@@ -600,6 +636,22 @@ export class App implements OnInit, OnDestroy {
   readonly isLoadingAdminOverview = signal<boolean>(false);
   readonly isSavingAdminUser = signal<boolean>(false);
   readonly isSavingAdminRole = signal<boolean>(false);
+  readonly isCreatingNewAdminUser = signal<boolean>(false);
+  readonly isQuickApprovingUserId = signal<string | null>(null);
+
+  // Search & Filter for Users Tab in Admin Panel
+  readonly adminUserSearchQuery = signal<string>('');
+  readonly adminUserFilterStatus = signal<'all' | 'pending' | 'approved' | 'admin'>('all');
+
+  // Create New User Form in Admin Panel
+  readonly newAdminUserForm = this.fb.nonNullable.group({
+    identifier: ['', [Validators.required]],
+    displayName: [''],
+    role: ['Basic'],
+    isReviewedByAdmin: [true],
+    hasAllDatabaseAccess: [false],
+  });
+
   readonly defaultAdminLoginInfo = signal<{
     email: string;
     phone: string;
@@ -634,6 +686,46 @@ export class App implements OnInit, OnDestroy {
   readonly selectedAdminUser = computed<PostgresAuthUser | null>(() => {
     const id = this.selectedAdminUserId();
     return this.adminUsersList().find((u) => u.id === id) || this.adminUsersList()[0] || null;
+  });
+
+  readonly currentAdminEditRoleConfig = computed<SystemRoleConfig | null>(() => {
+    const roleName = this.adminEditRole();
+    return (
+      this.adminRolesList().find((r) => r.roleName.toLowerCase() === roleName.toLowerCase()) ||
+      this.adminRolesList()[0] ||
+      null
+    );
+  });
+
+  readonly pendingReviewUsersCount = computed<number>(() => {
+    return this.adminUsersList().filter((u) => !u.isAdmin && !u.isReviewedByAdmin).length;
+  });
+
+  readonly approvedUsersCount = computed<number>(() => {
+    return this.adminUsersList().filter((u) => u.isAdmin || u.isReviewedByAdmin).length;
+  });
+
+  readonly adminUsersCount = computed<number>(() => {
+    return this.adminUsersList().filter((u) => u.isAdmin || (u.role || '').toLowerCase() === 'admin').length;
+  });
+
+  readonly filteredAdminUsersList = computed<PostgresAuthUser[]>(() => {
+    const list = this.adminUsersList();
+    const query = this.adminUserSearchQuery().trim().toLowerCase();
+    const status = this.adminUserFilterStatus();
+
+    return list.filter((u) => {
+      if (status === 'pending' && (u.isAdmin || u.isReviewedByAdmin)) return false;
+      if (status === 'approved' && !u.isAdmin && !u.isReviewedByAdmin) return false;
+      if (status === 'admin' && !u.isAdmin && (u.role || '').toLowerCase() !== 'admin') return false;
+
+      if (!query) return true;
+      const name = (u.displayName || '').toLowerCase();
+      const email = (u.email || '').toLowerCase();
+      const phone = (u.phone || '').toLowerCase();
+      const role = (u.role || '').toLowerCase();
+      return name.includes(query) || email.includes(query) || phone.includes(query) || role.includes(query);
+    });
   });
 
   // Computed RBAC Permission Signals for UI & Action Guards
@@ -1409,6 +1501,8 @@ export class App implements OnInit, OnDestroy {
             },
           });
       }
+
+      this.loadAiSystemKnowledge();
 
       // Restore saved GitHub token if previously authorized
       const savedGhToken = localStorage.getItem('gridario_gh_token') || '';
@@ -2411,7 +2505,7 @@ export class App implements OnInit, OnDestroy {
     );
   }
 
-  public refreshObjectExplorerTreeFromDb(forceRefresh = true): void {
+  public refreshObjectExplorerTreeFromDb(): void {
     if (!this.isBrowser) return;
     if (!this.isServerNodeExpanded()) {
       this.loadServerNodeOnlyFromDb();
@@ -8117,15 +8211,26 @@ export class App implements OnInit, OnDestroy {
     }
   }
 
-  public openAdminPanelModal(event?: Event): void {
+  public switchToAdminView(event?: Event): void {
     event?.stopPropagation();
     this.closeAllMenus();
     if (!this.isCurrentUserAdmin()) {
       this.openAdminLoginModal(event);
       return;
     }
-    this.activeModal.set('admin_panel');
+    this.activeModal.set('none');
+    this.currentView.set('admin');
     this.loadAdminOverview();
+  }
+
+  public switchToWorkspaceView(event?: Event): void {
+    event?.stopPropagation();
+    this.closeAllMenus();
+    this.currentView.set('workspace');
+  }
+
+  public openAdminPanelModal(event?: Event): void {
+    this.switchToAdminView(event);
   }
 
   public loadAdminOverview(): void {
@@ -8182,7 +8287,8 @@ export class App implements OnInit, OnDestroy {
     this.selectedAdminUserId.set(user.id);
     this.adminEditRole.set(user.role || 'Basic');
     this.adminEditIsReviewed.set(Boolean(user.isReviewedByAdmin));
-    this.adminEditAccessAllDbs.set(Boolean(user.accessAllDatabases));
+    const hasAll = Boolean(user.hasAllDatabaseAccess ?? user.accessAllDatabases);
+    this.adminEditAccessAllDbs.set(hasAll);
 
     const dbPermsCopy: Record<string, boolean> = {};
     const tblPermsCopy: Record<string, Record<string, boolean>> = {};
@@ -8190,7 +8296,7 @@ export class App implements OnInit, OnDestroy {
     for (const dbItem of this.adminDatabasesSchema()) {
       const dbName = dbItem.databaseName;
       const hasDb =
-        Boolean(user.accessAllDatabases) ||
+        hasAll ||
         Boolean(user.databasePermissions?.[dbName]);
       dbPermsCopy[dbName] = hasDb;
       tblPermsCopy[dbName] = {};
@@ -8220,7 +8326,6 @@ export class App implements OnInit, OnDestroy {
   }
 
   public toggleAdminEditDatabasePermission(dbName: string, checked: boolean): void {
-    // Requirement: "If i set permission for a database to true the all it table also is set to true until I explicitly uncheck the permission for that list of table in that specific database"
     this.adminEditDbPermissions.update((prev) => ({
       ...prev,
       [dbName]: checked,
@@ -8257,6 +8362,101 @@ export class App implements OnInit, OnDestroy {
     });
   }
 
+  public quickApproveUser(user: PostgresAuthUser, grantAll = false, event?: Event): void {
+    event?.stopPropagation();
+    const token = this.isBrowser ? localStorage.getItem('gridpulse_pg_token') || '' : '';
+    this.isQuickApprovingUserId.set(user.id);
+    this.http
+      .post<{ ok: boolean; user?: PostgresAuthUser; users?: PostgresAuthUser[]; error?: string }>(
+        '/api/admin/users/quick-approve',
+        { userId: user.id, grantAll },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      )
+      .subscribe({
+        next: (res) => {
+          this.isQuickApprovingUserId.set(null);
+          if (res?.ok) {
+            if (Array.isArray(res.users)) {
+              this.adminUsersList.set(res.users);
+            }
+            if (res.user) {
+              if (this.selectedAdminUserId() === res.user.id) {
+                this.selectUserInAdminPanel(res.user);
+              }
+              if (this.firebaseUser()?.id === res.user.id) {
+                this.firebaseUser.set(res.user);
+                this.enforceActiveWorkspaceAccessForCurrentUser();
+              }
+            }
+            this.showBanner(
+              'success',
+              `User ${user.displayName || user.email} approved & granted access!`
+            );
+          } else {
+            this.showBanner('error', res?.error || 'Could not approve user.');
+          }
+        },
+        error: () => {
+          this.isQuickApprovingUserId.set(null);
+          this.showBanner('error', 'Error approving user.');
+        },
+      });
+  }
+
+  public createNewAdminUser(): void {
+    if (this.newAdminUserForm.invalid) return;
+    const raw = this.newAdminUserForm.getRawValue();
+    const ident = raw.identifier.trim();
+    if (!ident) return;
+
+    const token = this.isBrowser ? localStorage.getItem('gridpulse_pg_token') || '' : '';
+    this.isSavingAdminUser.set(true);
+    this.http
+      .post<{ ok: boolean; user?: PostgresAuthUser; tempOtp?: string; users?: PostgresAuthUser[]; error?: string }>(
+        '/api/admin/users/create',
+        {
+          identifier: ident,
+          displayName: raw.displayName.trim() || ident.split('@')[0],
+          role: raw.role,
+          isReviewedByAdmin: Boolean(raw.isReviewedByAdmin),
+          hasAllDatabaseAccess: Boolean(raw.hasAllDatabaseAccess),
+          accessAllDatabases: Boolean(raw.hasAllDatabaseAccess),
+        },
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      )
+      .subscribe({
+        next: (res) => {
+          this.isSavingAdminUser.set(false);
+          if (res?.ok) {
+            if (Array.isArray(res.users)) {
+              this.adminUsersList.set(res.users);
+            }
+            if (res.user) {
+              this.selectUserInAdminPanel(res.user);
+            }
+            this.isCreatingNewAdminUser.set(false);
+            this.newAdminUserForm.reset({
+              identifier: '',
+              displayName: '',
+              role: 'Basic',
+              isReviewedByAdmin: true,
+              hasAllDatabaseAccess: false,
+            });
+            this.showBanner(
+              'success',
+              `User created! Temporary 4-Digit Login OTP: ${res.tempOtp || '0000'}`
+            );
+          } else {
+            this.showBanner('error', res?.error || 'Could not create user.');
+          }
+        },
+        error: () => {
+          this.isSavingAdminUser.set(false);
+          this.showBanner('error', 'Failed to create user in System database.');
+        },
+      });
+  }
+
   public saveAdminUserPermissions(approveReview = true): void {
     const targetUser = this.selectedAdminUser();
     if (!targetUser) return;
@@ -8268,6 +8468,7 @@ export class App implements OnInit, OnDestroy {
       .post<{
         ok: boolean;
         user?: PostgresAuthUser;
+        updatedUser?: PostgresAuthUser;
         users?: PostgresAuthUser[];
         error?: string;
       }>(
@@ -8276,6 +8477,7 @@ export class App implements OnInit, OnDestroy {
           userId: targetUser.id,
           role: this.adminEditRole(),
           isReviewedByAdmin: isReviewed,
+          hasAllDatabaseAccess: this.adminEditAccessAllDbs(),
           accessAllDatabases: this.adminEditAccessAllDbs(),
           databasePermissions: this.adminEditDbPermissions(),
           tablePermissions: this.adminEditTablePermissions(),
@@ -8292,10 +8494,11 @@ export class App implements OnInit, OnDestroy {
           if (Array.isArray(res.users)) {
             this.adminUsersList.set(res.users);
           }
-          if (res.user) {
-            this.adminEditIsReviewed.set(Boolean(res.user.isReviewedByAdmin));
-            if (this.firebaseUser()?.id === res.user.id) {
-              this.firebaseUser.set(res.user);
+          const userObj = res.user || res.updatedUser;
+          if (userObj) {
+            this.adminEditIsReviewed.set(Boolean(userObj.isReviewedByAdmin));
+            if (this.firebaseUser()?.id === userObj.id) {
+              this.firebaseUser.set(userObj);
               this.enforceActiveWorkspaceAccessForCurrentUser();
             }
           }
@@ -8706,6 +8909,10 @@ export class App implements OnInit, OnDestroy {
   }
 
   public getEditableCellDomText(row: GridRow, col: GridColumn): string {
+    const draftKey = `${row.id}:${col.id}`;
+    if (this.liveCellDraftMap.has(draftKey)) {
+      return this.liveCellDraftMap.get(draftKey) ?? '';
+    }
     if (col.colType === 'lookup') {
       return String(this.getDisplayCellValue(row, col) ?? '');
     }
@@ -8714,6 +8921,9 @@ export class App implements OnInit, OnDestroy {
   }
 
   public getNewRowEditableCellDomText(col: GridColumn): string {
+    if (this.newRowLiveDraftMap.has(col.id)) {
+      return this.newRowLiveDraftMap.get(col.id) ?? '';
+    }
     const val = this.getNewRowCellDisplayValue(col);
     if (val === undefined || val === null || val === false) return '';
     return String(val);
@@ -8827,7 +9037,10 @@ export class App implements OnInit, OnDestroy {
   public onContentEditableCellInput(rowId: string, colId: string, event: Event): void {
     const el = event.target as HTMLElement | null;
     if (!el) return;
-    const rawText = (el.innerText ?? el.textContent ?? '').replace(/\r?\n/g, ' ');
+    const rawText =
+      el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+        ? el.value
+        : (el.innerText ?? el.textContent ?? '').replace(/\r?\n/g, ' ');
     const row = this.rows().find((r) => r.id === rowId);
     const col = this.columns().find((c) => c.id === colId);
     const savedVal =
@@ -9311,7 +9524,17 @@ export class App implements OnInit, OnDestroy {
   }
 
   private placeCaretAtEndOfElement(el: HTMLElement): void {
-    if (!this.isBrowser || !el.isContentEditable) return;
+    if (!this.isBrowser) return;
+    if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
+      try {
+        const len = el.value.length;
+        el.setSelectionRange(len, len);
+      } catch {
+        // Ignore selection range errors
+      }
+      return;
+    }
+    if (!el.isContentEditable) return;
     try {
       const range = document.createRange();
       range.selectNodeContents(el);
@@ -9452,7 +9675,10 @@ export class App implements OnInit, OnDestroy {
   public onNewRowContentEditableInput(colId: string, event: Event): void {
     const el = event.target as HTMLElement | null;
     if (!el) return;
-    const rawText = (el.innerText ?? el.textContent ?? '').replace(/\r?\n/g, ' ');
+    const rawText =
+      el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement
+        ? el.value
+        : (el.innerText ?? el.textContent ?? '').replace(/\r?\n/g, ' ');
     if (rawText.trim().length > 0) {
       this.newRowLiveDraftMap.set(colId, rawText);
     } else {
@@ -9894,13 +10120,23 @@ export class App implements OnInit, OnDestroy {
 
     if (issues.length > 0) {
       this.closeAllMenus();
-      this.newRowValidationModal.set({
-        visible: true,
-        isValid: false,
-        issues,
-      });
-      this.activeModal.set('validate_new_row');
-      return false;
+      if (!silentSuccess) {
+        this.newRowValidationModal.set({
+          visible: true,
+          isValid: false,
+          issues,
+        });
+        this.activeModal.set('validate_new_row');
+        return false;
+      }
+      // If submitting automatically from First Row (Enter / submit), only block if there are hard format mismatches
+      const hardErrors = issues.filter((i) => i.issueType === 'invalid');
+      if (hardErrors.length > 0) {
+        this.showBanner('error', `First row error: ${hardErrors[0].errorMessage}`);
+        return false;
+      }
+      // Missing fields receive fallback defaults smoothly
+      return true;
     }
 
     this.newRowValidationModal.set({
@@ -10572,104 +10808,96 @@ export class App implements OnInit, OnDestroy {
         ? 'below the selected row'
         : `to table "${this.activeTableName()}"`;
 
-    this.requestConfirmation(
-      'Confirm Add New Row',
-      `Are you sure you want to insert a new row ${posLabel}?`,
-      'Add Row',
-      'primary',
-      () => {
-        const currentRows = [...this.rows()].sort((a, b) => a.orderIndex - b.orderIndex);
-        const cols = this.sortedColumns();
-        const nowIso = new Date().toISOString();
-        const nextIdentity = this.computeNextIdentityValue(currentRows);
+    const currentRows = [...this.rows()].sort((a, b) => a.orderIndex - b.orderIndex);
+    const cols = this.sortedColumns();
+    const nowIso = new Date().toISOString();
+    const nextIdentity = this.computeNextIdentityValue(currentRows);
 
-        let targetOrder = 10;
+    let targetOrder = 10;
 
-        if (position === 'top' || (position === 'below_active' && refRowId === this.newRowSentinelId)) {
-          targetOrder = currentRows.length > 0 ? currentRows[0].orderIndex - 10 : 10;
-        } else if (position === 'bottom') {
-          targetOrder =
-            currentRows.length > 0 ? currentRows[currentRows.length - 1].orderIndex + 10 : 10;
-        } else if (position === 'above_active' && refRowId) {
-          const idx = currentRows.findIndex((r) => r.id === refRowId);
-          if (idx >= 0) {
-            const currOrder = currentRows[idx].orderIndex;
-            const prevOrder = idx > 0 ? currentRows[idx - 1].orderIndex : currOrder - 20;
-            targetOrder = (prevOrder + currOrder) / 2;
-          }
-        } else if (refRowId) {
-          const idx = currentRows.findIndex((r) => r.id === refRowId);
-          if (idx >= 0) {
-            const currOrder = currentRows[idx].orderIndex;
-            const nextOrder =
-              idx + 1 < currentRows.length ? currentRows[idx + 1].orderIndex : currOrder + 20;
-            targetOrder = (currOrder + nextOrder) / 2;
-          }
-        }
-
-        const cells: Record<string, CellPrimitive> = {};
-        for (const col of cols) {
-          if (col.colType === 'formula') continue;
-          let cellVal: CellPrimitive;
-          if (col.isPrimaryKey || col.isIdentity) {
-            cellVal = nextIdentity;
-          } else if (col.defaultValue !== undefined && String(col.defaultValue).trim() !== '') {
-            cellVal = this.resolveColumnDefaultPrimitive(col, String(col.defaultValue));
-          } else if (col.name === 'Record Code' || col.id === 'col_code') {
-            cellVal = `GP-${1000 + nextIdentity}`;
-          } else if (col.colType === 'number') {
-            cellVal = 1;
-          } else if (col.colType === 'checkbox') {
-            cellVal = false;
-          } else if (col.colType === 'date') {
-            cellVal = nowIso.slice(0, 10);
-          } else if (col.colType === 'dropdown') {
-            const opts = getDropdownOptions(col);
-            cellVal = opts[0] || '';
-          } else if (col.colType === 'lookup') {
-            const items = this.getLookupOptionsForCol(col);
-            const activeItem = items.find((i) => i.isActive !== false) || items[0];
-            cellVal = activeItem ? activeItem.json : '';
-          } else {
-            cellVal = col.required ? 'New Record' : '';
-          }
-          cells[col.name] = cellVal;
-          cells[col.id] = cellVal;
-        }
-
-        const newRow: GridRow = {
-          id: `row_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
-          orderIndex: targetOrder,
-          cells,
-          updatedBy: this.currentUserName(),
-          updatedAt: nowIso,
-        };
-
-        if (position === 'above_active' || position === 'below_active') {
-          this.sortRules.set([]);
-        }
-
-        this.recordHistorySnapshot('Add New Row');
-        this.rows.update((list) => [newRow, ...list]);
-        this.markRowsForFadeIn([newRow.id]);
-        this.visibleRowLimit.update((limit) => Math.max(this.lazyBatchSize, limit + 1));
-        this.dbTotalRows.update((n) => n + 1);
-        this.dbFilteredTotalRows.update((n) => n + 1);
-        const firstEditableCol =
-          cols.find((c) => !c.isPrimaryKey && !c.isIdentity && c.colType !== 'formula') || cols[0];
-        if (firstEditableCol) {
-          this.selectCell(newRow.id, firstEditableCol.id);
-        }
-        this.persistToCloud(
-          'Row Created',
-          `Inserted row ID=${nextIdentity} into table "${this.activeTableName()}"`,
-          newRow
-        );
-        this.showBanner(
-          'success',
-          `New row (ID: ${nextIdentity}) created and saved to database table "${this.activeTableName()}".`
-        );
+    if (position === 'top' || (position === 'below_active' && refRowId === this.newRowSentinelId)) {
+      targetOrder = currentRows.length > 0 ? currentRows[0].orderIndex - 10 : 10;
+    } else if (position === 'bottom') {
+      targetOrder =
+        currentRows.length > 0 ? currentRows[currentRows.length - 1].orderIndex + 10 : 10;
+    } else if (position === 'above_active' && refRowId) {
+      const idx = currentRows.findIndex((r) => r.id === refRowId);
+      if (idx >= 0) {
+        const currOrder = currentRows[idx].orderIndex;
+        const prevOrder = idx > 0 ? currentRows[idx - 1].orderIndex : currOrder - 20;
+        targetOrder = (prevOrder + currOrder) / 2;
       }
+    } else if (refRowId) {
+      const idx = currentRows.findIndex((r) => r.id === refRowId);
+      if (idx >= 0) {
+        const currOrder = currentRows[idx].orderIndex;
+        const nextOrder =
+          idx + 1 < currentRows.length ? currentRows[idx + 1].orderIndex : currOrder + 20;
+        targetOrder = (currOrder + nextOrder) / 2;
+      }
+    }
+
+    const cells: Record<string, CellPrimitive> = {};
+    for (const col of cols) {
+      if (col.colType === 'formula') continue;
+      let cellVal: CellPrimitive;
+      if (col.isPrimaryKey || col.isIdentity) {
+        cellVal = nextIdentity;
+      } else if (col.defaultValue !== undefined && String(col.defaultValue).trim() !== '') {
+        cellVal = this.resolveColumnDefaultPrimitive(col, String(col.defaultValue));
+      } else if (col.name === 'Record Code' || col.id === 'col_code') {
+        cellVal = `GP-${1000 + nextIdentity}`;
+      } else if (col.colType === 'number') {
+        cellVal = 1;
+      } else if (col.colType === 'checkbox') {
+        cellVal = false;
+      } else if (col.colType === 'date') {
+        cellVal = nowIso.slice(0, 10);
+      } else if (col.colType === 'dropdown') {
+        const opts = getDropdownOptions(col);
+        cellVal = opts[0] || '';
+      } else if (col.colType === 'lookup') {
+        const items = this.getLookupOptionsForCol(col);
+        const activeItem = items.find((i) => i.isActive !== false) || items[0];
+        cellVal = activeItem ? activeItem.json : '';
+      } else {
+        cellVal = col.required ? 'New Record' : '';
+      }
+      cells[col.name] = cellVal;
+      cells[col.id] = cellVal;
+    }
+
+    const newRow: GridRow = {
+      id: `row_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 6)}`,
+      orderIndex: targetOrder,
+      cells,
+      updatedBy: this.currentUserName(),
+      updatedAt: nowIso,
+    };
+
+    if (position === 'above_active' || position === 'below_active') {
+      this.sortRules.set([]);
+    }
+
+    this.recordHistorySnapshot('Add New Row');
+    this.rows.update((list) => [newRow, ...list]);
+    this.markRowsForFadeIn([newRow.id]);
+    this.visibleRowLimit.update((limit) => Math.max(this.lazyBatchSize, limit + 1));
+    this.dbTotalRows.update((n) => n + 1);
+    this.dbFilteredTotalRows.update((n) => n + 1);
+    const firstEditableCol =
+      cols.find((c) => !c.isPrimaryKey && !c.isIdentity && c.colType !== 'formula') || cols[0];
+    if (firstEditableCol) {
+      this.selectCell(newRow.id, firstEditableCol.id);
+    }
+    this.persistToCloud(
+      'Row Created',
+      `Inserted row ID=${nextIdentity} into table "${this.activeTableName()}"`,
+      newRow
+    );
+    this.showBanner(
+      'success',
+      `New row (ID: ${nextIdentity}) created and saved ${posLabel}.`
     );
   }
 
@@ -14700,6 +14928,280 @@ export class App implements OnInit, OnDestroy {
       <text x="32" y="37" text-anchor="middle" fill="#ffffff" font-family="Inter, system-ui, -apple-system, sans-serif" font-weight="700" font-size="22" letter-spacing="0.5">${initials}</text>
     </svg>`;
     return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
+  }
+
+  /**
+   * ============================================================================
+   * AI EXPLORER & GEMINI DEEP REASONING CONTROLLERS
+   * ============================================================================
+   */
+
+  public sendAiChatMessage(presetText?: string): void {
+    const rawQuery = (presetText !== undefined ? presetText : this.aiInputQuery()).trim();
+    if (!rawQuery || this.isAiLoading()) return;
+
+    const userMsg: AIChatMessage = {
+      id: `user_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      sender: 'user',
+      text: rawQuery,
+      timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      databaseName: this.activeDatabaseName(),
+      tableName: this.activeTableName(),
+    };
+
+    this.aiMessages.update((msgs) => [...msgs, userMsg]);
+    if (presetText === undefined) {
+      this.aiInputQuery.set('');
+    }
+    this.isAiLoading.set(true);
+    this.aiStatusMessage.set('Gemini Deep Reasoning: Processing database and contracts...');
+
+    const payload = {
+      query: rawQuery,
+      databaseName: this.activeDatabaseName(),
+      tableName: this.activeTableName(),
+      history: this.aiMessages().slice(-6),
+    };
+
+    fetch('/api/ai/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+      .then((res) => res.json())
+      .then((data: {
+        ok: boolean;
+        answer?: string;
+        thinking?: string;
+        learnedInsights?: string[];
+        knowledgeCount?: number;
+        memoryCount?: number;
+        error?: string;
+      }) => {
+        this.isAiLoading.set(false);
+        this.aiStatusMessage.set('Ready • Gemini Deep Reasoning Active');
+
+        if (!data.ok) {
+          const errText = data.error || 'Unable to process AI query at this time.';
+          const errorMsg: AIChatMessage = {
+            id: `ai_err_${Date.now()}`,
+            sender: 'ai',
+            text: `⚠️ **AI Reasoning Notice**: ${errText}`,
+            timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            isError: true,
+          };
+          this.aiMessages.update((msgs) => [...msgs, errorMsg]);
+          return;
+        }
+
+        const aiMsg: AIChatMessage = {
+          id: `ai_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+          sender: 'ai',
+          text: data.answer || 'Analysis complete.',
+          thinking: data.thinking || '',
+          isThinkingExpanded: false,
+          databaseName: this.activeDatabaseName(),
+          tableName: this.activeTableName(),
+          learnedInsights: data.learnedInsights || [],
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        };
+
+        this.aiMessages.update((msgs) => [...msgs, aiMsg]);
+        if (typeof data.knowledgeCount === 'number') {
+          this.aiKnowledgeCount.set(data.knowledgeCount);
+        }
+        if (typeof data.memoryCount === 'number') {
+          this.aiMemoryCount.set(data.memoryCount);
+        }
+
+        if (data.learnedInsights && data.learnedInsights.length > 0) {
+          this.showBanner(
+            'info',
+            `Learned ${data.learnedInsights.length} new insight(s) stored in System.AIKnowledgeBase.`
+          );
+        }
+      })
+      .catch((err) => {
+        this.isAiLoading.set(false);
+        this.aiStatusMessage.set('Ready • Connection restored');
+        const fallbackMsg: AIChatMessage = {
+          id: `ai_err_${Date.now()}`,
+          sender: 'ai',
+          text: `⚠️ **Connection notice**: ${err?.message || 'Failed to reach AI service. Please try again.'}`,
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          isError: true,
+        };
+        this.aiMessages.update((msgs) => [...msgs, fallbackMsg]);
+      });
+  }
+
+  public triggerAiDeepLearn(): void {
+    if (this.isAiLearning() || this.isAiLoading()) return;
+
+    this.isAiLearning.set(true);
+    this.aiStatusMessage.set('Deep Learning: Inspecting all database tables, columns & constraints...');
+
+    fetch('/api/ai/deep-learn', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        databaseName: this.activeDatabaseName(),
+        tableName: this.activeTableName(),
+      }),
+    })
+      .then((res) => res.json())
+      .then((data: {
+        ok: boolean;
+        summary?: string;
+        thinking?: string;
+        insightsCount?: number;
+        knowledgeCount?: number;
+        error?: string;
+      }) => {
+        this.isAiLearning.set(false);
+        this.aiStatusMessage.set('Ready • Gemini Deep Reasoning Active');
+
+        if (!data.ok) {
+          this.showBanner('error', data.error || 'Deep learning profiling failed.');
+          return;
+        }
+
+        const count = data.insightsCount || 0;
+        if (typeof data.knowledgeCount === 'number') {
+          this.aiKnowledgeCount.set(data.knowledgeCount);
+        }
+
+        const aiMsg: AIChatMessage = {
+          id: `ai_deep_${Date.now()}`,
+          sender: 'ai',
+          text:
+            `### 🧠 Deep Learning Completed for \`${this.activeDatabaseName()}.${this.activeTableName()}\`\n\n` +
+            (data.summary || `Synthesized schema contracts and persisted ${count} insights to System.AIKnowledgeBase.`) +
+            `\n\n*All learned facts are now stored in table \`System.AIKnowledgeBase\` and will guide subsequent AI reasoning.*`,
+          thinking: data.thinking || 'Deep learned schema constraints, foreign keys, .NET entities, and Angular signals.',
+          isThinkingExpanded: true,
+          databaseName: this.activeDatabaseName(),
+          tableName: this.activeTableName(),
+          timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        };
+
+        this.aiMessages.update((msgs) => [...msgs, aiMsg]);
+        this.showBanner(
+          'success',
+          `Deep learning complete! Stored ${count} insights to System database.`
+        );
+      })
+      .catch((err) => {
+        this.isAiLearning.set(false);
+        this.aiStatusMessage.set('Ready');
+        this.showBanner('error', `Deep learning failed: ${err?.message || 'Network error'}`);
+      });
+  }
+
+  public toggleAiThinking(msgId: string): void {
+    this.aiMessages.update((msgs) =>
+      msgs.map((m) =>
+        m.id === msgId ? { ...m, isThinkingExpanded: !m.isThinkingExpanded } : m
+      )
+    );
+  }
+
+  public clearAiChatHistory(): void {
+    this.aiMessages.set([
+      {
+        id: `ai_welcome_${Date.now()}`,
+        sender: 'ai',
+        text:
+          '👋 **GridPulse AI Explorer** is reset and ready.\n\nAsk any question about the current database `' +
+          this.activeDatabaseName() +
+          '`, table `' +
+          this.activeTableName() +
+          '`, columns, data values, or Angular 21 / .NET EF Core logic.',
+        timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        thinking: 'Workspace state synchronized. Active database: ' + this.activeDatabaseName(),
+        isThinkingExpanded: false,
+      },
+    ]);
+  }
+
+  public toggleAiExplorerWidth(): void {
+    if (this.rightSidebarWidthPx() < 420) {
+      this.rightSidebarWidthPx.set(480);
+    } else {
+      this.rightSidebarWidthPx.set(316);
+    }
+  }
+
+  public loadAiSystemKnowledge(): void {
+    fetch('/api/ai/knowledge')
+      .then((res) => res.json())
+      .then((data: { ok: boolean; knowledge?: AIKnowledgeBaseItem[]; count?: number }) => {
+        if (data.ok && Array.isArray(data.knowledge)) {
+          this.aiKnowledgeList.set(data.knowledge);
+          this.aiKnowledgeCount.set(data.knowledge.length);
+        }
+      })
+      .catch((err: unknown) => {
+        console.warn('Failed to load initial AI knowledge:', err);
+      });
+  }
+
+  public openSystemDbLearnedKnowledge(): void {
+    fetch('/api/ai/knowledge')
+      .then((res) => res.json())
+      .then((data: { ok: boolean; knowledge?: AIKnowledgeBaseItem[]; count?: number }) => {
+        if (data.ok && Array.isArray(data.knowledge)) {
+          this.aiKnowledgeList.set(data.knowledge);
+          this.aiKnowledgeCount.set(data.knowledge.length);
+        }
+      })
+      .catch((err: unknown) => {
+        console.warn('Failed to load AI knowledge list:', err);
+      });
+
+    fetch('/api/ai/memory')
+      .then((res) => res.json())
+      .then((data: { ok: boolean; memory?: AIMemoryItem[]; count?: number }) => {
+        if (data.ok && Array.isArray(data.memory)) {
+          this.aiMemoryList.set(data.memory);
+          this.aiMemoryCount.set(data.memory.length);
+        }
+      })
+      .catch((err: unknown) => {
+        console.warn('Failed to load AI memory list:', err);
+      });
+
+    this.isAiMemoryModalOpen.set(true);
+  }
+
+  public closeAiMemoryModal(): void {
+    this.isAiMemoryModalOpen.set(false);
+  }
+
+  public navigateToSystemDbKnowledgeTable(): void {
+    this.isAiMemoryModalOpen.set(false);
+    this.switchDatabase('System', 'AIKnowledgeBase');
+    this.showBanner('info', 'Switched to System database table "AIKnowledgeBase".');
+  }
+
+  public onAiInputKeyDown(event: KeyboardEvent): void {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      this.sendAiChatMessage();
+    }
+  }
+
+  public copyAiSnippet(codeText: string): void {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      navigator.clipboard
+        .writeText(codeText)
+        .then(() => {
+          this.showBanner('success', 'Copied to clipboard.');
+        })
+        .catch((err: unknown) => {
+          console.warn('Clipboard write error:', err);
+        });
+    }
   }
 
   /**
